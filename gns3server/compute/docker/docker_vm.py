@@ -43,7 +43,8 @@ from ..nios.nio_udp import NIOUDP
 from .docker_error import (
     DockerError,
     DockerHttp304Error,
-    DockerHttp404Error
+    DockerHttp404Error,
+    DockerHttp409Error
 )
 
 import logging
@@ -459,10 +460,35 @@ class DockerVM(BaseNode):
             if extra_hosts:
                 params["Env"].append("GNS3_EXTRA_HOSTS={}".format(extra_hosts))
 
-        # Support name in Doker: [a-zA-Z0-9][a-zA-Z0-9_.-]
-        result = await self.manager.query("POST", "containers/create?name={}".format(self.docker_name), data=params)
-        self._cid = result['Id']
-        log.info("Docker container '{name}' [{id}] created".format(name=self._name, id=self._id))
+        try:
+            # Supported names in Docker: [a-zA-Z0-9][a-zA-Z0-9_.-]
+            result = await self.manager.query("POST", f"containers/create?name={self.docker_name}", data=params)
+        except DockerHttp409Error:
+            # Container name already exists. This can happen when the server crashes
+            # and leaves containers behind. Try to remove the conflicting container.
+            log.warning(f"Container name '{self.docker_name}' is already in use, attempting to clean up the stale container...")
+            try:
+                # Try to get and remove the conflicting container
+                try:
+                    container_info = await self.manager.query("GET", f"containers/{self.docker_name}/json")
+                    container_id = container_info["Id"]
+                    # Force remove the container
+                    await self.manager.query("DELETE", f"containers/{container_id}", params={"force": 1, "v": 1})
+                    log.info(f"Removed stale container '{self.docker_name}' ({container_id})")
+                except DockerHttp404Error:
+                    # Container doesn't exist anymore, race condition - just continue
+                    pass
+                # Retry creating the container
+                result = await self.manager.query("POST", f"containers/create?name={self.docker_name}", data=params)
+            except DockerError as e:
+                log.error(f"Failed to clean up conflicting container '{self.docker_name}': {e}")
+                raise
+        self._cid = result["Id"]
+        log.info(f"Docker container '{self._name}' [{self._id}] created")
+        if self._cpus > 0:
+            log.info(f"CPU limit set to {self._cpus} CPUs")
+        if self._memory > 0:
+            log.info(f"Memory limit set to {self._memory} MB")
         return True
 
     def _format_env(self, variables, env):
