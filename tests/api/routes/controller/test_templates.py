@@ -239,6 +239,80 @@ class TestTemplateRoutes:
     #     mock.assert_called_with(id, x=42, y=12, compute_id=None)
     #     assert response.status_code == status.HTTP_201_CREATED
 
+    async def test_get_base_config(self, app: FastAPI, client: AsyncClient):
+
+        create_resp = await client.post(app.url_path_for("create_template"), json={
+            "name": "TEST",
+            "compute_id": "local",
+            "template_type": "vpcs"
+        })
+
+        assert create_resp.status_code == 201
+        template_id = create_resp.json()["template_id"]
+
+        #создаём файл перед чтением
+        await client.put(
+            app.url_path_for("update_base_config", template_id=template_id, filename="test.txt"),
+            json={"content": "hello"}
+        )
+
+        response = await client.get(
+            app.url_path_for(
+                "get_base_config",
+                template_id=template_id,
+                filename="test.txt"
+            )
+        )
+
+        assert response.status_code == 200
+        assert response.json()["content"] == "hello"
+
+    async def test_update_base_config(self, app: FastAPI, client: AsyncClient):
+        template_id = str(uuid.uuid4())
+        filename = "test.txt"
+
+        await client.post(app.url_path_for("create_template"), json={
+            "template_id": template_id,
+            "name": "TEST",
+            "compute_id": "local",
+            "template_type": "vpcs"
+        })
+
+        payload = {"content": "hello world"}
+
+        response = await client.put(
+            app.url_path_for("update_base_config", template_id=template_id, filename=filename),
+            json=payload
+        )
+
+        assert response.status_code == 200
+        assert response.json()["content"] == "hello world"
+
+    async def test_update_base_config_missing_content(self, app: FastAPI, client: AsyncClient):
+        template_id = str(uuid.uuid4())
+        filename = "test.txt"
+
+        await client.post(app.url_path_for("create_template"), json={
+            "template_id": template_id,
+            "name": "TEST",
+            "compute_id": "local",
+            "template_type": "vpcs"
+        })
+
+        response = await client.put(
+            app.url_path_for("update_base_config", template_id=template_id, filename=filename),
+            json={}
+        )
+
+        assert response.status_code in (400, 422)
+
+    async def test_base_config_template_not_found(self, app: FastAPI, client: AsyncClient):
+        response = await client.get(
+            app.url_path_for("get_base_config", template_id=str(uuid.uuid4()), filename="x.txt")
+        )
+
+        assert response.status_code == 404
+
 
 class TestDuplicateTemplates:
 
