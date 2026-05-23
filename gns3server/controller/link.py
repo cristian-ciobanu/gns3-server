@@ -103,7 +103,7 @@ class Link:
         """
         Get whether to show filters icon in Web UI
         """
-        return self._show_filters_icon
+        return getattr(self, '_show_filters_icon', True)
 
     @property
     def project(self):
