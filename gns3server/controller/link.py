@@ -574,7 +574,7 @@ class Link:
                 "filters": self._filters,
                 "link_style": self._link_style,
                 "suspend": self._suspended,
-                "show_filters_icon": self._show_filters_icon,
+                "show_filters_icon": getattr(self, '_show_filters_icon', True),
             }
         return {
             "nodes": res,
@@ -589,5 +589,5 @@ class Link:
             "suspend": self._suspended,
             "link_style": self._link_style,
             "wireshark": self._wireshark,
-            "show_filters_icon": self._show_filters_icon,
+            "show_filters_icon": getattr(self, '_show_filters_icon', True),
         }
