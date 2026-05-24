@@ -33,6 +33,7 @@ including latency, packet loss, corruption, and BPF filtering.
 
 import json
 import logging
+import subprocess
 from pprint import pprint
 from typing import Any
 
@@ -273,11 +274,93 @@ class GNS3PacketFilterTool(BaseTool):
                 "status": "failed",
             }
 
+    def _validate_bpf_syntax(self, bpf_expression: str) -> dict[str, Any]:
+        """
+        Validate BPF filter expression syntax using tshark.
+
+        Args:
+            bpf_expression: BPF filter expression to validate
+
+        Returns:
+            dict with 'valid' (bool) and 'error' (str or None) keys
+        """
+        try:
+            # Use tshark to validate BPF syntax with 1 second timeout
+            result = subprocess.run(
+                ["tshark", "-f", bpf_expression],
+                timeout=1,
+                capture_output=True,
+                text=True,
+            )
+
+            # Check if output contains "Invalid" indicating syntax error
+            if "Invalid" in result.stdout or "Invalid" in result.stderr:
+                error_lines = []
+                if "Invalid" in result.stderr:
+                    error_lines.extend(
+                        line for line in result.stderr.split("\n") if "Invalid" in line
+                    )
+                if "Invalid" in result.stdout:
+                    error_lines.extend(
+                        line for line in result.stdout.split("\n") if "Invalid" in line
+                    )
+
+                error_msg = " ".join(error_lines) if error_lines else "Invalid BPF syntax"
+                logger.warning("BPF syntax validation failed: %s", error_msg)
+                return {"valid": False, "error": error_msg}
+
+            logger.info("BPF syntax validation passed")
+            return {"valid": True, "error": None}
+
+        except subprocess.TimeoutExpired:
+            # Timeout is expected behavior - tshark waits for traffic
+            # No "Invalid" in output means syntax is correct
+            logger.info("BPF syntax validation passed (timeout expected)")
+            return {"valid": True, "error": None}
+
+        except FileNotFoundError:
+            # tshark not installed - skip validation
+            logger.warning(
+                "tshark not found, skipping BPF syntax validation. "
+                "Install tshark to enable BPF validation."
+            )
+            return {"valid": True, "error": None}
+
+        except Exception as e:
+            logger.error("Unexpected error during BPF validation: %s", e)
+            return {"valid": False, "error": f"BPF validation error: {str(e)}"}
+
     def _set_filters(
         self, link: Link, filters: dict[str, Any], show_filters_icon: bool = False
     ) -> dict[str, Any]:
         """Set packet filters on the link."""
         try:
+            # Validate BPF syntax if BPF filter is present
+            if "bpf" in filters:
+                bpf_filters = filters["bpf"]
+                if isinstance(bpf_filters, list):
+                    # Validate each BPF expression
+                    for idx, bpf_expr in enumerate(bpf_filters):
+                        if isinstance(bpf_expr, str):
+                            validation = self._validate_bpf_syntax(bpf_expr)
+                            if not validation["valid"]:
+                                return {
+                                    "action": "set",
+                                    "link_id": link.link_id,
+                                    "error": f"BPF syntax error at index {idx}: {validation['error']}",
+                                    "status": "failed",
+                                }
+                elif isinstance(bpf_filters, str):
+                    # Single BPF expression
+                    validation = self._validate_bpf_syntax(bpf_filters)
+                    if not validation["valid"]:
+                        return {
+                            "action": "set",
+                            "link_id": link.link_id,
+                            "error": f"BPF syntax error: {validation['error']}",
+                            "status": "failed",
+                        }
+
             # Update filters
             link.update(filters=filters, show_filters_icon=show_filters_icon)
 
