@@ -55,6 +55,8 @@ class GNS3PacketFilterTool(BaseTool):
 
     **Input:**
     A JSON object with project_id, link_id, action, and optional filter parameters.
+    Note: show_filters_icon is automatically set to false by default to hide the filter
+    icon in the GNS3 Web UI.
 
     Example input for getting available filters:
         {
@@ -71,7 +73,8 @@ class GNS3PacketFilterTool(BaseTool):
             "filters": {
                 "delay": [100, 10],
                 "packet_loss": [5]
-            }
+            },
+            "show_filters_icon": false
         }
 
     Example input for getting current filters:
@@ -104,11 +107,13 @@ class GNS3PacketFilterTool(BaseTool):
     This tool is primarily used for fault injection scenarios to create realistic network problems
     for troubleshooting practice, such as latency, packet loss, and corruption.
 
+    By default, the filter icon in the GNS3 Web UI is hidden (show_filters_icon=false) to avoid
+    visual clutter when injecting faults for troubleshooting exercises.
+
     Supported actions:
     - "get_available": Get list of available filter types for the link
     - "set": Set packet filters on the link to inject network faults
     - "get": Get current filters configured on the link
-    - "clear": Clear all filters from the link (remove injected faults)
 
     Common filter types for fault injection:
     - "frequency_drop": Drop every Nth packet (parameter: frequency, -1 to 32767)
@@ -141,13 +146,6 @@ class GNS3PacketFilterTool(BaseTool):
         }
     }
 
-    Example for clearing filters:
-    {
-        "project_id": "uuid-of-project",
-        "link_id": "uuid-of-link",
-        "action": "clear"
-    }
-
     Returns a dictionary with action result, filter information, or error message.
     """
 
@@ -176,6 +174,7 @@ class GNS3PacketFilterTool(BaseTool):
             project_id = input_data.get("project_id")
             link_id = input_data.get("link_id")
             action = input_data.get("action")
+            show_filters_icon = input_data.get("show_filters_icon", False)
 
             # Validate required fields
             if not project_id:
@@ -231,11 +230,11 @@ class GNS3PacketFilterTool(BaseTool):
                 result = self._get_available_filters(link)
             elif action == "set":
                 filters = input_data.get("filters", {})
-                result = self._set_filters(link, filters)
+                result = self._set_filters(link, filters, show_filters_icon)
             elif action == "get":
                 result = self._get_filters(link)
             elif action == "clear":
-                result = self._clear_filters(link)
+                result = self._clear_filters(link, show_filters_icon)
             else:
                 result = {"error": f"Unknown action: {action}"}
 
@@ -274,11 +273,13 @@ class GNS3PacketFilterTool(BaseTool):
                 "status": "failed",
             }
 
-    def _set_filters(self, link: Link, filters: dict[str, Any]) -> dict[str, Any]:
+    def _set_filters(
+        self, link: Link, filters: dict[str, Any], show_filters_icon: bool = False
+    ) -> dict[str, Any]:
         """Set packet filters on the link."""
         try:
             # Update filters
-            link.update(filters=filters)
+            link.update(filters=filters, show_filters_icon=show_filters_icon)
 
             # Get updated link info
             link.get()
@@ -322,11 +323,13 @@ class GNS3PacketFilterTool(BaseTool):
                 "status": "failed",
             }
 
-    def _clear_filters(self, link: Link) -> dict[str, Any]:
+    def _clear_filters(
+        self, link: Link, show_filters_icon: bool = False
+    ) -> dict[str, Any]:
         """Clear all filters from the link."""
         try:
             # Clear filters by setting empty dict
-            link.update(filters={})
+            link.update(filters={}, show_filters_icon=show_filters_icon)
 
             # Get updated link info to confirm
             link.get()
