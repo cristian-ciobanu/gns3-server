@@ -286,8 +286,9 @@ class GNS3PacketFilterTool(BaseTool):
         """
         try:
             # Use tshark to validate BPF syntax with 1 second timeout
+            # Use -i lo (loopback) to avoid "(null)" interface in error messages
             result = subprocess.run(
-                ["tshark", "-f", bpf_expression],
+                ["tshark", "-f", bpf_expression, "-i", "lo"],
                 timeout=1,
                 capture_output=True,
                 text=True,
@@ -305,7 +306,13 @@ class GNS3PacketFilterTool(BaseTool):
                         line for line in result.stdout.split("\n") if "Invalid" in line
                     )
 
-                error_msg = " ".join(error_lines) if error_lines else "Invalid BPF syntax"
+                # Strip interface suffix (e.g., "for interface 'lo'") for cleaner error
+                error_msg_parts = []
+                for line in error_lines:
+                    clean = line.split(" for interface")[0].strip()
+                    if clean:
+                        error_msg_parts.append(clean)
+                error_msg = " ".join(error_msg_parts) if error_msg_parts else "Invalid BPF syntax"
                 logger.warning("BPF syntax validation failed: %s", error_msg)
                 return {"valid": False, "error": error_msg}
 
