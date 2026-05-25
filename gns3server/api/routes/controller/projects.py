@@ -90,15 +90,15 @@ async def get_projects(
     if current_user.is_superadmin:
         # super admin sees all projects
         return [p.asdict() for p in controller.projects.values()]
-    elif await rbac_repo.check_user_has_privilege(current_user.user_id, "/projects", "Project.Audit"):
-        # user with Project.Audit privilege on '/projects' sees all projects except those in resource pools
-        project_ids_in_pools = [str(r.resource_id) for r in await pools_repo.get_resources() if r.resource_type == "project"]
-        projects.extend([p.asdict() for p in controller.projects.values() if p.id not in project_ids_in_pools])
 
     # user with Project.Audit privilege on resource pools sees the projects in these pools
     user_pool_resources = await rbac_repo.get_user_pool_resources(current_user.user_id, "Project.Audit")
     project_ids_in_pools = [str(r.resource_id) for r in user_pool_resources if r.resource_type == "project"]
     projects.extend([p.asdict() for p in controller.projects.values() if p.id in project_ids_in_pools])
+
+    # simple user isolation: users see only their own projects
+    user_projects = [p.asdict() for p in controller.projects.values() if p.created_by == current_user.username]
+    projects.extend(user_projects)
 
     return projects
 
