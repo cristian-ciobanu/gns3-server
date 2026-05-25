@@ -33,6 +33,8 @@ from gns3server.db.repositories.templates import TemplatesRepository
 from gns3server.controller import Controller
 from gns3server.controller import Config
 from gns3server.services.templates import BUILTIN_TEMPLATES
+from gns3server.api.routes.controller.dependencies.authentication import get_current_active_user
+from gns3server import schemas
 
 pytestmark = pytest.mark.asyncio
 
@@ -241,6 +243,15 @@ class TestTemplateRoutes:
 
     async def test_get_base_config(self, app: FastAPI, client: AsyncClient):
 
+        async def mock_get_current_active_user():
+            return schemas.User(
+                username="admin",
+                user_id=uuid.uuid4(),
+                is_superadmin=True,
+                is_active=True
+            )
+        app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
+
         create_resp = await client.post(app.url_path_for("create_template"), json={
             "name": "TEST",
             "compute_id": "local",
@@ -250,7 +261,6 @@ class TestTemplateRoutes:
         assert create_resp.status_code == 201
         template_id = create_resp.json()["template_id"]
 
-        #создаём файл перед чтением
         await client.put(
             app.url_path_for("update_base_config", template_id=template_id, filename="test.txt"),
             json={"content": "hello"}
@@ -268,20 +278,28 @@ class TestTemplateRoutes:
         assert response.json()["content"] == "hello"
 
     async def test_update_base_config(self, app: FastAPI, client: AsyncClient):
-        template_id = str(uuid.uuid4())
-        filename = "test.txt"
 
-        await client.post(app.url_path_for("create_template"), json={
-            "template_id": template_id,
-            "name": "TEST",
+        async def mock_get_current_active_user():
+            return schemas.User(
+                username="admin",
+                user_id=uuid.uuid4(),
+                is_superadmin=True,
+                is_active=True
+            )
+        app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
+
+        template_name = f"TEST_UPDATE_{uuid.uuid4().hex[:8]}"
+        create_resp = await client.post(app.url_path_for("create_template"), json={
+            "name": template_name,
             "compute_id": "local",
             "template_type": "vpcs"
         })
+        assert create_resp.status_code == 201
+        template_id = create_resp.json()["template_id"]
 
         payload = {"content": "hello world"}
-
         response = await client.put(
-            app.url_path_for("update_base_config", template_id=template_id, filename=filename),
+            app.url_path_for("update_base_config", template_id=template_id, filename="test.txt"),
             json=payload
         )
 
@@ -289,18 +307,27 @@ class TestTemplateRoutes:
         assert response.json()["content"] == "hello world"
 
     async def test_update_base_config_missing_content(self, app: FastAPI, client: AsyncClient):
-        template_id = str(uuid.uuid4())
-        filename = "test.txt"
 
-        await client.post(app.url_path_for("create_template"), json={
-            "template_id": template_id,
-            "name": "TEST",
+        async def mock_get_current_active_user():
+            return schemas.User(
+                username="admin",
+                user_id=uuid.uuid4(),
+                is_superadmin=True,
+                is_active=True
+            )
+        app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
+
+        template_name = f"TEST_MISSING_{uuid.uuid4().hex[:8]}"
+        create_resp = await client.post(app.url_path_for("create_template"), json={
+            "name": template_name,
             "compute_id": "local",
             "template_type": "vpcs"
         })
+        assert create_resp.status_code == 201
+        template_id = create_resp.json()["template_id"]
 
         response = await client.put(
-            app.url_path_for("update_base_config", template_id=template_id, filename=filename),
+            app.url_path_for("update_base_config", template_id=template_id, filename="test.txt"),
             json={}
         )
 
@@ -312,6 +339,44 @@ class TestTemplateRoutes:
         )
 
         assert response.status_code == 404
+
+    async def test_list_base_configs(self, app: FastAPI, client: AsyncClient):
+
+        async def mock_get_current_active_user():
+            return schemas.User(
+                username="admin",
+                user_id=uuid.uuid4(),
+                is_superadmin=True,
+                is_active=True
+            )
+        app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
+
+        template_name = f"TEST_LIST_{uuid.uuid4().hex[:8]}"
+        create_resp = await client.post(app.url_path_for("create_template"), json={
+            "name": template_name,
+            "compute_id": "local",
+            "template_type": "vpcs"
+        })
+        assert create_resp.status_code == 201
+        template_id = create_resp.json()["template_id"]
+
+        await client.put(
+            app.url_path_for("update_base_config", template_id=template_id, filename="config1.txt"),
+            json={"content": "file1"}
+        )
+        await client.put(
+            app.url_path_for("update_base_config", template_id=template_id, filename="config2.txt"),
+            json={"content": "file2"}
+        )
+
+        response = await client.get(
+            app.url_path_for("list_base_configs", template_id=template_id)
+        )
+
+        assert response.status_code == 200
+        filenames = [item["filename"] for item in response.json()]
+        assert "config1.txt" in filenames
+        assert "config2.txt" in filenames
 
 
 class TestDuplicateTemplates:
