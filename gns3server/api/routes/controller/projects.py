@@ -86,19 +86,33 @@ async def get_projects(
 
     controller = Controller.instance()
     projects = []
+    seen_project_ids = set()
 
     if current_user.is_superadmin:
         # super admin sees all projects
         return [p.asdict() for p in controller.projects.values()]
 
-    # user with Project.Audit privilege on resource pools sees the projects in these pools
+    # Layer 1: ACE strategy check - explicitly authorized projects
+    # Check projects where user has specific ACE (shared by other users)
+    for project in controller.projects.values():
+        project_path = f"/projects/{project.id}"
+        if await rbac_repo.check_user_has_privilege(current_user.user_id, project_path, "Project.Audit"):
+            if project.id not in seen_project_ids:
+                projects.append(project.asdict())
+                seen_project_ids.add(project.id)
+
+    # Layer 2: Ownership check - user's own projects
+    # If no ACE strategy, filter by created_by
+    user_projects = [p.asdict() for p in controller.projects.values()
+                    if p.created_by == current_user.username and p.id not in seen_project_ids]
+    projects.extend(user_projects)
+
+    # Layer 3: Resource pools - team shared projects
     user_pool_resources = await rbac_repo.get_user_pool_resources(current_user.user_id, "Project.Audit")
     project_ids_in_pools = [str(r.resource_id) for r in user_pool_resources if r.resource_type == "project"]
-    projects.extend([p.asdict() for p in controller.projects.values() if p.id in project_ids_in_pools])
-
-    # simple user isolation: users see only their own projects
-    user_projects = [p.asdict() for p in controller.projects.values() if p.created_by == current_user.username]
-    projects.extend(user_projects)
+    pool_projects = [p.asdict() for p in controller.projects.values()
+                    if p.id in project_ids_in_pools and p.id not in seen_project_ids]
+    projects.extend(pool_projects)
 
     return projects
 
