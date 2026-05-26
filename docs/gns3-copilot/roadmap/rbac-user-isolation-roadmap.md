@@ -354,3 +354,54 @@ Create a `GET /v3/me/permissions` endpoint that returns the current user's effec
 ### Dependencies
 
 - **Phase 5 (ACE refactoring)** may change how permissions are stored, which would affect this API's implementation
+
+## Phase 7 — Resource Pool Renaming (Future)
+
+**Goal**: Rename "Resource Pool" to a more descriptive name that better reflects its actual purpose.
+
+### Problem
+
+The current name "Resource Pool" is too generic and doesn't clearly convey its actual function:
+
+- ❌ **Ambiguous name**: "Resource Pool" could refer to compute pools, connection pools, etc.
+- ❌ **Unclear purpose**: Users don't understand it's primarily for sharing projects
+- ❌ **Discoverability**: Hard to find the right feature when looking for project sharing
+
+### Actual Function
+
+Resource pools in GNS3 are used for:
+- **Project sharing**: Allow users to access projects created by other users
+- **Team collaboration**: Enable team members to work on shared projects
+- **Access control**: Provide fine-grained permissions for project access through three-step filtering (ACE check → created_by filter → resource pools)
+
+### Proposed Name Options
+
+| Option | Pros | Cons |
+|--------|-------|-------|
+| **Project Pool** | More explicit, indicates it contains projects | Still uses "pool" terminology |
+| **Shared Projects** | Directly describes the function | Loses the "collection" concept |
+| **Team Projects** | Emphasizes collaboration use case | Doesn't cover non-team sharing scenarios |
+
+**Recommended**: **Project Pool** - strikes a balance between clarity and consistency with existing terminology.
+
+### Implementation Scope
+
+Renaming would require changes to:
+- Database tables: `resource_pools` → `project_pools`
+- API routes: `/v3/pools` → `/v3/project_pools`
+- Schema classes and field names throughout the codebase
+- All documentation and help text
+- Migration script to preserve existing data
+
+### Benefits
+
+- ✅ **Improved discoverability**: Users can easily find the project sharing feature
+- ✅ **Better onboarding**: New users understand the purpose without confusion
+- ✅ **Clearer API**: API endpoints and schemas more self-documenting
+
+### Implementation Considerations
+
+- **Breaking change**: Requires API version bump or backward compatibility layer
+- **Data migration**: Existing resource pools must be preserved during table rename
+- **Documentation updates**: All references in docs, tutorials, and API specs need updating
+- **UI changes**: Frontend labels and navigation menus need to match new terminology
