@@ -312,3 +312,45 @@ CREATE TABLE ace_pools (
 - **Backward compatibility**: API should support both old and new formats during transition
 - **UI updates**: ACE management interface needs to support multi-path/pool selection
 - **Permission checking**: Update `check_user_has_privilege` to check association tables
+
+## Phase 6 — Frontend Permission Query API (Future)
+
+**Goal**: Provide an API endpoint for the Web UI to query the current user's permissions, enabling dynamic UI rendering based on role and ACE configuration.
+
+### Problem
+
+Currently the Web UI cannot determine what the authenticated user is allowed to see or do:
+
+- ❌ Users see menu items and buttons they don't have permission to use
+- ❌ Clicking a forbidden action results in a 403 error (unexpected UX)
+- ❌ No way to hide/show UI elements based on actual permissions
+
+### Proposed Solution
+
+Create a `GET /v3/me/permissions` endpoint that returns the current user's effective permissions:
+
+```json
+{
+  "user_id": "uuid",
+  "is_superadmin": false,
+  "permissions": [
+    {"path": "/projects", "privileges": ["Project.Audit", "Project.Allocate"]},
+    {"path": "/projects/{id}", "privileges": ["Project.Audit", "Project.Modify"]},
+    {"path": "/templates", "privileges": ["Template.Audit"]}
+  ],
+  "pools": [
+    {"path": "/pools/{id}", "name": "Team Projects", "privileges": ["Pool.Audit"]}
+  ]
+}
+```
+
+### Benefits
+
+- ✅ **Dynamic UI**: Frontend can hide inaccessible menus/buttons
+- ✅ **Better UX**: Users only see what they can actually use
+- ✅ **Reduced errors**: Fewer 403 responses from hidden operations
+- ✅ **Faster feedback**: Permission checks happen at render time, not request time
+
+### Dependencies
+
+- **Phase 5 (ACE refactoring)** may change how permissions are stored, which would affect this API's implementation
