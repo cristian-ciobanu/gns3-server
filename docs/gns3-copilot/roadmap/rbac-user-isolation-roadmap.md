@@ -405,3 +405,59 @@ Renaming would require changes to:
 - **Data migration**: Existing resource pools must be preserved during table rename
 - **Documentation updates**: All references in docs, tutorials, and API specs need updating
 - **UI changes**: Frontend labels and navigation menus need to match new terminology
+
+## Phase 8 — Per-User Project Namespace (Future)
+
+**Goal**: Allow project names to be unique per user instead of globally unique, enabling better user experience.
+
+### Current Problem
+
+Although Phase 1 implements user isolation (users only see projects they created or have access to through resource pools), project names remain globally unique:
+
+- ❌ **Naming conflicts**: Alice and Bob cannot both create a project named "My Project"
+- ❌ **Unnecessary restrictions**: Even though projects are isolated, users must coordinate globally unique names
+- ❌ **Poor user experience**: Users get confusing error messages when trying to use common names like "Test Project"
+
+### Proposed Solution
+
+Change project uniqueness from global to per-user:
+
+**Current:**
+```sql
+UNIQUE(name)  -- Project names must be globally unique
+```
+
+**Proposed:**
+```sql
+UNIQUE(user_id, name)  -- Project names unique per user
+```
+
+### Benefits
+
+- ✅ **Better UX**: Users can name projects whatever they want without worrying about global conflicts
+- ✅ **Natural naming**: Common names like "Test Project" or "Demo" can coexist between users
+- ✅ **No coordination needed**: Teams don't need to maintain a shared project naming registry
+- ✅ **Consistent isolation**: Projects are isolated both in visibility AND naming
+
+### Implementation Scope
+
+Changes required:
+- **Database schema**: Modify Project table unique constraint from `(name)` to `(user_id, name)`
+- **Migration script**: Handle existing projects with conflicting names
+- **API validation**: Update project creation validation logic
+- **Frontend**: Remove global name uniqueness checks from UI
+
+### Migration Considerations
+
+**Handling existing name conflicts:**
+If the database already has projects with the same name but different users:
+- Option 1: Keep existing names, only enforce uniqueness for new projects
+- Option 2: Append suffixes to duplicates (e.g., "My Project (alice)", "My Project (bob)")
+- Option 3: Require admin resolution for conflicts before enabling new constraint
+
+**Recommended**: Option 1 (grandfather existing projects) for minimal disruption.
+
+### Dependencies
+
+- **Phase 1 (User isolation)**: Must be completed first
+- Database migration required to modify unique constraint
