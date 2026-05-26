@@ -244,3 +244,71 @@ The same three-step filtering pattern can be applied to:
 - **Other resources**: Extend the pattern as needed
 
 This implementation provides a solid foundation for user isolation in GNS3 3.0+ while maintaining compatibility with the existing RBAC framework.
+
+## Phase 5 — ACE Architecture Refactoring (Future)
+
+**Goal**: Improve ACE manageability by supporting multiple paths and resource pools in a single ACE entry.
+
+### Current Problem
+
+With the current design where one ACE = one path:
+- **ACE explosion**: 5 user groups × 10 resource pools = 50 ACE entries
+- **Management complexity**: Difficult to maintain and understand ACE purpose
+- **Performance impact**: Permission checking must iterate through many ACE entries
+
+### Proposed Solution
+
+Redesign ACE structure to support multiple paths and resource pools in a single ACE entry:
+
+```json
+{
+  "name": "Development Team Access",
+  "description": "Full access for development team",
+  "ace_type": "group",
+  "group_id": "...",
+  "role_id": "...",
+  "paths": ["/projects", "/templates", "/images"],
+  "resource_pools": ["pool-id-1", "pool-id-2"],
+  "propagate": true,
+  "allowed": true
+}
+```
+
+### Database Changes Required
+
+1. **Add name and description to ACE table**:
+```sql
+ALTER TABLE acl ADD COLUMN name VARCHAR;
+ALTER TABLE acl ADD COLUMN description TEXT;
+```
+
+2. **Create association tables**:
+```sql
+CREATE TABLE ace_paths (
+    ace_id UUID REFERENCES acl(ace_id),
+    path VARCHAR,
+    PRIMARY KEY (ace_id, path)
+);
+
+CREATE TABLE ace_pools (
+    ace_id UUID REFERENCES acl(ace_id),
+    resource_pool_id UUID REFERENCES resource_pools(resource_pool_id),
+    PRIMARY KEY (ace_id, resource_pool_id)
+);
+```
+
+3. **Update permission checking logic** to check both paths and resource_pools tables
+
+### Benefits
+
+- ✅ **Reduced ACE entries**: One ACE covers multiple related paths/pools
+- ✅ **Better organization**: Logical grouping with clear names and descriptions
+- ✅ **Easier management**: Edit one ACE instead of multiple related entries
+- ✅ **Improved performance**: Fewer ACE entries to check during permission validation
+
+### Implementation Considerations
+
+- **Migration path**: Need to migrate existing single-path ACEs to new structure
+- **Backward compatibility**: API should support both old and new formats during transition
+- **UI updates**: ACE management interface needs to support multi-path/pool selection
+- **Permission checking**: Update `check_user_has_privilege` to check association tables
