@@ -230,6 +230,25 @@ class RbacRepository(BaseRepository):
         result = await self._db_session.execute(query)
         return result.scalars().all()
 
+    async def get_aces_for_path(self, path: str) -> List[models.ACE]:
+        """
+        Get all ACEs for a specific path (exact match or starting with path).
+
+        This method includes related user, group, and role information.
+        """
+
+        query = select(models.ACE).\
+            where(
+                (models.ACE.path == path) | (models.ACE.path.startswith(path + "/"))
+            ).\
+            options(
+                selectinload(models.ACE.user),
+                selectinload(models.ACE.group),
+                selectinload(models.ACE.role)
+            )
+        result = await self._db_session.execute(query)
+        return result.scalars().all()
+
     async def check_ace_exists(self, path: str) -> bool:
         """
         Check if an ACE exists.

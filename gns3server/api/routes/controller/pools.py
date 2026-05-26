@@ -149,8 +149,7 @@ async def delete_resource_pool(
 
     # Check if there are any ACE configurations using this resource pool path
     pool_path = f"/pools/{resource_pool_id}"
-    aces = await rbac_repo.get_aces()
-    using_aces = [ace for ace in aces if ace.path == pool_path or ace.path.startswith(pool_path + "/")]
+    using_aces = await rbac_repo.get_aces_for_path(pool_path)
 
     if using_aces:
         # Build detailed error message with ACE information
