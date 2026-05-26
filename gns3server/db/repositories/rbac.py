@@ -428,22 +428,26 @@ class RbacRepository(BaseRepository):
 
         aces = await self._get_user_aces(user_id, privilege_name)
         try:
+            # Check regular ACEs first
+            if self._check_path_with_aces(path, aces):
+                # the user has an ACE matching the path and privilege, there is no need to check group ACEs
+                return True
+            # Then check resource pool ACEs
             if path_is_in_pool:
                 if await self._get_resources_in_pools(aces, path):
                     return True
-            elif self._check_path_with_aces(path, aces):
-                # the user has an ACE matching the path and privilege, there is no need to check group ACEs
-                return True
         except PermissionError:
             return False
 
         aces = await self._get_group_aces(user_id, privilege_name)
         try:
+            # Check regular ACEs first
+            if self._check_path_with_aces(path, aces):
+                return True
+            # Then check resource pool ACEs
             if path_is_in_pool:
                 if await self._get_resources_in_pools(aces, path):
                     return True
-            elif self._check_path_with_aces(path, aces):
-                return True
         except PermissionError:
             return False
         return False
