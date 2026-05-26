@@ -461,3 +461,161 @@ If the database already has projects with the same name but different users:
 
 - **Phase 1 (User isolation)**: Must be completed first
 - Database migration required to modify unique constraint
+
+## Phase 9 — User Self-Registration (Future)
+
+**Goal**: Allow users to register their own accounts without requiring manual admin creation.
+
+### Current State
+
+Currently, user accounts can only be created by administrators or through direct database operations:
+- ❌ **Admin burden**: Every new user requires manual account creation
+- ❌ **Poor scalability**: Not suitable for public deployments or large organizations
+- ❌ **Friction**: Users cannot immediately start using the system
+
+### Proposed Features
+
+**Self-Registration Flow:**
+1. User provides email, username, and password
+2. System validates input and creates account
+3. Optional email verification to confirm email address
+4. Account created with default role (typically "User" role)
+5. User can immediately log in and start creating projects
+
+**Email Verification (Optional):**
+- Send verification email with confirmation link/code
+- Verify email address before granting full access
+- Prevent spam account creation
+- Require SMTP server configuration
+
+### Implementation Components
+
+1. **New API endpoint**: `POST /v3/access/register` (public, no authentication required)
+2. **Email service**: Integration with SMTP server for sending emails
+3. **Configuration**: SMTP settings (host, port, credentials, encryption)
+4. **Rate limiting**: Prevent abuse of self-registration
+5. **Captcha integration**: Optional bot protection
+
+### Configuration
+
+```yaml
+Server:
+  email:
+    enabled: true
+    smtp_host: smtp.example.com
+    smtp_port: 587
+    smtp_username: noreply@example.com
+    smtp_password: secret
+    use_tls: true
+  registration:
+    require_email_verification: true
+    default_role: "User"
+    allow_public_registration: true
+```
+
+### Security Considerations
+
+- ✅ **Rate limiting**: Prevent spam account creation
+- ✅ **Email verification**: Confirm email ownership
+- ✅ **Default permissions**: New users get limited default role
+- ✅ **Admin approval** (optional): Require admin approval before account activation
+- ❌ **Superadmin creation**: Never allow self-registration as superadmin
+
+### Dependencies
+
+- **Phase 10 (Email service)**: SMTP integration required for email verification
+
+## Phase 10 — Email Service Integration (Future)
+
+**Goal**: Implement email sending capability for notifications, verification, and alerts.
+
+### Use Cases
+
+1. **User registration**: Email verification links/codes
+2. **Password reset**: Secure password reset emails
+3. **System alerts**: Error notifications, system updates
+4. **Project sharing**: Notify users when projects are shared via resource pools
+5. **Usage reports**: Periodic usage summaries or quota alerts
+
+### Proposed Implementation
+
+**Email Service Architecture:**
+- Abstract email service interface
+- Support multiple email providers (SMTP, SendGrid, AWS SES, etc.)
+- Email templates with Jinja2 for customization
+- Async email sending to avoid blocking API responses
+- Email queue for retry logic on failures
+
+**Email Templates:**
+- Registration verification
+- Password reset
+- Project shared notification
+- System alerts
+- Usage reports
+
+**API Endpoints:**
+```python
+# Configuration (admin only)
+POST /v3/access/config/email
+GET /v3/access/config/email
+PUT /v3/access/config/email
+
+# Test email (admin only)
+POST /v3/access/config/email/test
+
+# Password reset (public)
+POST /v3/access/users/password/reset/request
+POST /v3/access/users/password/reset/confirm
+
+# Email verification (public)
+POST /v3/access/users/verify/email
+POST /v3/access/users/verify/confirm
+```
+
+### Database Schema
+
+New table for email tracking:
+```sql
+CREATE TABLE email_verification_tokens (
+    token_id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    token VARCHAR(255),  # Verification code
+    purpose VARCHAR(50),  # 'registration', 'password_reset', etc.
+    expires_at DATETIME,
+    created_at DATETIME,
+    used BOOLEAN DEFAULT FALSE
+);
+```
+
+### Configuration
+
+```yaml
+Server:
+  email:
+    enabled: true
+    provider: "smtp"  # or "sendgrid", "aws_ses", etc.
+    from_address: "noreply@example.com"
+    from_name: "GNS3 Server"
+    reply_to: "support@example.com"
+    smtp:
+      host: smtp.example.com
+      port: 587
+      username: noreply@example.com
+      password: encrypted_password
+      use_tls: true
+    templates_dir: /etc/gns3/email_templates
+```
+
+### Security Considerations
+
+- ✅ **Encrypted credentials**: SMTP passwords stored encrypted in database
+- ✅ **Token expiration**: Verification tokens expire after configurable time
+- ✅ **Rate limiting**: Prevent email spamming
+- ✅ **Async sending**: Don't block API responses on email operations
+- ✅ **Retry logic**: Handle temporary email service failures
+- ✅ **Privacy**: Don't expose user information in error messages
+
+### Dependencies
+
+- **Phase 9 (Self-registration)**: User self-registration requires email verification
+- Encryption utilities for storing SMTP credentials securely
