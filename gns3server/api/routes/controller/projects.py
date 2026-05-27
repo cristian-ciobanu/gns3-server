@@ -76,7 +76,6 @@ def dep_project(project_id: UUID) -> Project:
 async def get_projects(
         current_user: schemas.User = Depends(get_current_active_user),
         rbac_repo: RbacRepository = Depends(get_repository(RbacRepository)),
-        pools_repo: ResourcePoolsRepository = Depends(get_repository(ResourcePoolsRepository))
 ) -> List[schemas.Project]:
     """
     Return all projects.
@@ -92,31 +91,26 @@ async def get_projects(
         # super admin sees all projects
         return [p.asdict() for p in controller.projects.values()]
 
-    # Step 1: ACE check - basic access permission
-    # Get projects user has ACE for (basic access control)
-    ace_projects = []
-    for project in controller.projects.values():
-        project_path = f"/projects/{project.id}"
-        if await rbac_repo.check_user_has_privilege(current_user.user_id, project_path, "Project.Audit"):
-            ace_projects.append(project)
+    # Batch ACE + resource pool check (3 DB queries regardless of project count)
+    all_project_ids = list(controller.projects.keys())
+    direct_ace_ids, pool_accessible_ids = await rbac_repo.get_accessible_project_ids(
+        current_user.user_id, "Project.Audit", all_project_ids
+    )
 
-    # Step 2: Filter ace_projects by created_by - user's own projects
-    # Project sharing is only available through resource pools
-    user_projects = [p.asdict() for p in ace_projects if p.created_by == current_user.username]
-    for project in user_projects:
-        if project['project_id'] not in seen_project_ids:
-            projects.append(project)
-            seen_project_ids.add(project['project_id'])
+    # Step 2: Filter direct ACE projects by created_by
+    # Direct project sharing is only available through resource pools
+    for p in controller.projects.values():
+        if p.id in direct_ace_ids and p.created_by == current_user.username:
+            if p.id not in seen_project_ids:
+                projects.append(p.asdict())
+                seen_project_ids.add(p.id)
 
-    # Step 3: Resource pool projects
-    # Projects shared through resource pools
-    user_pool_resources = await rbac_repo.get_user_pool_resources(current_user.user_id, "Project.Audit")
-    project_ids_in_pools = [str(r.resource_id) for r in user_pool_resources if r.resource_type == "project"]
-    pool_projects = [p.asdict() for p in controller.projects.values() if p.id in project_ids_in_pools]
-    for project in pool_projects:
-        if project['project_id'] not in seen_project_ids:
-            projects.append(project)
-            seen_project_ids.add(project['project_id'])
+    # Step 3: Resource pool projects (no created_by filter)
+    for p in controller.projects.values():
+        if p.id in pool_accessible_ids:
+            if p.id not in seen_project_ids:
+                projects.append(p.asdict())
+                seen_project_ids.add(p.id)
 
     return projects
 

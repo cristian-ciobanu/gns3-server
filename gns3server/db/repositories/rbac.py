@@ -404,6 +404,83 @@ class RbacRepository(BaseRepository):
         pool_resources.extend(await self._get_resources_in_pools(group_aces))
         return list(set(pool_resources))
 
+    async def get_accessible_project_ids(
+            self,
+            user_id: UUID,
+            privilege_name: str,
+            all_project_ids: List[str]
+    ):
+        """
+        Batch check which projects a user can access via direct ACE or resource pools.
+        Performs 3 fixed DB queries regardless of project count.
+
+        Returns:
+            (direct_ace_ids, pool_accessible_ids) where:
+            - direct_ace_ids: projects the user has a direct ACE on (needs created_by filter)
+            - pool_accessible_ids: projects in resource pools the user can access (no created_by filter)
+        """
+
+        user_aces = await self._get_user_aces(user_id, privilege_name)
+        group_aces = await self._get_group_aces(user_id, privilege_name)
+
+        # Single query for all resources and their pool memberships
+        query = select(models.Resource).options(selectinload(models.Resource.resource_pools))
+        result = await self._db_session.execute(query)
+        all_resources = result.scalars().all()
+
+        # Precompute pool_id -> set of project_ids
+        pool_to_projects = {}
+        for r in all_resources:
+            if r.resource_type == "project":
+                for pool in r.resource_pools:
+                    pool_to_projects.setdefault(str(pool.resource_pool_id), set()).add(str(r.resource_id))
+
+        # --- User ACE: direct path check ---
+        direct_ace_ids = set()
+        user_denied = set()
+
+        for pid in all_project_ids:
+            path = f"/projects/{pid}"
+            try:
+                if self._check_path_with_aces(path, user_aces):
+                    direct_ace_ids.add(pid)
+            except PermissionError:
+                user_denied.add(pid)
+
+        # --- User ACE: pool check ---
+        user_pool_ids = {ace_path.split("/")[2] for ace_path, _, ace_allowed, _ in user_aces
+                         if ace_path.startswith("/pools/") and ace_allowed}
+
+        pool_accessible_ids = set()
+        for pool_id, project_ids in pool_to_projects.items():
+            if pool_id in user_pool_ids:
+                for pid in project_ids:
+                    if pid not in user_denied:
+                        pool_accessible_ids.add(pid)
+
+        # --- Group ACE: direct path check (skip already accessible or denied) ---
+        for pid in all_project_ids:
+            if pid in direct_ace_ids or pid in user_denied:
+                continue
+            path = f"/projects/{pid}"
+            try:
+                if self._check_path_with_aces(path, group_aces):
+                    direct_ace_ids.add(pid)
+            except PermissionError:
+                pass
+
+        # --- Group ACE: pool check ---
+        group_pool_ids = {ace_path.split("/")[2] for ace_path, _, ace_allowed, _ in group_aces
+                          if ace_path.startswith("/pools/") and ace_allowed}
+
+        for pool_id, project_ids in pool_to_projects.items():
+            if pool_id in group_pool_ids:
+                for pid in project_ids:
+                    if pid not in user_denied and pid not in pool_accessible_ids:
+                        pool_accessible_ids.add(pid)
+
+        return direct_ace_ids, pool_accessible_ids
+
     async def check_user_has_privilege(self, user_id: UUID, path: str, privilege_name: str) -> bool:
         """
         Resource paths form a file system like tree and privileges can be inherited by paths down that tree
