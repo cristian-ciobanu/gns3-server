@@ -86,6 +86,7 @@ async def get_projects(
 
     controller = Controller.instance()
     projects = []
+    seen_project_ids = set()  # track seen projects to avoid duplicates
 
     if current_user.is_superadmin:
         # super admin sees all projects
@@ -102,14 +103,20 @@ async def get_projects(
     # Step 2: Filter ace_projects by created_by - user's own projects
     # Project sharing is only available through resource pools
     user_projects = [p.asdict() for p in ace_projects if p.created_by == current_user.username]
-    projects.extend(user_projects)
+    for project in user_projects:
+        if project['project_id'] not in seen_project_ids:
+            projects.append(project)
+            seen_project_ids.add(project['project_id'])
 
     # Step 3: Resource pool projects
     # Projects shared through resource pools
     user_pool_resources = await rbac_repo.get_user_pool_resources(current_user.user_id, "Project.Audit")
     project_ids_in_pools = [str(r.resource_id) for r in user_pool_resources if r.resource_type == "project"]
     pool_projects = [p.asdict() for p in controller.projects.values() if p.id in project_ids_in_pools]
-    projects.extend(pool_projects)
+    for project in pool_projects:
+        if project['project_id'] not in seen_project_ids:
+            projects.append(project)
+            seen_project_ids.add(project['project_id'])
 
     return projects
 
