@@ -19,7 +19,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
-async def create_test_projects(base_url, headers, count):
+async def create_test_projects(base_url, headers, count, prefix="perf_test_project"):
     """Create specified number of test projects"""
     print(f"Creating {count} test projects...")
 
@@ -31,7 +31,7 @@ async def create_test_projects(base_url, headers, count):
             batch_tasks = []
 
             for i in range(batch_start, batch_end):
-                name = f"perf_test_project_{i}_{uuid.uuid4().hex[:8]}"
+                name = f"{prefix}_{i}_{uuid.uuid4().hex[:8]}"
                 task = client.post(
                     f"{base_url}/projects",
                     headers=headers,
@@ -51,9 +51,10 @@ async def create_test_projects(base_url, headers, count):
                     print(f"  Error creating project {i+1}: {result}")
 
 
-async def cleanup_test_projects(base_url, headers):
+async def cleanup_test_projects(base_url, headers, prefix="perf_test_project"):
     """Clean up test projects"""
     print("Cleaning up test projects...")
+    cleanup_start = time.time()
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -61,10 +62,11 @@ async def cleanup_test_projects(base_url, headers):
             if response.status_code == 200:
                 projects = response.json()
 
-                test_projects = [p for p in projects if p.get('name', '').startswith('perf_test_project_')]
+                test_projects = [p for p in projects if p.get('name', '').startswith(prefix)]
                 print(f"  Found {len(test_projects)} test projects to delete")
 
                 batch_size = 50
+                total_deleted = 0
                 for batch_start in range(0, len(test_projects), batch_size):
                     batch_end = min(batch_start + batch_size, len(test_projects))
                     batch_tasks = []
@@ -80,19 +82,17 @@ async def cleanup_test_projects(base_url, headers):
 
                     for i, result in enumerate(results, batch_start):
                         project = test_projects[i]
-                        if hasattr(result, 'status_code'):
-                            if result.status_code == 204:
-                                print(f"  Deleted {project['name']}")
-                            else:
-                                print(f"  Failed to delete {project['name']}: {result.status_code}")
-                        else:
-                            print(f"  Error deleting {project['name']}: {result}")
+                        if hasattr(result, 'status_code') and result.status_code == 204:
+                            total_deleted += 1
+
+        elapsed = time.time() - cleanup_start
+        print(f"  Deleted {total_deleted} projects in {elapsed:.1f}s ({total_deleted/elapsed:.0f} projects/sec)")
 
     except Exception as e:
         print(f"Error during cleanup: {type(e).__name__}: {e}")
 
 
-async def benchmark_get_projects(base_url, headers, project_count, iterations=10):
+async def benchmark_get_projects(base_url, headers, project_count, iterations=10, prefix="perf_test_project"):
     """Benchmark GET /projects endpoint"""
 
     print(f"\n{'='*60}")
@@ -102,7 +102,7 @@ async def benchmark_get_projects(base_url, headers, project_count, iterations=10
     print(f"{'='*60}\n")
 
     if project_count > 0:
-        await create_test_projects(base_url, headers, project_count)
+        await create_test_projects(base_url, headers, project_count, prefix)
 
     # Warm-up run
     print("Performing warm-up run...")
@@ -145,7 +145,7 @@ async def benchmark_get_projects(base_url, headers, project_count, iterations=10
 
     # Cleanup test projects
     if project_count > 0:
-        await cleanup_test_projects(base_url, headers)
+        await cleanup_test_projects(base_url, headers, prefix)
 
     # Calculate statistics
     if response_times:
@@ -211,6 +211,10 @@ async def main():
                         help='Run full scale test: 10, 50, 100, 200, 500 projects')
     parser.add_argument('--no-cleanup', action='store_true',
                         help='Do not create/cleanup test projects (use existing projects)')
+    parser.add_argument('--prefix', type=str, default='perf_test_project',
+                        help='Project name prefix for test/cleanup (default: perf_test_project)')
+    parser.add_argument('--cleanup-only', action='store_true',
+                        help='Only clean up test projects, do not run benchmark')
 
     args = parser.parse_args()
 
@@ -248,6 +252,11 @@ async def main():
     else:
         project_counts = args.project_counts
 
+    # If cleanup-only flag, just clean up and exit
+    if args.cleanup_only:
+        await cleanup_test_projects(base_url, headers, args.prefix)
+        return
+
     # If no-cleanup flag, test with existing projects as-is
     if args.no_cleanup:
         project_counts = [0]
@@ -257,7 +266,7 @@ async def main():
 
     for count in project_counts:
         try:
-            result = await benchmark_get_projects(base_url, headers, count, args.iterations)
+            result = await benchmark_get_projects(base_url, headers, count, args.iterations, args.prefix)
             if result:
                 results.append(result)
         except Exception as e:
