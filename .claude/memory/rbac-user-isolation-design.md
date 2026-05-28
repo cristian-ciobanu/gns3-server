@@ -20,20 +20,32 @@ Traditional RBAC's **path permission model** fundamentally conflicts with **user
 #### Three-Step Permission Check Logic
 
 ```python
-# Step 1: ACE check - basic access permission
-# Get list of projects user has ACE for
-ace_projects = [p for p in all_projects() if user_has_ace(p, "Project.Audit")]
+# Step 1: Batch ACE + resource pool check (3 DB queries regardless of project count)
+direct_ace_ids, pool_accessible_ids = await rbac_repo.get_accessible_project_ids(
+    current_user.user_id, "Project.Audit", all_project_ids
+)
 
-# Step 2: Filter ace_projects by created_by - user's own projects
-# Key: Project sharing is only available through resource pools
-user_projects = [p for p in ace_projects if p.created_by == user.username]
+# Step 2: Filter direct ACE projects by created_by (user's own projects)
+# Direct project sharing is only available through resource pools
+for p in controller.projects.values():
+    if p.id in direct_ace_ids and p.created_by == current_user.username:
+        projects.append(p.asdict())
 
-# Step 3: Resource pool projects
-# Projects shared through resource pools
-pool_projects = [p for p in pool_projects]
-
-final_projects = user_projects + pool_projects
+# Step 3: Resource pool projects (no created_by filter)
+for p in controller.projects.values():
+    if p.id in pool_accessible_ids:
+        projects.append(p.asdict())
 ```
+
+##### Super Admin Bypass
+```python
+if current_user.is_superadmin:
+    return [p.asdict() for p in controller.projects.values()]
+```
+Super admins skip all three steps and see every project.
+
+##### seen_project_ids Deduplication
+A simple `seen_project_ids` set prevents the same project from appearing twice when it exists in both direct ACE and pool results. This is a lightweight dedup, not the complex blocking mechanism from earlier rejected designs.
 
 ### Key Design Decisions
 
@@ -53,6 +65,20 @@ Result: Users still only see projects they created
 Reason: Step 2 created_by filtering removes other users' projects
 ```
 
+### RbacRepository.get_accessible_project_ids()
+
+The core batch-check method in `gns3server/db/repositories/rbac.py` uses 3 DB queries:
+
+1. **User ACEs**: Direct ACE entries matching user + privilege
+2. **Group ACEs**: Group-level ACE entries via `UserGroup` membership
+3. **All resources with pool memberships**: Preloads all resources and their pool relationships
+
+Then it computes two sets:
+- **`direct_ace_ids`**: Project paths matching user or group ACEs (path-based check)
+- **`pool_accessible_ids`**: Projects in pools the user/group can access (pool-based check)
+
+Pool IDs are precomputed into a `pool_id -> set(project_ids)` map for O(1) lookup.
+
 ### Problems Solved
 
 #### Problem 1: Missing User Isolation
@@ -64,26 +90,27 @@ Reason: Step 2 created_by filtering removes other users' projects
 - **Solution**: Step 2 created_by filtering ensures user isolation even with broad ACE
 
 #### Problem 3: Permission Check Order Conflicts
-- **Issue**: seen mechanism blocks subsequent checks
-- **Solution**: Remove seen mechanism, use pipeline-style filtering
+- **Issue**: seen mechanism blocks subsequent checks (from earlier design phases)
+- **Solution**: Simple pipeline-style filtering with lightweight dedup set
 
 ### Technical Details
 
 #### API Layer Permission Check
 ```python
 @router.get("/projects")  # Note: no has_privilege decorator
-async def get_projects(current_user: schemas.User = Depends(get_current_active_user)):
+async def get_projects(current_user=..., rbac_repo=...):
     # Permission checks in business logic
 ```
 
 #### Duplicate Prevention
-- No seen_project_ids mechanism
-- Natural duplicate prevention through pipeline filtering
+- Simple `seen_project_ids` set for deduplication between direct ACE and pool results
+- Not the complex blocking mechanism from earlier phases
 
 #### Performance Considerations
-- ACE check: O(n), where n is total projects
-- created_by filtering: O(m), where m is ace_projects count
-- Resource pool check: O(k), where k is pool project count
+- Super admin path: O(1) — returns all projects directly
+- Regular user path: 3 fixed DB queries regardless of project count
+- Path-based ACE check: O(n * m) in worst case, where n = projects, m = ACE entries
+- Pool lookup: O(1) via precomputed pool->project map
 
 ### Use Cases
 
@@ -136,15 +163,17 @@ User isolation unaffected by ACE configuration
 - ✅ Simplified permission check logic
 
 #### Removed Components
-- ❌ Removed `/projects` path privilege check
-- ❌ Removed complex seen_project_ids mechanism
+- ❌ Removed `/projects` path privilege check on `get_projects` route
+- ❌ Removed the old complex `seen_project_ids` blocking mechanism
 - ❌ Avoided "can see all non-pool projects" privilege leak
 
 ### Implementation Details
 - **Main modification**: `gns3server/api/routes/controller/projects.py`
 - **Function**: `get_projects()`
+- **Batch check method**: `gns3server/db/repositories/rbac.py::RbacRepository.get_accessible_project_ids()`
+- **Privilege dependency**: `gns3server/api/routes/controller/dependencies/rbac.py::has_privilege()`
 - **Branch**: `feature/simple-user-isolation`
-- **Base branch**: `upstream/3.1`
+- **Base branch**: `master`
 
 ### Key Commits
 1. Implemented basic created_by filtering
@@ -161,15 +190,15 @@ user_projects = [p for p in all_projects() if p.created_by == user.username]
 
 #### Phase 2: Three-Layer Check (Wrong Version)
 ```python
-# Used seen_project_ids mechanism
+# Used complex seen_project_ids blocking mechanism
 # Issue: Broad ACE breaks user isolation
 ```
 
 #### Phase 3: Three-Step Check (Correct Version)
 ```python
-# Step 1: ACE check
-# Step 2: Filter ace_projects by created_by
-# Step 3: Resource pools
+# Step 1: Batch ACE check via get_accessible_project_ids()
+# Step 2: Filter direct_ace_ids by created_by
+# Step 3: Resource pool projects (no created_by filter)
 ```
 **Solution**: User isolation works even with broad ACE
 
@@ -181,7 +210,7 @@ This implementation addresses items mentioned in the roadmap:
 
 ### Unsolved Issues
 
-1. **Auto-ACE on project creation**: Part of roadmap Phase 1
+1. **Auto-ACE on project creation**: Part of roadmap Phase 1 — `create_project()` sets `created_by` but doesn't create ACE entries
 2. **Template and image isolation**: Can apply same design pattern
 3. **Default ACE configuration**: Need reasonable default permissions for Users group
 
@@ -189,7 +218,7 @@ This implementation addresses items mentioned in the roadmap:
 
 1. **Project sharing only through resource pools**: No direct ACE configuration for sharing
 2. **ACE configuration required**: Users need basic ACE to access system
-3. **Performance considerations**: ACE check queries database for each project
+3. **Performance considerations**: ACE check queries database for each project path
 
 ### Future Improvement Directions
 
