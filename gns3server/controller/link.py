@@ -23,6 +23,7 @@ import html
 from .controller_error import ControllerError, ControllerNotFoundError
 from gns3server.agent.web_wireshark.manager import WebWiresharkManager
 from gns3server.config import Config
+from gns3server.utils.packet_filter_validation import validate_all_filters, FilterValidationError
 
 import logging
 
@@ -160,6 +161,12 @@ class Link:
             values = new_values
             if len(values) != 0 and values[0] != 0 and values[0] != "":
                 new_filters[filter] = values
+
+        # Validate filter parameters before applying
+        try:
+            validate_all_filters(new_filters)
+        except FilterValidationError as e:
+            raise ControllerError(f"Invalid packet filter parameters: {str(e)}")
 
         if new_filters != self.filters:
             self._filters = new_filters
