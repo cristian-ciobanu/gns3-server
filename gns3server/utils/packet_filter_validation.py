@@ -95,7 +95,7 @@ def validate_filter_parameters(filter_type: str, values: List[Any]) -> None:
         },
         "delay": {
             "params_count": 2,  # latency, jitter
-            "ranges": [(0, 32767), (0, 32767)],
+            "ranges": [(1, 32767), (0, 32767)],  # ubridge rejects latency <= 0
             "names": ["Latency", "Jitter"],
             "units": ["ms", "ms"]
         },

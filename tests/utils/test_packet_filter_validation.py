@@ -54,19 +54,23 @@ class TestPacketFilterValidation:
 
     def test_delay_valid(self):
         """Test valid delay parameters."""
-        # Valid range: 0-32767ms
-        validate_filter_parameters("delay", [0, 0])
+        # Valid range: 1-32767ms latency, 0-32767ms jitter
+        validate_filter_parameters("delay", [1, 0])
         validate_filter_parameters("delay", [100, 50])
         validate_filter_parameters("delay", [32767, 32767])
 
     def test_delay_invalid(self):
         """Test invalid delay parameters."""
+        # Zero latency (ubridge rejects latency <= 0)
+        with pytest.raises(FilterValidationError, match="between 1 and 32767"):
+            validate_filter_parameters("delay", [0, 0])
+
         # Negative latency
-        with pytest.raises(FilterValidationError, match="between 0 and 32767"):
+        with pytest.raises(FilterValidationError, match="between 1 and 32767"):
             validate_filter_parameters("delay", [-1, 0])
 
         # Over max
-        with pytest.raises(FilterValidationError, match="between 0 and 32767"):
+        with pytest.raises(FilterValidationError, match="between 1 and 32767"):
             validate_filter_parameters("delay", [32768, 0])
 
         # Negative jitter

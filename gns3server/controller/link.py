@@ -48,7 +48,7 @@ FILTERS = [
         "name": "Delay",
         "description": "Delay packets in milliseconds. You can add jitter in milliseconds (+/-) of the delay",
         "parameters": [
-            {"name": "Latency", "minimum": 0, "maximum": 32767, "unit": "ms", "type": "int"},
+            {"name": "Latency", "minimum": 1, "maximum": 32767, "unit": "ms", "type": "int"},
             {"name": "Jitter (-/+)", "minimum": 0, "maximum": 32767, "unit": "ms", "type": "int"},
         ],
     },
