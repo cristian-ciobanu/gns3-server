@@ -583,7 +583,7 @@ class Link:
                 "suspend": self._suspended,
                 "show_filters_icon": getattr(self, '_show_filters_icon', True),
             }
-        return {
+        result = {
             "nodes": res,
             "link_id": self._id,
             "project_id": self._project.id,
@@ -598,3 +598,4 @@ class Link:
             "wireshark": self._wireshark,
             "show_filters_icon": getattr(self, '_show_filters_icon', True),
         }
+        return result

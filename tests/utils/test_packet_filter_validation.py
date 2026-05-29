@@ -93,26 +93,28 @@ class TestPacketFilterValidation:
         validate_filter_parameters("bpf", [""])  # Empty is valid
         validate_filter_parameters("bpf", ["host 192.168.1.1 and port 443"])
 
+    def test_bpf_multi_line_valid(self):
+        """Test valid multi-line BPF expressions."""
+        validate_filter_parameters("bpf", ["tcp port 80\nnot arp"])
+        validate_filter_parameters("bpf", ["tcp and not port 22\nhost 192.168.1.1\nicmp"])
+
+    def test_bpf_multi_line_invalid(self):
+        """Test multi-line BPF with invalid line."""
+        with pytest.raises(FilterValidationError) as excinfo:
+            validate_filter_parameters("bpf", ["tcp port 80\ninvalid!!!"])
+        err = str(excinfo.value).lower()
+        assert "syntax error" in err
+
     def test_bpf_invalid(self):
         """Test invalid BPF parameters."""
         # Wrong type
         with pytest.raises(FilterValidationError, match="must be a string"):
             validate_filter_parameters("bpf", [123])
 
-        # Invalid BPF syntax (requires tshark)
-        try:
+        # Invalid BPF syntax
+        with pytest.raises(FilterValidationError) as excinfo:
             validate_filter_parameters("bpf", ["tcp port"])  # Missing port number
-            # If tshark is not available, this might pass
-            import subprocess
-            subprocess.run(["which", "tshark"], capture_output=True)
-            # If we get here, tshark exists, so validation should have failed
-            pytest.fail("Expected BPF validation to fail for invalid syntax")
-        except FilterValidationError as e:
-            # Expected: BPF syntax error
-            assert "invalid syntax" in str(e).lower() or "Invalid capture filter" in str(e)
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            # tshark not installed, skip this test
-            pytest.skip("tshark not installed, skipping BPF syntax validation test")
+        assert "syntax error" in str(excinfo.value).lower()
 
     def test_parameter_count_mismatch(self):
         """Test wrong number of parameters."""

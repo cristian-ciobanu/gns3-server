@@ -16,12 +16,12 @@ class FilterValidationError(Exception):
 
 def validate_bpf_syntax(bpf_expression: str) -> Dict[str, Optional[str]]:
     """
-    Validate BPF filter expression syntax using tshark.
+    Validate BPF filter expression syntax using tcpdump.
 
-    This uses the same approach as gns3_copilot's packet filter tool:
-    - Run tshark with the BPF expression on loopback interface
-    - Check for "Invalid" in output indicating syntax errors
-    - Timeout is expected behavior (tshark waits for traffic)
+    Uses `tcpdump -d` to compile the BPF expression into filter instructions.
+    This calls pcap_compile() internally (same as ubridge) but does not
+    capture traffic, so it returns immediately for both valid and invalid
+    expressions.
 
     Args:
         bpf_expression: BPF filter expression to validate
@@ -30,51 +30,35 @@ def validate_bpf_syntax(bpf_expression: str) -> Dict[str, Optional[str]]:
         dict with 'valid' (bool) and 'error' (str or None) keys
     """
     try:
-        # Use tshark to validate BPF syntax with 1 second timeout
-        # Use -i lo (loopback) to avoid "(null)" interface in error messages
         result = subprocess.run(
-            ["tshark", "-f", bpf_expression, "-i", "lo"],
-            timeout=1,
+            ["tcpdump", "-d", bpf_expression],
             capture_output=True,
             text=True,
         )
 
-        # Check if output contains "Invalid" indicating syntax error
-        if "Invalid" in result.stdout or "Invalid" in result.stderr:
+        if result.returncode != 0:
+            # Extract meaningful error from tcpdump's stderr
+            # Skip "Warning: assuming Ethernet" lines, keep only error lines
             error_lines = []
-            if "Invalid" in result.stderr:
-                error_lines.extend(
-                    line for line in result.stderr.split("\n") if "Invalid" in line
-                )
-            if "Invalid" in result.stdout:
-                error_lines.extend(
-                    line for line in result.stdout.split("\n") if "Invalid" in line
-                )
-
-            # Strip interface suffix for cleaner error
-            error_msg_parts = []
-            for line in error_lines:
-                clean = line.split(" for interface")[0].strip()
-                if clean:
-                    error_msg_parts.append(clean)
-            error_msg = " ".join(error_msg_parts) if error_msg_parts else "Invalid BPF syntax"
+            for line in result.stderr.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("Warning:"):
+                    # Strip "tcpdump: " prefix
+                    for prefix in ["tcpdump: "]:
+                        if line.startswith(prefix):
+                            line = line[len(prefix):]
+                    error_lines.append(line)
+            error_msg = " ".join(error_lines) if error_lines else "Invalid BPF expression"
             log.warning("BPF syntax validation failed: %s", error_msg)
             return {"valid": False, "error": error_msg}
 
         log.info("BPF syntax validation passed")
         return {"valid": True, "error": None}
 
-    except subprocess.TimeoutExpired:
-        # Timeout is expected behavior - tshark waits for traffic
-        # No "Invalid" in output means syntax is correct
-        log.info("BPF syntax validation passed (timeout expected)")
-        return {"valid": True, "error": None}
-
     except FileNotFoundError:
-        # tshark not installed - skip validation
         log.warning(
-            "tshark not found, skipping BPF syntax validation. "
-            "Install tshark to enable BPF validation."
+            "tcpdump not found, skipping BPF syntax validation. "
+            "Install tcpdump to enable BPF validation."
         )
         return {"valid": True, "error": None}
 
@@ -149,13 +133,21 @@ def validate_filter_parameters(filter_type: str, values: List[Any]) -> None:
                 )
 
             # Validate BPF syntax using tshark (same method as gns3_copilot)
+            # The value may be a multi-line string; each line becomes a
+            # separate ubridge filter. Validate each line individually.
             value = value.strip()
-            if value:  # Only validate non-empty BPF expressions
-                bpf_result = validate_bpf_syntax(value)
-                if not bpf_result["valid"]:
-                    raise FilterValidationError(
-                        f"{filter_type} parameter {rules['names'][i]} has invalid syntax: {bpf_result['error']}"
-                    )
+            if value:
+                lines = value.split("\n")
+                for line_num, line in enumerate(lines):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    bpf_result = validate_bpf_syntax(line)
+                    if not bpf_result["valid"]:
+                        raise FilterValidationError(
+                            f"{filter_type} parameter {rules['names'][i]} line {line_num + 1} "
+                            f"has invalid syntax: {bpf_result['error']}"
+                        )
         else:
             # Integer parameter validation
             try:
