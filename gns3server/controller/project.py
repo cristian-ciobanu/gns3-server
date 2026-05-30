@@ -95,7 +95,7 @@ class Project:
         show_grid=False,
         grid_size=75,
         drawing_grid_size=25,
-        show_interface_labels=False,
+        show_interface_labels=True,
         variables=None,
         supplier=None,
         created_by=None,
