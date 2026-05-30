@@ -1205,7 +1205,13 @@ class Project:
                     continue
                 link = await self.add_link(link_id=link_data["link_id"])
                 if "filters" in link_data:
-                    await link.update_filters(link_data["filters"])
+                    try:
+                        await link.update_filters(link_data["filters"])
+                    except ControllerError as e:
+                        log.warning(
+                            "Dropping invalid filters on link %s: %s",
+                            link_data.get("link_id"), e
+                        )
                 if "link_style" in link_data:
                     await link.update_link_style(link_data["link_style"])
                 if "show_filters_icon" in link_data:
