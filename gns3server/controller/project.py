@@ -1194,11 +1194,21 @@ class Project:
                     f"Please check the connection and try again."
                 )
 
+            # Parallel node creation for improved performance
+            # especially for projects with multiple Docker containers
+            nodes_to_create = []
             for node in topology.get("nodes", []):
                 compute = self.controller.get_compute(node.pop("compute_id"))
                 name = node.pop("name")
                 node_id = node.pop("node_id", str(uuid.uuid4()))
-                await self.add_node(compute, name, node_id, dump=False, **node)
+                nodes_to_create.append((compute, name, node_id, node))
+
+            # Create nodes in parallel with limited concurrency
+            # to avoid overwhelming the system with too many simultaneous operations
+            pool = Pool(concurrency=5)
+            for compute, name, node_id, node_data in nodes_to_create:
+                pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
+            await pool.join()
             for link_data in topology.get("links", []):
                 if "link_id" not in link_data.keys():
                     # skip the link
