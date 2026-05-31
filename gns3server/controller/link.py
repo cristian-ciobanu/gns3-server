@@ -23,7 +23,7 @@ import html
 from .controller_error import ControllerError, ControllerNotFoundError
 from gns3server.agent.web_wireshark.manager import WebWiresharkManager
 from gns3server.config import Config
-from gns3server.utils.packet_filter_validation import validate_all_filters, FilterValidationError
+from gns3server.utils.packet_filter_validation import validate_all_filters, filter_inactive_filters, FilterValidationError
 
 import logging
 
@@ -148,19 +148,11 @@ class Link:
         """
         Modify the filters list.
 
-        Filter with value 0 will be dropped because not active
+        Filters with value 0 will be filtered out as inactive, with special
+        handling for delay filter to distinguish between "disabled" and "invalid config".
         """
-        new_filters = {}
-        for (filter, values) in filters.items():
-            new_values = []
-            for value in values:
-                if isinstance(value, str):
-                    new_values.append(value.strip("\n "))
-                else:
-                    new_values.append(int(value))
-            values = new_values
-            if len(values) != 0 and values[0] != 0 and values[0] != "":
-                new_filters[filter] = values
+        # Filter out inactive filters using the utility function
+        new_filters = filter_inactive_filters(filters)
 
         # Validate filter parameters before applying
         try:
