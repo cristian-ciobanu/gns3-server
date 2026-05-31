@@ -170,6 +170,69 @@ def validate_filter_parameters(filter_type: str, values: List[Any]) -> None:
                 )
 
 
+def filter_inactive_filters(filters: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+    """
+    Filter out inactive packet filters before validation.
+
+    This function implements smart filtering logic:
+    - For most filters: value 0 means "disabled" and will be filtered out
+    - For delay filter: check both latency and jitter to determine intent
+      * delay: [0, 0] → User wants to disable delay completely, filter it out
+      * delay: [0, X] where X > 0 → Invalid config (latency must be >= 1), keep for validation error
+      * delay: [X, X] where X > 0 → Normal configuration, keep for validation
+
+    Args:
+        filters: Dictionary mapping filter types to their values
+
+    Returns:
+        Filtered dictionary with only active filters for validation
+    """
+
+    if not filters:
+        return {}
+
+    active_filters = {}
+    for filter_type, values in filters.items():
+        if not values or (isinstance(values, list) and len(values) == 0):
+            continue
+
+        # Normalize values (strip strings, convert to int)
+        normalized_values = []
+        for value in values:
+            if isinstance(value, str):
+                normalized_values.append(value.strip("\n "))
+            else:
+                normalized_values.append(int(value))
+        values = normalized_values
+
+        # Skip empty filters after normalization
+        if len(values) == 0:
+            continue
+
+        # Special handling for delay filter - check both latency and jitter
+        if filter_type == "delay":
+            if len(values) >= 1 and values[0] == 0:  # latency = 0
+                if len(values) >= 2 and values[1] == 0:  # jitter = 0 too
+                    # User intentionally disabling delay completely: [0, 0]
+                    log.debug(f"Filter {filter_type} with values {values} skipped (disabled)")
+                    continue  # Skip this filter silently
+                else:
+                    # Invalid config: latency=0 but jitter>0, keep for validation error
+                    log.debug(f"Filter {filter_type} with values {values} kept for validation (invalid config)")
+                    active_filters[filter_type] = values
+            else:
+                # latency>0, normal configuration
+                active_filters[filter_type] = values
+        # For other filters, skip if first value is 0 or empty string (means "disabled")
+        elif values[0] != 0 and values[0] != "":
+            active_filters[filter_type] = values
+        else:
+            # Filters like packet_loss=0, corrupt=0, frequency_drop=0 are intentionally disabled
+            log.debug(f"Filter {filter_type} with values {values} skipped (disabled)")
+
+    return active_filters
+
+
 def validate_all_filters(filters: Dict[str, List[Any]]) -> None:
     """
     Validate all packet filters.
