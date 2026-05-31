@@ -6,6 +6,7 @@ import pytest
 from gns3server.utils.packet_filter_validation import (
     validate_filter_parameters,
     validate_all_filters,
+    filter_inactive_filters,
     FilterValidationError
 )
 
@@ -161,3 +162,104 @@ class TestPacketFilterValidation:
         """Test unknown filter type."""
         with pytest.raises(FilterValidationError, match="Unknown filter type"):
             validate_filter_parameters("unknown_filter", [1])
+
+
+class TestFilterInactiveFilters:
+    """Test filter_inactive_filters function for smart filter filtering logic."""
+
+    def test_filter_inactive_delay_disabled(self):
+        """Test delay [0, 0] is filtered out (user wants to disable delay)."""
+        filters = {"delay": [0, 0]}
+        result = filter_inactive_filters(filters)
+        assert result == {}  # Should be filtered out
+
+    def test_filter_inactive_delay_invalid_config(self):
+        """Test delay [0, 100] is kept for validation (invalid config)."""
+        filters = {"delay": [0, 100]}
+        result = filter_inactive_filters(filters)
+        assert result == {"delay": [0, 100]}  # Should be kept for validation error
+
+    def test_filter_inactive_delay_normal_config(self):
+        """Test delay [100, 20] is kept (normal configuration)."""
+        filters = {"delay": [100, 20]}
+        result = filter_inactive_filters(filters)
+        assert result == {"delay": [100, 20]}  # Should be kept
+
+    def test_filter_inactive_delay_zero_jitter(self):
+        """Test delay [100, 0] is kept (normal config with zero jitter)."""
+        filters = {"delay": [100, 0]}
+        result = filter_inactive_filters(filters)
+        assert result == {"delay": [100, 0]}  # Should be kept
+
+    def test_filter_inactive_packet_loss_zero(self):
+        """Test packet_loss [0] is filtered out (disabled)."""
+        filters = {"packet_loss": [0]}
+        result = filter_inactive_filters(filters)
+        assert result == {}  # Should be filtered out
+
+    def test_filter_inactive_packet_loss_active(self):
+        """Test packet_loss [5] is kept (active)."""
+        filters = {"packet_loss": [5]}
+        result = filter_inactive_filters(filters)
+        assert result == {"packet_loss": [5]}  # Should be kept
+
+    def test_filter_inactive_corrupt_zero(self):
+        """Test corrupt [0] is filtered out (disabled)."""
+        filters = {"corrupt": [0]}
+        result = filter_inactive_filters(filters)
+        assert result == {}  # Should be filtered out
+
+    def test_filter_inactive_corrupt_active(self):
+        """Test corrupt [2] is kept (active)."""
+        filters = {"corrupt": [2]}
+        result = filter_inactive_filters(filters)
+        assert result == {"corrupt": [2]}  # Should be kept
+
+    def test_filter_inactive_frequency_drop_zero(self):
+        """Test frequency_drop [0] is filtered out (disabled)."""
+        filters = {"frequency_drop": [0]}
+        result = filter_inactive_filters(filters)
+        assert result == {}  # Should be filtered out
+
+    def test_filter_inactive_frequency_drop_active(self):
+        """Test frequency_drop [10] is kept (active)."""
+        filters = {"frequency_drop": [10]}
+        result = filter_inactive_filters(filters)
+        assert result == {"frequency_drop": [10]}  # Should be kept
+
+    def test_filter_inactive_bpf_empty(self):
+        """Test BPF empty string is filtered out."""
+        filters = {"bpf": [""]}
+        result = filter_inactive_filters(filters)
+        assert result == {}  # Should be filtered out
+
+    def test_filter_inactive_bpf_active(self):
+        """Test BPF with expression is kept."""
+        filters = {"bpf": ["tcp port 80"]}
+        result = filter_inactive_filters(filters)
+        assert result == {"bpf": ["tcp port 80"]}  # Should be kept
+
+    def test_filter_inactive_multiple_filters_mixed(self):
+        """Test multiple filters with mixed active/inactive states."""
+        filters = {
+            "delay": [0, 0],           # Disabled: [0, 0]
+            "packet_loss": [0],         # Disabled: 0%
+            "corrupt": [2],             # Active: 2%
+            "frequency_drop": [10]      # Active: every 10th packet
+        }
+        result = filter_inactive_filters(filters)
+        assert result == {
+            "corrupt": [2],
+            "frequency_drop": [10]
+        }
+
+    def test_filter_inactive_empty_filters(self):
+        """Test empty filters dictionary."""
+        filters = {}
+        result = filter_inactive_filters(filters)
+        assert result == {}
+
+    def test_filter_inactive_none_filters(self):
+        """Test None filters."""
+        result = filter_inactive_filters(None)
+        assert result == {}
