@@ -231,16 +231,18 @@ async def duplicate_template(
     template = await TemplatesService(templates_repo).duplicate_template(template_id)
     return template
 
-@router.get("/{template_id}/base-config/{filename}")
+@router.get(
+    "/{template_id}/base-config/{filename}",
+    dependencies=[Depends(has_privilege("Template.Audit"))]
+)
 async def get_base_config(
     template_id: UUID,
     filename: str,
     templates_repo: TemplatesRepository = Depends(get_repository(TemplatesRepository)),
 ):
+
     service = TemplatesService(templates_repo)
-
     await service.get_template(template_id)
-
     content = service.get_file(str(template_id), filename)
 
     return {
@@ -250,7 +252,10 @@ async def get_base_config(
     }
 
 
-@router.put("/{template_id}/base-config/{filename}")
+@router.put(
+    "/{template_id}/base-config/{filename}",
+    dependencies=[Depends(has_privilege("Template.Modify"))]
+)
 async def update_base_config(
     template_id: UUID,
     filename: str,
@@ -261,9 +266,7 @@ async def update_base_config(
         raise ControllerBadRequestError("Missing 'content' field")
 
     service = TemplatesService(templates_repo)
-
     await service.get_template(template_id)
-
     service.update_file(str(template_id), filename, body["content"])
 
     return {
@@ -273,14 +276,14 @@ async def update_base_config(
     }
 
 
-@router.get("/{template_id}/base-configs")
+@router.get(
+    "/{template_id}/base-configs",
+    dependencies=[Depends(has_privilege("Template.Audit"))]
+)
 async def list_base_configs(
     template_id: UUID,
     templates_repo: TemplatesRepository = Depends(get_repository(TemplatesRepository)),
 ):
     service = TemplatesService(templates_repo)
-
     await service.get_template(template_id)
-
     return service.list_files(str(template_id))
-
