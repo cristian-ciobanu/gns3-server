@@ -156,6 +156,14 @@ class ResourcePoolsRepository(BaseRepository):
         Delete a resource pool.
         """
 
+        # Get all resources in the pool first
+        resources = await self.get_pool_resources(resource_pool_id)
+
+        # Delete all resource records
+        for resource in resources:
+            await self.delete_resource(resource.resource_id)
+
+        # Now delete the resource pool
         query = delete(models.ResourcePool).where(models.ResourcePool.resource_pool_id == resource_pool_id)
         result = await self._db_session.execute(query)
         await self._db_session.commit()
