@@ -197,9 +197,11 @@ class Project:
             self.emit_controller_notification("project.updated", self.asdict())
             self.dump()
 
-            # update on computes
-            for compute in list(self._project_created_on_compute):
-                await compute.put(f"/projects/{self._id}", {"variables": self.variables})
+            # Only notify computes if variables actually changed and have content
+            # None and empty list are semantically equivalent (no variables) and don't affect running nodes
+            if "variables" in kwargs and kwargs["variables"]:
+                for compute in list(self._project_created_on_compute):
+                    await compute.put(f"/projects/{self._id}", {"variables": self.variables})
 
     def reset(self):
         """
