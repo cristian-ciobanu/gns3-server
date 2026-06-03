@@ -95,48 +95,49 @@ async def test_create(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -146,48 +147,49 @@ async def test_create_with_tag(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:16.04")
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:16.04")
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:16.04",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:16.04",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -198,60 +200,61 @@ async def test_create_vnc(compute_project, manager):
         "Warnings": []
     }
 
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", console_type="vnc", console=5900)
-            vm._start_vnc = MagicMock()
-            vm._display = 42
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": f"/tmp/.X11-unix/X{vm._display}",
-                                "Target": f"/tmp/.X11-unix/X{vm._display}",
-                                "ReadOnly": True
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", console_type="vnc", console=5900)
+                vm._start_vnc = MagicMock()
+                vm._display = 42
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": f"/tmp/.X11-unix/X{vm._display}",
+                                    "Target": f"/tmp/.X11-unix/X{vm._display}",
+                                    "ReadOnly": True
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network",
+                        "QT_GRAPHICSSYSTEM=native",
+                        "DISPLAY=:42"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network",
-                    "QT_GRAPHICSSYSTEM=native",
-                    "DISPLAY=:42"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._start_vnc.called
-        assert vm._cid == "e90e34656806"
-        assert vm._console_type == "vnc"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._start_vnc.called
+            assert vm._cid == "e90e34656806"
+            assert vm._console_type == "vnc"
 
 
 @pytest.mark.asyncio
@@ -263,13 +266,14 @@ async def test_create_with_extra_hosts(compute_project, manager):
         "Warnings": []
     }
 
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_hosts=extra_hosts)
-            await vm.create()
-            called_kwargs = mock.call_args[1]
-            assert "GNS3_EXTRA_HOSTS=199.199.199.1\ttest\n199.199.199.1\ttest2" in called_kwargs["data"]["Env"]
-        assert vm._extra_hosts == extra_hosts
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_hosts=extra_hosts)
+                await vm.create()
+                called_kwargs = mock.call_args[1]
+                assert "GNS3_EXTRA_HOSTS=199.199.199.1\ttest\n199.199.199.1\ttest2" in called_kwargs["data"]["Env"]
+            assert vm._extra_hosts == extra_hosts
 
 @pytest.mark.asyncio
 async def test_create_with_colon_in_project_name(compute_project, manager):
@@ -312,12 +316,13 @@ async def test_create_with_empty_extra_hosts(compute_project, manager):
         "Warnings": []
     }
 
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_hosts=extra_hosts)
-            await vm.create()
-            called_kwargs = mock.call_args[1]
-            assert len([ e for e in called_kwargs["data"]["Env"] if "GNS3_EXTRA_HOSTS" in e]) == 0
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_hosts=extra_hosts)
+                await vm.create()
+                called_kwargs = mock.call_args[1]
+                assert len([ e for e in called_kwargs["data"]["Env"] if "GNS3_EXTRA_HOSTS" in e]) == 0
 
 
 @pytest.mark.asyncio
@@ -333,15 +338,16 @@ async def test_create_with_project_variables(compute_project, manager):
         {"name": "VAR3", "value": "2x${VAR2}"}
     ]
 
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
-            await vm.create()
-            called_kwargs = mock.call_args[1]
-            assert "VAR1=" in called_kwargs["data"]["Env"]
-            assert "VAR2=VAL1" in called_kwargs["data"]["Env"]
-            assert "VAR3=2xVAL1" in called_kwargs["data"]["Env"]
-    compute_project.variables = None
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
+                await vm.create()
+                called_kwargs = mock.call_args[1]
+                assert "VAR1=" in called_kwargs["data"]["Env"]
+                assert "VAR2=VAL1" in called_kwargs["data"]["Env"]
+                assert "VAR3=2xVAL1" in called_kwargs["data"]["Env"]
+        compute_project.variables = None
 
 
 @pytest.mark.asyncio
@@ -351,49 +357,50 @@ async def test_create_start_cmd(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
-            vm._start_command = "/bin/ls"
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
-                        ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/ls"],
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ]
-            })
-        assert vm._cid == "e90e34656806"
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
+                vm._start_command = "/bin/ls"
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/ls"],
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
+                        ]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -407,18 +414,19 @@ async def test_create_environment(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
-            vm.environment = "YES=1\nNO=0\nGNS3_MAX_ETHERNET=eth2"
-            await vm.create()
-            assert mock.call_args[1]['data']['Env'] == [
-                "container=docker",
-                "GNS3_MAX_ETHERNET=eth0",
-                "GNS3_VOLUMES=/etc/network",
-                "YES=1",
-                "NO=0"
-            ]
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
+                vm.environment = "YES=1\nNO=0\nGNS3_MAX_ETHERNET=eth2"
+                await vm.create()
+                assert mock.call_args[1]['data']['Env'] == [
+                    "container=docker",
+                    "GNS3_MAX_ETHERNET=eth0",
+                    "GNS3_VOLUMES=/etc/network",
+                    "YES=1",
+                    "NO=0"
+                ]
 
 
 @pytest.mark.asyncio
@@ -432,18 +440,19 @@ async def test_create_environment_with_last_new_line_character(compute_project, 
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
-            vm.environment = "YES=1\nNO=0\nGNS3_MAX_ETHERNET=eth2\n"
-            await vm.create()
-            assert mock.call_args[1]['data']['Env'] == [
-                "container=docker",
-                "GNS3_MAX_ETHERNET=eth0",
-                "GNS3_VOLUMES=/etc/network",
-                "YES=1",
-                "NO=0"
-            ]
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
+                vm.environment = "YES=1\nNO=0\nGNS3_MAX_ETHERNET=eth2\n"
+                await vm.create()
+                assert mock.call_args[1]['data']['Env'] == [
+                    "container=docker",
+                    "GNS3_MAX_ETHERNET=eth0",
+                    "GNS3_VOLUMES=/etc/network",
+                    "YES=1",
+                    "NO=0"
+                ]
 
 
 @pytest.mark.asyncio
@@ -466,48 +475,49 @@ async def test_create_image_not_available(compute_project, manager):
     vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu")
     vm._get_image_information = MagicMock()
     vm._get_image_information.side_effect = information
-    with asyncio_patch("gns3server.compute.docker.DockerVM.pull_image", return_value=True) as mock_pull:
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.DockerVM.pull_image", return_value=True) as mock_pull:
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
-        mock_pull.assert_called_with("ubuntu:latest")
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
+            mock_pull.assert_called_with("ubuntu:latest")
 
 
 @pytest.mark.asyncio
@@ -520,50 +530,51 @@ async def test_create_with_user(compute_project, manager):
             "User" : "test",
         },
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "User": "root",
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest")
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "User": "root",
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host",
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network",
+                        "GNS3_USER=test"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host",
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network",
-                    "GNS3_USER=test"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -620,53 +631,54 @@ async def test_create_with_extra_volumes_duplicate_1_image(compute_project, mana
             },
         },
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol", "1"),
-                                "Target": "/gns3volumes/vol/1"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol", "1"),
+                                    "Target": "/gns3volumes/vol/1"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network:/vol/1"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network:/vol/1"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -676,53 +688,54 @@ async def test_create_with_extra_volumes_duplicate_2_user(compute_project, manag
         "Id": "e90e34656806",
         "Warnings": [],
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1", "/vol/1"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol", "1"),
-                                "Target": "/gns3volumes/vol/1"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1", "/vol/1"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol", "1"),
+                                    "Target": "/gns3volumes/vol/1"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network:/vol/1"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network:/vol/1"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -732,53 +745,54 @@ async def test_create_with_extra_volumes_duplicate_3_subdir(compute_project, man
         "Id": "e90e34656806",
         "Warnings": [],
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1/", "/vol"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol"),
-                                "Target": "/gns3volumes/vol"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/1/", "/vol"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol"),
+                                    "Target": "/gns3volumes/vol"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network:/vol"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network:/vol"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -788,53 +802,54 @@ async def test_create_with_extra_volumes_duplicate_4_backslash(compute_project, 
         "Id": "e90e34656806",
         "Warnings": [],
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol//", "/vol"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol"),
-                                "Target": "/gns3volumes/vol"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol//", "/vol"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol"),
+                                    "Target": "/gns3volumes/vol"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network:/vol"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network:/vol"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -844,48 +859,49 @@ async def test_create_with_extra_volumes_duplicate_5_subdir_issue_1595(compute_p
         "Id": "e90e34656806",
         "Warnings": [],
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/etc"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc"),
-                                "Target": "/gns3volumes/etc"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/etc"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc"),
+                                    "Target": "/gns3volumes/etc"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -895,48 +911,49 @@ async def test_create_with_extra_volumes_duplicate_6_subdir_issue_1595(compute_p
         "Id": "e90e34656806",
         "Warnings": [],
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/etc/test", "/etc"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc"),
-                                "Target": "/gns3volumes/etc"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/etc/test", "/etc"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc"),
+                                    "Target": "/gns3volumes/etc"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -952,58 +969,59 @@ async def test_create_with_extra_volumes(compute_project, manager):
         },
     }
 
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/2"])
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol", "1"),
-                                "Target": "/gns3volumes/vol/1"
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "vol", "2"),
-                                "Target": "/gns3volumes/vol/2"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", extra_volumes=["/vol/2"])
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol", "1"),
+                                    "Target": "/gns3volumes/vol/1"
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "vol", "2"),
+                                    "Target": "/gns3volumes/vol/2"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 0,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network:/vol/1:/vol/2"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 0,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network:/vol/1:/vol/2"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -1787,48 +1805,49 @@ async def test_cpus(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", cpus=0.5)
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", cpus=0.5)
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 0,
+                            "NanoCpus": 500000000,
+                            "UsernsMode": "host"
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
                         ],
-                        "Privileged": True,
-                        "Memory": 0,
-                        "NanoCpus": 500000000,
-                        "UsernsMode": "host"
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
 
 
 @pytest.mark.asyncio
@@ -1838,45 +1857,46 @@ async def test_memory(compute_project, manager):
         "Id": "e90e34656806",
         "Warnings": []
     }
-    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
-        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
-            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", memory=32)
-            await vm.create()
-            mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
-                "Tty": True,
-                "OpenStdin": True,
-                "StdinOnce": False,
-                "HostConfig":
-                    {
-                        "CapAdd": ["ALL"],
-                        "Mounts": [
-                            {
-                                "Type": "bind",
-                                "Source": Docker.resources_path(),
-                                "Target": "/gns3",
-                                "ReadOnly": True
-                            },
-                            {
-                                "Type": "bind",
-                                "Source": os.path.join(vm.working_dir, "etc", "network"),
-                                "Target": "/gns3volumes/etc/network"
-                            }
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="stopped"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", memory=32)
+                await vm.create()
+                mock.assert_called_with("POST", "containers/create?name={}".format(vm.docker_name), data={
+                    "Tty": True,
+                    "OpenStdin": True,
+                    "StdinOnce": False,
+                    "HostConfig":
+                        {
+                            "CapAdd": ["ALL"],
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": Docker.resources_path(),
+                                    "Target": "/gns3",
+                                    "ReadOnly": True
+                                },
+                                {
+                                    "Type": "bind",
+                                    "Source": os.path.join(vm.working_dir, "etc", "network"),
+                                    "Target": "/gns3volumes/etc/network"
+                                }
+                            ],
+                            "Privileged": True,
+                            "Memory": 33554432,  # 32MB in bytes
+                            "NanoCpus": 0,
+                            "UsernsMode": "host",
+                        },
+                    "Volumes": {},
+                    "NetworkDisabled": True,
+                    "Hostname": "test",
+                    "Image": "ubuntu:latest",
+                    "Env": [
+                        "container=docker",
+                        "GNS3_MAX_ETHERNET=eth0",
+                        "GNS3_VOLUMES=/etc/network"
                         ],
-                        "Privileged": True,
-                        "Memory": 33554432,  # 32MB in bytes
-                        "NanoCpus": 0,
-                        "UsernsMode": "host",
-                    },
-                "Volumes": {},
-                "NetworkDisabled": True,
-                "Hostname": "test",
-                "Image": "ubuntu:latest",
-                "Env": [
-                    "container=docker",
-                    "GNS3_MAX_ETHERNET=eth0",
-                    "GNS3_VOLUMES=/etc/network"
-                    ],
-                "Entrypoint": ["/gns3/init.sh"],
-                "Cmd": ["/bin/sh"]
-            })
-        assert vm._cid == "e90e34656806"
+                    "Entrypoint": ["/gns3/init.sh"],
+                    "Cmd": ["/bin/sh"]
+                })
+            assert vm._cid == "e90e34656806"
