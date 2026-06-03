@@ -94,6 +94,15 @@ if [ "$CUSTOM_REPO" = false ] ; then
         else
             git clone https://github.com/GNS3/gns3-web-ui.git "$REPO_DIR"
         fi
+    elif [[ -n "$GITHUB_URL" ]]; then
+        # Check if existing clone's remote matches the custom URL
+        EXISTING_REMOTE=$(cd "$REPO_DIR" && git config --get remote.origin.url)
+        if [[ "$EXISTING_REMOTE" != "$GITHUB_URL" ]]; then
+            echo "Remote URL mismatch: $EXISTING_REMOTE != $GITHUB_URL"
+            echo "Removing old clone and re-cloning..."
+            rm -rf "$REPO_DIR"
+            git clone "$GITHUB_URL" "$REPO_DIR"
+        fi
     fi
 
     cd "$REPO_DIR"
