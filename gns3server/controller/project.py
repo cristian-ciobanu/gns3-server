@@ -1404,6 +1404,10 @@ class Project:
         :param reset_mac_addresses: Reset MAC addresses for the duplicated project
         """
 
+        # We don't duplicate a running project
+        if self.is_running():
+            raise ControllerError("Project must be stopped in order to duplicate it")
+
         # remote replication is not supported with remote computes
         for compute in self.computes:
             if compute.id != "local":
