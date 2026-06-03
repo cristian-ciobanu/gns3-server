@@ -587,6 +587,20 @@ class DockerVM(BaseNode):
             log.info(f"CPU limit set to {self._cpus} CPUs")
         if self._memory > 0:
             log.info(f"Memory limit set to {self._memory} MB")
+
+        # Check if the container is already running and update the node status accordingly
+        # This can happen when the server restarts and the container continues running
+        try:
+            state = await self._get_container_state()
+            if state == "running":
+                self.status = "started"
+                log.info(f"Docker container '{self._name}' is already running")
+            elif state == "paused":
+                self.status = "suspended"
+                log.info(f"Docker container '{self._name}' is paused")
+        except DockerError as e:
+            log.warning(f"Could not check container state for '{self._name}': {e}")
+
         return True
 
     def _format_env(self, variables, env):
