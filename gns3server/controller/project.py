@@ -1334,6 +1334,9 @@ class Project:
         self.dump()
         assert self._status != "closed"
 
+        if self.is_running():
+            raise ControllerError("Project must be stopped in order to duplicate it")
+
         try:
             proj = await self._fast_duplication(name, reset_mac_addresses)
             if proj:
