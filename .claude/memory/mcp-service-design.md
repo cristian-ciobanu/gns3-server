@@ -38,12 +38,12 @@ Tools are separated by domain into individual files under `gns3server/api/routes
 | File | Domain | Tool Count |
 |------|--------|:----------:|
 | `projects.py` | Project CRUD, open/close/stats | 7 |
-| `nodes.py` | Node CRUD, start/stop/reload/suspend | 9 |
+| `nodes.py` | Node CRUD, start/stop/reload/suspend, console WS | 10 |
 | `links.py` | Link CRUD | 5 |
 | `templates.py` | Template CRUD | 5 |
 | `computes.py` | Compute list/get/images | 3 |
 
-**Total: 29 tools**
+**Total: 30 tools**
 
 ### Handler Pattern
 - Synchronous functions receiving `(params: dict, gns3_ctx: dict)`
