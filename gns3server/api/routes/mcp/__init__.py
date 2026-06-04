@@ -409,6 +409,40 @@ async def delete_template(template_id: str = None, name: str = None) -> list[dic
     })
 
 
+# ── Compute tools ─────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_computes() -> list[dict[str, Any]]:
+    """List all compute nodes available to the server."""
+    from .computes import list_computes_handler
+    return await asyncio.to_thread(_run_handler_sync, list_computes_handler, {})
+
+
+@mcp.tool()
+async def get_compute(compute_id: str = "local") -> list[dict[str, Any]]:
+    """Get detailed information about a compute node.
+
+    Args:
+        compute_id: Compute ID (default: local)
+    """
+    from .computes import get_compute_handler
+    return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
+
+
+@mcp.tool()
+async def get_compute_images(emulator: str, compute_id: str = "local") -> list[dict[str, Any]]:
+    """List available images for an emulator on a compute node.
+
+    Args:
+        emulator: Emulator type (e.g. qemu, iou, docker)
+        compute_id: Compute ID (default: local)
+    """
+    from .computes import get_compute_images_handler
+    return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
+        "emulator": emulator, "compute_id": compute_id,
+    })
+
+
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
 
 def _make_auth_wrapper(inner_app):
