@@ -144,20 +144,19 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
     node = conn.get_node(project_id=project_id, node_id=node_id)
+
     console_type = node.get("console_type", "unknown")
+    ws_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={gns3_ctx['jwt_token']}"
+
     result = {
         "node_id": node_id,
         "node_name": node.get("name"),
         "console_type": console_type,
-        "console_host": node.get("console_host"),
-        "console_port": node.get("console"),
+        "ws_url": ws_url,
+        "command": f"websocat {ws_url}",
     }
-    if console_type == "telnet":
-        result["command"] = f"telnet {node.get('console_host')} {node.get('console')}"
-    elif console_type in ("vnc",):
-        result["command"] = f"vncviewer {node.get('console_host')}::{node.get('console')}"
-    elif console_type in ("http", "https"):
-        result["url"] = f"{console_type}://{node.get('console_host')}:{node.get('console')}"
+    if console_type in ("vnc",):
+        result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
     return result
 
 
@@ -289,7 +288,7 @@ NODE_TOOLS = [
     },
     {
         "name": "get_node_console_info",
-        "description": "Get console connection info for a node (host, port, type, and suggested command)",
+        "description": "Get console WebSocket URL for a node (use websocat to connect)",
         "parameters": {
             "type": "object",
             "properties": {

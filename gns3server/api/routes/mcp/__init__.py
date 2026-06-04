@@ -283,7 +283,7 @@ async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict
 
 @mcp.tool()
 async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Get console connection info for a node (host, port, type, and suggested command).
+    """Get console WebSocket URL for a node (use websocat to connect).
 
     Args:
         project_id: Project UUID
