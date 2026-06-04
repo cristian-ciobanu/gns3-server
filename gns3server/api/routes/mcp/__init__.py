@@ -39,6 +39,29 @@ from fastapi.responses import Response
 from mcp.server.fastmcp import FastMCP
 
 from gns3server.config import Config
+from gns3server.services import auth_service
+from .projects import (
+    list_projects_handler, get_project_handler, create_project_handler,
+    delete_project_handler, open_project_handler, close_project_handler,
+    get_project_stats_handler,
+)
+from .nodes import (
+    get_nodes_handler, get_node_handler, start_node_handler,
+    stop_node_handler, reload_node_handler, suspend_node_handler,
+    create_node_handler, delete_node_handler, update_node_handler,
+    get_node_console_info_handler,
+)
+from .links import (
+    get_links_handler, get_link_handler, create_link_handler,
+    delete_link_handler, update_link_handler,
+)
+from .templates import (
+    list_templates_handler, get_template_handler, create_template_handler,
+    update_template_handler, delete_template_handler,
+)
+from .computes import (
+    list_computes_handler, get_compute_handler, get_compute_images_handler,
+)
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +79,6 @@ _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 async def _validate_token(token: str) -> bool:
     """Return True if token is a valid GNS3 JWT."""
-    from gns3server.services import auth_service
     try:
         auth_service.get_username_from_token(token)
         return True
@@ -95,7 +117,6 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
 @mcp.tool()
 async def list_projects() -> list[dict[str, Any]]:
     """List all GNS3 projects accessible to the current user."""
-    from .projects import list_projects_handler
     return await asyncio.to_thread(_run_handler_sync, list_projects_handler, {})
 
 
@@ -106,7 +127,6 @@ async def get_project(project_id: str) -> list[dict[str, Any]]:
     Args:
         project_id: Project UUID
     """
-    from .projects import get_project_handler
     return await asyncio.to_thread(_run_handler_sync, get_project_handler, {"project_id": project_id})
 
 
@@ -118,7 +138,6 @@ async def create_project(name: str, description: str = "") -> list[dict[str, Any
         name: Project name
         description: Optional project description
     """
-    from .projects import create_project_handler
     params = {"name": name}
     if description:
         params["description"] = description
@@ -132,7 +151,6 @@ async def delete_project(project_id: str) -> list[dict[str, Any]]:
     Args:
         project_id: UUID of the project to delete
     """
-    from .projects import delete_project_handler
     return await asyncio.to_thread(_run_handler_sync, delete_project_handler, {"project_id": project_id})
 
 
@@ -143,7 +161,6 @@ async def open_project(project_id: str) -> list[dict[str, Any]]:
     Args:
         project_id: Project UUID
     """
-    from .projects import open_project_handler
     return await asyncio.to_thread(_run_handler_sync, open_project_handler, {"project_id": project_id})
 
 
@@ -154,7 +171,6 @@ async def close_project(project_id: str) -> list[dict[str, Any]]:
     Args:
         project_id: Project UUID
     """
-    from .projects import close_project_handler
     return await asyncio.to_thread(_run_handler_sync, close_project_handler, {"project_id": project_id})
 
 
@@ -165,7 +181,6 @@ async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
     Args:
         project_id: Project UUID
     """
-    from .projects import get_project_stats_handler
     return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
 
 
@@ -174,7 +189,6 @@ async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
 @mcp.tool()
 async def get_nodes(project_id: str) -> list[dict[str, Any]]:
     """List all nodes in a project."""
-    from .nodes import get_nodes_handler
     return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
 
 
@@ -186,7 +200,6 @@ async def get_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import get_node_handler
     return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -198,7 +211,6 @@ async def start_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import start_node_handler
     return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -210,7 +222,6 @@ async def stop_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import stop_node_handler
     return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -222,7 +233,6 @@ async def reload_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import reload_node_handler
     return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -234,7 +244,6 @@ async def suspend_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import suspend_node_handler
     return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -249,7 +258,6 @@ async def create_node(project_id: str, template_id: str, x: int = 0, y: int = 0,
         y: Y coordinate (optional)
         compute_id: Compute ID (optional, default: local)
     """
-    from .nodes import create_node_handler
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
         "x": x, "y": y, "compute_id": compute_id,
@@ -264,7 +272,6 @@ async def delete_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import delete_node_handler
     return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
@@ -276,7 +283,6 @@ async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import update_node_handler
     params = {"project_id": project_id, "node_id": node_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_node_handler, params)
 
@@ -289,7 +295,6 @@ async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str,
         project_id: Project UUID
         node_id: Node UUID
     """
-    from .nodes import get_node_console_info_handler
     return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
         "project_id": project_id, "node_id": node_id,
     })
@@ -300,7 +305,6 @@ async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str,
 @mcp.tool()
 async def get_links(project_id: str) -> list[dict[str, Any]]:
     """List all links in a project."""
-    from .links import get_links_handler
     return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
 
 
@@ -312,7 +316,6 @@ async def get_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         link_id: Link UUID
     """
-    from .links import get_link_handler
     return await asyncio.to_thread(_run_handler_sync, get_link_handler, {"project_id": project_id, "link_id": link_id})
 
 
@@ -326,7 +329,6 @@ async def create_link(project_id: str, nodes: list, link_type: str = "ethernet",
         link_type: Link type - ethernet or serial (optional)
         filters: Packet filters (optional)
     """
-    from .links import create_link_handler
     params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
     if filters:
         params["filters"] = filters
@@ -341,7 +343,6 @@ async def delete_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
         project_id: Project UUID
         link_id: Link UUID
     """
-    from .links import delete_link_handler
     return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
 
 
@@ -353,7 +354,6 @@ async def update_link(project_id: str, link_id: str, **kwargs: Any) -> list[dict
         project_id: Project UUID
         link_id: Link UUID
     """
-    from .links import update_link_handler
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
@@ -363,7 +363,6 @@ async def update_link(project_id: str, link_id: str, **kwargs: Any) -> list[dict
 @mcp.tool()
 async def list_templates() -> list[dict[str, Any]]:
     """List all available templates on the server."""
-    from .templates import list_templates_handler
     return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {})
 
 
@@ -375,7 +374,6 @@ async def get_template(template_id: str = None, name: str = None) -> list[dict[s
         template_id: Template UUID (optional if name is provided)
         name: Template name (optional if template_id is provided)
     """
-    from .templates import get_template_handler
     return await asyncio.to_thread(_run_handler_sync, get_template_handler, {
         "template_id": template_id, "name": name,
     })
@@ -390,7 +388,6 @@ async def create_template(name: str, template_type: str, compute_id: str = "loca
         template_type: Template type (e.g. qemu, docker, dynamips)
         compute_id: Compute ID (optional, default: local)
     """
-    from .templates import create_template_handler
     return await asyncio.to_thread(_run_handler_sync, create_template_handler, {
         "name": name, "template_type": template_type, "compute_id": compute_id,
     })
@@ -404,7 +401,6 @@ async def update_template(template_id: str = None, name: str = None, **kwargs: A
         template_id: Template UUID (optional if name is provided)
         name: Template name (optional if template_id is provided)
     """
-    from .templates import update_template_handler
     params = {"template_id": template_id, "name": name, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_template_handler, params)
 
@@ -417,7 +413,6 @@ async def delete_template(template_id: str = None, name: str = None) -> list[dic
         template_id: Template UUID (optional if name is provided)
         name: Template name (optional if template_id is provided)
     """
-    from .templates import delete_template_handler
     return await asyncio.to_thread(_run_handler_sync, delete_template_handler, {
         "template_id": template_id, "name": name,
     })
@@ -428,7 +423,6 @@ async def delete_template(template_id: str = None, name: str = None) -> list[dic
 @mcp.tool()
 async def list_computes() -> list[dict[str, Any]]:
     """List all compute nodes available to the server."""
-    from .computes import list_computes_handler
     return await asyncio.to_thread(_run_handler_sync, list_computes_handler, {})
 
 
@@ -439,7 +433,6 @@ async def get_compute(compute_id: str = "local") -> list[dict[str, Any]]:
     Args:
         compute_id: Compute ID (default: local)
     """
-    from .computes import get_compute_handler
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
 
@@ -451,7 +444,6 @@ async def get_compute_images(emulator: str, compute_id: str = "local") -> list[d
         emulator: Emulator type (e.g. qemu, iou, docker)
         compute_id: Compute ID (default: local)
     """
-    from .computes import get_compute_images_handler
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,
     })
