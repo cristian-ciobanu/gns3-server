@@ -15,161 +15,208 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-MCP (Model Context Protocol) service routes for GNS3 server.
+MCP (Model Context Protocol) service for GNS3 server.
 
-Provides a unified tool execution interface that wraps existing GNS3 API
-functionality. Tools are registered via MCPToolRegistry and executed
-through a single POST /v3/mcp/execute endpoint.
+Implements the standard MCP protocol over SSE transport using FastMCP:
+
+  /v3/mcp/sse     — SSE stream
+  /v3/mcp/messages/ — JSON-RPC messages
+
+Tools are registered via @mcp.tool() decorators.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from typing import Dict, Any, List, Callable, Optional
-from pydantic import BaseModel
+import contextvars
+import json
 import asyncio
 import logging
+from typing import Any
+from urllib.parse import parse_qs
 
-from gns3server import schemas
-from gns3server.api.routes.controller.dependencies.authentication import get_current_active_user
+from fastapi import APIRouter
+from fastapi.responses import Response
+
+from mcp.server.fastmcp import FastMCP
+
 from gns3server.config import Config
 
 log = logging.getLogger(__name__)
 
+
+# ── Per‑connection JWT token  ─────────────────────────────────────────
+# Set during SSE authentication, read by tool handlers running in the
+# same asyncio task (contextvars propagate through asyncio.to_thread).
+
+_jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mcp_jwt_token", default=None
+)
+
+
+# ── Token validation ──────────────────────────────────────────────────
+
+async def _validate_token(token: str) -> bool:
+    """Return True if token is a valid GNS3 JWT."""
+    from gns3server.services import auth_service
+    try:
+        auth_service.get_username_from_token(token)
+        return True
+    except Exception:
+        return False
+
+
+# ── Server URL helper ─────────────────────────────────────────────────
+
+def _server_url() -> str:
+    cfg = Config.instance().settings
+    host = cfg.Server.host
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    scheme = "https" if cfg.Server.enable_ssl else "http"
+    return f"{scheme}://{host}:{cfg.Server.port}"
+
+
+# ── FastMCP Server ────────────────────────────────────────────────────
+
+mcp = FastMCP("GNS3 MCP Server")
+
+
+# ── Tool handlers ─────────────────────────────────────────────────────
+
+def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run a synchronous Gns3Connector handler in a thread."""
+    ctx = {
+        "server_url": _server_url(),
+        "jwt_token": _jwt_token_var.get(),
+    }
+    result = handler(params, ctx)
+    return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
+
+
+@mcp.tool()
+async def list_projects() -> list[dict[str, Any]]:
+    """List all GNS3 projects accessible to the current user."""
+    from .projects import list_projects_handler
+    return await asyncio.to_thread(_run_handler_sync, list_projects_handler, {})
+
+
+@mcp.tool()
+async def get_project(project_id: str) -> list[dict[str, Any]]:
+    """Get detailed information about a specific project.
+
+    Args:
+        project_id: Project UUID
+    """
+    from .projects import get_project_handler
+    return await asyncio.to_thread(_run_handler_sync, get_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def create_project(name: str, description: str = "") -> list[dict[str, Any]]:
+    """Create a new GNS3 project.
+
+    Args:
+        name: Project name
+        description: Optional project description
+    """
+    from .projects import create_project_handler
+    params = {"name": name}
+    if description:
+        params["description"] = description
+    return await asyncio.to_thread(_run_handler_sync, create_project_handler, params)
+
+
+@mcp.tool()
+async def delete_project(project_id: str) -> list[dict[str, Any]]:
+    """Delete a GNS3 project permanently.
+
+    Args:
+        project_id: UUID of the project to delete
+    """
+    from .projects import delete_project_handler
+    return await asyncio.to_thread(_run_handler_sync, delete_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def open_project(project_id: str) -> list[dict[str, Any]]:
+    """Open a closed GNS3 project.
+
+    Args:
+        project_id: Project UUID
+    """
+    from .projects import open_project_handler
+    return await asyncio.to_thread(_run_handler_sync, open_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def close_project(project_id: str) -> list[dict[str, Any]]:
+    """Close an open GNS3 project.
+
+    Args:
+        project_id: Project UUID
+    """
+    from .projects import close_project_handler
+    return await asyncio.to_thread(_run_handler_sync, close_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
+    """Get statistics (nodes, links, snapshots, drawings) for a project.
+
+    Args:
+        project_id: Project UUID
+    """
+    from .projects import get_project_stats_handler
+    return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
+
+
+# ── Auth‑wrapped SSE app ──────────────────────────────────────────────
+
+def _make_auth_wrapper(sse_app):
+    """Wrap the SSE app with JWT validation from ?token= query parameter.
+
+    The wrapper intercepts GET requests (SSE connections), validates the
+    JWT token, and stores it in a context variable so tool handlers can
+    use it to call the GNS3 REST API.  POST messages are passed through
+    unchanged (they are authenticated by their session association).
+    """
+
+    async def auth_wrapper(scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET":
+            params = parse_qs(scope.get("query_string", b"").decode())
+            tokens = params.get("token", [])
+            if not tokens or not await _validate_token(tokens[0]):
+                response = Response("Missing or invalid token", status_code=401)
+                await response(scope, receive, send)
+                return
+            _jwt_token_var.set(tokens[0])
+        await sse_app(scope, receive, send)
+
+    return auth_wrapper
+
+
+# ── FastAPI router ────────────────────────────────────────────────────
+
 router = APIRouter(prefix="/mcp", tags=["MCP"])
 
 
-# ── Tool Registration ──────────────────────────────────────────────────────
-
-class MCPTool:
-    """
-    An MCP tool binds a name, description, parameter schema, and handler together.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        parameters_schema: Dict[str, Any],
-        handler: Callable,
-        required_permission: Optional[str] = None,
-    ):
-        self.name = name
-        self.description = description
-        self.parameters_schema = parameters_schema
-        self.handler = handler
-        self.required_permission = required_permission
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.parameters_schema,
-        }
-
-
-class MCPToolRegistry:
-    """Central registry — tools are registered once, listed/executed on demand."""
-
-    def __init__(self):
-        self._tools: Dict[str, MCPTool] = {}
-
-    def register_tool(self, tool: MCPTool) -> None:
-        self._tools[tool.name] = tool
-        log.info(f"Registered MCP tool: {tool.name}")
-
-    def get_tool(self, name: str) -> Optional[MCPTool]:
-        return self._tools.get(name)
-
-    def list_tools(self) -> List[Dict[str, Any]]:
-        return [t.as_dict() for t in self._tools.values()]
-
-    async def execute(
-        self, tool_name: str, parameters: Dict[str, Any], **context
-    ) -> Dict[str, Any]:
-        tool = self.get_tool(tool_name)
-        if tool is None:
-            return {"status": "error", "error": f"Tool '{tool_name}' not found"}
-
-        try:
-            # Handlers use synchronous Gns3Connector (requests library),
-            # so run them in a thread to avoid blocking the event loop.
-            result = await asyncio.to_thread(tool.handler, parameters, **context)
-            return {"status": "success", "data": result}
-        except Exception as e:
-            log.error(f"Error executing tool '{tool_name}': {e}")
-            return {"status": "error", "error": str(e)}
-
-
-# Global registry instance
-registry = MCPToolRegistry()
-
-# Import tool modules to trigger registration
-from . import projects  # noqa: F401 — triggers register_tools()
-
-
-# ── Pydantic request / response models ─────────────────────────────────────
-
-class ExecuteToolRequest(BaseModel):
-    tool: str
-    parameters: Dict[str, Any] = {}
-
-
-class ExecuteToolResponse(BaseModel):
-    status: str
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
-# ── MCP Endpoints ──────────────────────────────────────────────────────────
-
 @router.get("/")
 async def mcp_root():
-    """MCP service root — capability discovery."""
+    """MCP service metadata."""
     return {
         "name": "GNS3 MCP Server",
         "version": "1.0.0",
-        "capabilities": {"tools": True, "resources": False, "prompts": False},
+        "protocol": "Model Context Protocol",
+        "transport": "SSE",
+        "authentication": "?token=<jwt>",
+        "endpoints": {
+            "sse": "/v3/mcp/transport/sse?token=<jwt>",
+            "messages": "/v3/mcp/transport/messages/",
+        },
     }
 
 
-@router.get("/tools")
-async def list_tools():
-    """List every registered MCP tool with its parameter schema."""
-    tools = registry.list_tools()
-    return {"tools": tools, "count": len(tools)}
-
-
-@router.post("/execute", response_model=ExecuteToolResponse)
-async def execute_tool(
-    request: ExecuteToolRequest,
-    http_request: Request,
-    current_user: schemas.User = Depends(get_current_active_user),
-):
-    """
-    Execute an MCP tool by name.
-    Authentication is enforced via the existing JWT mechanism.
-    The tool handler receives a Gns3Connector pre-configured with the
-    current user's JWT token so it calls GNS3's own REST API (not the
-    controller internals), keeping the MCP layer fully decoupled.
-    """
-
-    # Extract the raw JWT token from the Authorization header
-    auth_header = http_request.headers.get("Authorization", "")
-    jwt_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else None
-
-    # Build the local GNS3 API base URL from the server config
-    config = Config.instance().settings
-    host = config.Server.host
-    if host == "0.0.0.0":
-        host = "127.0.0.1"
-    port = config.Server.port
-    scheme = "https" if config.Server.enable_ssl else "http"
-    server_url = f"{scheme}://{host}:{port}"
-
-    result = await registry.execute(
-        request.tool,
-        request.parameters,
-        current_user=current_user,
-        jwt_token=jwt_token,
-        server_url=server_url,
-    )
-    return ExecuteToolResponse(**result)
+def register_starlette_routes(app):
+    """Mount the authenticated SSE app under /v3/mcp/transport."""
+    raw_sse_app = mcp.sse_app(mount_path="")
+    wrapped = _make_auth_wrapper(raw_sse_app)
+    app.mount("/v3/mcp/transport", wrapped, name="mcp-sse")
+    log.info("MCP SSE server mounted at /v3/mcp/transport")

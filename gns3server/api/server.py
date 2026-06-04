@@ -83,6 +83,9 @@ def get_application() -> FastAPI:
 
 app = get_application()
 
+# Register MCP SSE transport routes (Starlette-level, for raw ASGI access)
+mcp.register_starlette_routes(app)
+
 # Monkey Patch uvicorn signal handler to detect the application is shutting down
 app.state.exiting = False
 unicorn_exit_handler = UvicornServer.handle_exit
