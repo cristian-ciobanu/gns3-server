@@ -45,6 +45,7 @@ from gns3server.controller.controller_error import (
 
 from gns3server.api.routes import controller, index
 from gns3server.api.routes.compute import compute_api
+from gns3server.api.routes import mcp
 from gns3server.core import tasks
 
 import logging
@@ -75,6 +76,7 @@ def get_application() -> FastAPI:
     application.include_router(controller.router, prefix="/v3")
     application.mount("/static", StaticFiles(packages=[('gns3server', 'static')], html=True), name="static")
     application.mount("/v3/compute", compute_api, name="compute")
+    application.include_router(mcp.router, prefix="/v3", tags=["MCP"])
 
     return application
 
