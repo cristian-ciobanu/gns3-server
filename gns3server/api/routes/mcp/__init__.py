@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2020 GNS3 Technologies Inc.
+# Copyright (C) 2026 GNS3 Technologies Inc.
+# Author: Yue Guobin
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -166,6 +167,181 @@ async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
     """
     from .projects import get_project_stats_handler
     return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
+
+
+# ── Node tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_nodes(project_id: str) -> list[dict[str, Any]]:
+    """List all nodes in a project."""
+    from .nodes import get_nodes_handler
+    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def get_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Get detailed information about a specific node.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import get_node_handler
+    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def start_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Start a node in a project.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import start_node_handler
+    return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def stop_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Stop a node in a project.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import stop_node_handler
+    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def reload_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Reload (restart) a node in a project.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import reload_node_handler
+    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def suspend_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Suspend a node in a project.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import suspend_node_handler
+    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def create_node(project_id: str, template_id: str, x: int = 0, y: int = 0, compute_id: str = "local") -> list[dict[str, Any]]:
+    """Create a new node from a template in a project.
+
+    Args:
+        project_id: Project UUID
+        template_id: Template UUID
+        x: X coordinate (optional)
+        y: Y coordinate (optional)
+        compute_id: Compute ID (optional, default: local)
+    """
+    from .nodes import create_node_handler
+    return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
+        "project_id": project_id, "template_id": template_id,
+        "x": x, "y": y, "compute_id": compute_id,
+    })
+
+
+@mcp.tool()
+async def delete_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Delete a node from a project.
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import delete_node_handler
+    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+    """Update a node's properties (name, position, etc.).
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import update_node_handler
+    params = {"project_id": project_id, "node_id": node_id, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_node_handler, params)
+
+
+# ── Link tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_links(project_id: str) -> list[dict[str, Any]]:
+    """List all links in a project."""
+    from .links import get_links_handler
+    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def get_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
+    """Get detailed information about a specific link.
+
+    Args:
+        project_id: Project UUID
+        link_id: Link UUID
+    """
+    from .links import get_link_handler
+    return await asyncio.to_thread(_run_handler_sync, get_link_handler, {"project_id": project_id, "link_id": link_id})
+
+
+@mcp.tool()
+async def create_link(project_id: str, nodes: list, link_type: str = "ethernet", filters: dict = None) -> list[dict[str, Any]]:
+    """Create a link between two nodes in a project.
+
+    Args:
+        project_id: Project UUID
+        nodes: List of node connections, e.g. [{"node_id": "...", "adapter_number": 0, "port_number": 0}, ...]
+        link_type: Link type - ethernet or serial (optional)
+        filters: Packet filters (optional)
+    """
+    from .links import create_link_handler
+    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
+    if filters:
+        params["filters"] = filters
+    return await asyncio.to_thread(_run_handler_sync, create_link_handler, params)
+
+
+@mcp.tool()
+async def delete_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
+    """Delete a link from a project.
+
+    Args:
+        project_id: Project UUID
+        link_id: Link UUID
+    """
+    from .links import delete_link_handler
+    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
+
+
+@mcp.tool()
+async def update_link(project_id: str, link_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+    """Update a link's properties (suspend, filters, etc.).
+
+    Args:
+        project_id: Project UUID
+        link_id: Link UUID
+    """
+    from .links import update_link_handler
+    params = {"project_id": project_id, "link_id": link_id, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────

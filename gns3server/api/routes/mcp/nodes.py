@@ -1,0 +1,267 @@
+#
+# Copyright (C) 2026 GNS3 Technologies Inc.
+# Author: Yue Guobin
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+"""
+MCP tool handlers for GNS3 node management.
+
+Handlers receive (params, gns3_ctx) and call GNS3's REST API
+via Gns3Connector (from custom_gns3fy).
+"""
+
+from typing import Any
+
+import logging
+
+log = logging.getLogger(__name__)
+
+
+# ── Helper ─────────────────────────────────────────────────────────────────
+
+def _get_connector(gns3_ctx: dict[str, Any]):
+    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Gns3Connector
+    return Gns3Connector(
+        url=gns3_ctx["server_url"],
+        jwt_token=gns3_ctx["jwt_token"],
+        api_version=3,
+        verify=False,
+    )
+
+
+# ── Tool handlers ──────────────────────────────────────────────────────────
+
+def get_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    nodes = conn.get_nodes(project_id=project_id)
+    return {"nodes": nodes, "count": len(nodes)}
+
+
+def get_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    return conn.get_node(project_id=project_id, node_id=node_id)
+
+
+def start_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/start", json_data={})
+    return {"message": f"Node {node_id} started", "node_id": node_id}
+
+
+def stop_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/stop", json_data={})
+    return {"message": f"Node {node_id} stopped", "node_id": node_id}
+
+
+def reload_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/reload")
+    return {"message": f"Node {node_id} reloaded", "node_id": node_id}
+
+
+def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/suspend")
+    return {"message": f"Node {node_id} suspended", "node_id": node_id}
+
+
+def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    template_id = params.get("template_id")
+    if not project_id or not template_id:
+        return {"error": "project_id and template_id are required"}
+    conn = _get_connector(gns3_ctx)
+    data = {
+        "x": params.get("x", 0),
+        "y": params.get("y", 0),
+        "compute_id": params.get("compute_id", "local"),
+    }
+    url = f"{conn.base_url}/projects/{project_id}/templates/{template_id}"
+    return conn.http_call("post", url, json_data=data).json()
+
+
+def delete_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}")
+    return {"message": f"Node {node_id} deleted", "node_id": node_id}
+
+
+def update_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    # Pass all params except project_id/node_id as update fields
+    update_data = {k: v for k, v in params.items() if k not in ("project_id", "node_id")}
+    url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}"
+    return conn.http_call("put", url, json_data=update_data).json()
+
+
+# ── Tool definitions ───────────────────────────────────────────────────────
+
+NODE_TOOLS = [
+    {
+        "name": "get_nodes",
+        "description": "List all nodes in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+            },
+            "required": ["project_id"],
+        },
+        "handler": get_nodes_handler,
+    },
+    {
+        "name": "get_node",
+        "description": "Get detailed information about a specific node",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": get_node_handler,
+    },
+    {
+        "name": "start_node",
+        "description": "Start a node in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": start_node_handler,
+    },
+    {
+        "name": "stop_node",
+        "description": "Stop a node in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": stop_node_handler,
+    },
+    {
+        "name": "reload_node",
+        "description": "Reload (restart) a node in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": reload_node_handler,
+    },
+    {
+        "name": "suspend_node",
+        "description": "Suspend a node in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": suspend_node_handler,
+    },
+    {
+        "name": "create_node",
+        "description": "Create a new node from a template in a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "template_id": {"type": "string", "description": "Template UUID"},
+                "x": {"type": "integer", "description": "X coordinate (optional)"},
+                "y": {"type": "integer", "description": "Y coordinate (optional)"},
+                "compute_id": {"type": "string", "description": "Compute ID (optional, default: local)"},
+            },
+            "required": ["project_id", "template_id"],
+        },
+        "handler": create_node_handler,
+    },
+    {
+        "name": "delete_node",
+        "description": "Delete a node from a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": delete_node_handler,
+    },
+    {
+        "name": "update_node",
+        "description": "Update a node's properties (name, position, etc.)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+                "name": {"type": "string", "description": "New node name (optional)"},
+                "x": {"type": "integer", "description": "New X position (optional)"},
+                "y": {"type": "integer", "description": "New Y position (optional)"},
+                "compute_id": {"type": "string", "description": "Compute ID (optional)"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": update_node_handler,
+    },
+]
