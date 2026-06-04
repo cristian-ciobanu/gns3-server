@@ -92,33 +92,28 @@ Add to `claude_desktop_config.json`:
 ```mermaid
 sequenceDiagram
     participant Client as Claude Code / Claude Desktop
-    participant MCP as MCP Service<br/>(/v3/mcp/transport)
+    participant MCP as MCP Service
     participant Auth as JWT Auth
     participant GNS3 as GNS3 REST API
-    participant DB as Controller / Database
 
-    Note over Client: Step 1: Connect with JWT
-    Client->>MCP: GET /sse?token=&lt;jwt&gt;<br/>or Authorization: Bearer &lt;jwt&gt;
-
+    Note over Client: 1. Connect with JWT
+    Client->>MCP: GET /sse (token in header or query)
     MCP->>Auth: Validate Token
     Auth-->>MCP: Token Valid
-    MCP-->>Client: event: endpoint<br/>data: /messages/?session_id=xxx
+    MCP-->>Client: event: endpoint /messages/?session_id=xxx
 
-    Note over Client: Step 2: Initialize Protocol
-    Client->>MCP: POST /messages/?session_id=xxx<br/>{"method":"initialize", ...}
-    MCP-->>Client: event: message<br/>{"result": {"protocolVersion": "...", ...}}
+    Note over Client: 2. Initialize
+    Client->>MCP: POST /messages/ (initialize)
+    MCP-->>Client: event: message (protocolVersion, capabilities)
 
-    Note over Client: Step 3: List & Call Tools
-    Client->>MCP: POST /messages/<br/>{"method":"tools/list"}
-    MCP-->>Client: event: message<br/>{"result": {"tools": [...]}}
+    Note over Client: 3. List & Call Tools
+    Client->>MCP: POST /messages/ (tools/list)
+    MCP-->>Client: event: message (tools list)
 
-    Client->>MCP: POST /messages/<br/>{"method":"tools/call",<br/>"params": {"name":"list_projects"}}
-
-    MCP->>GNS3: Gns3Connector (HTTP)
-    GNS3->>DB: Query Projects
-    DB-->>GNS3: Project Data
-    GNS3-->>MCP: JSON Response
-    MCP-->>Client: event: message<br/>{"result": {"content": [...]}}
+    Client->>MCP: POST /messages/ (tools/call list_projects)
+    MCP->>GNS3: Gns3Connector HTTP request
+    GNS3-->>MCP: Projects data
+    MCP-->>Client: event: message (tool result)
 ```
 
 ## Internal Implementation
