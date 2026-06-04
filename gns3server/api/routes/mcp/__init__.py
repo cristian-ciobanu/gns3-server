@@ -344,6 +344,71 @@ async def update_link(project_id: str, link_id: str, **kwargs: Any) -> list[dict
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
 
+# ── Template tools ────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_templates() -> list[dict[str, Any]]:
+    """List all available templates on the server."""
+    from .templates import list_templates_handler
+    return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {})
+
+
+@mcp.tool()
+async def get_template(template_id: str = None, name: str = None) -> list[dict[str, Any]]:
+    """Get detailed information about a specific template.
+
+    Args:
+        template_id: Template UUID (optional if name is provided)
+        name: Template name (optional if template_id is provided)
+    """
+    from .templates import get_template_handler
+    return await asyncio.to_thread(_run_handler_sync, get_template_handler, {
+        "template_id": template_id, "name": name,
+    })
+
+
+@mcp.tool()
+async def create_template(name: str, template_type: str, compute_id: str = "local") -> list[dict[str, Any]]:
+    """Create a new template.
+
+    Args:
+        name: Template name
+        template_type: Template type (e.g. qemu, docker, dynamips)
+        compute_id: Compute ID (optional, default: local)
+    """
+    from .templates import create_template_handler
+    return await asyncio.to_thread(_run_handler_sync, create_template_handler, {
+        "name": name, "template_type": template_type, "compute_id": compute_id,
+    })
+
+
+@mcp.tool()
+async def update_template(template_id: str = None, name: str = None, **kwargs: Any) -> list[dict[str, Any]]:
+    """Update an existing template's properties.
+
+    Args:
+        template_id: Template UUID (optional if name is provided)
+        name: Template name (optional if template_id is provided)
+    """
+    from .templates import update_template_handler
+    params = {"template_id": template_id, "name": name, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_template_handler, params)
+
+
+@mcp.tool()
+async def delete_template(template_id: str = None, name: str = None) -> list[dict[str, Any]]:
+    """Delete a template.
+
+    Args:
+        template_id: Template UUID (optional if name is provided)
+        name: Template name (optional if template_id is provided)
+    """
+    from .templates import delete_template_handler
+    return await asyncio.to_thread(_run_handler_sync, delete_template_handler, {
+        "template_id": template_id, "name": name,
+    })
+
+
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
 
 def _make_auth_wrapper(inner_app):
