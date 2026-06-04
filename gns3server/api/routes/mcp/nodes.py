@@ -132,10 +132,33 @@ def update_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    # Pass all params except project_id/node_id as update fields
     update_data = {k: v for k, v in params.items() if k not in ("project_id", "node_id")}
     url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}"
     return conn.http_call("put", url, json_data=update_data).json()
+
+
+def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    node = conn.get_node(project_id=project_id, node_id=node_id)
+    console_type = node.get("console_type", "unknown")
+    result = {
+        "node_id": node_id,
+        "node_name": node.get("name"),
+        "console_type": console_type,
+        "console_host": node.get("console_host"),
+        "console_port": node.get("console"),
+    }
+    if console_type == "telnet":
+        result["command"] = f"telnet {node.get('console_host')} {node.get('console')}"
+    elif console_type in ("vnc",):
+        result["command"] = f"vncviewer {node.get('console_host')}::{node.get('console')}"
+    elif console_type in ("http", "https"):
+        result["url"] = f"{console_type}://{node.get('console_host')}:{node.get('console')}"
+    return result
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────
@@ -263,5 +286,18 @@ NODE_TOOLS = [
             "required": ["project_id", "node_id"],
         },
         "handler": update_node_handler,
+    },
+    {
+        "name": "get_node_console_info",
+        "description": "Get console connection info for a node (host, port, type, and suggested command)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": get_node_console_info_handler,
     },
 ]

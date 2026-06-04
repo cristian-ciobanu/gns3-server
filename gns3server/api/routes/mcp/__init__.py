@@ -281,6 +281,20 @@ async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict
     return await asyncio.to_thread(_run_handler_sync, update_node_handler, params)
 
 
+@mcp.tool()
+async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str, Any]]:
+    """Get console connection info for a node (host, port, type, and suggested command).
+
+    Args:
+        project_id: Project UUID
+        node_id: Node UUID
+    """
+    from .nodes import get_node_console_info_handler
+    return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
+        "project_id": project_id, "node_id": node_id,
+    })
+
+
 # ── Link tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
