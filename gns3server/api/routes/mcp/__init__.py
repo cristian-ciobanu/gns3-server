@@ -170,7 +170,7 @@ async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
 
-def _make_auth_wrapper(sse_app):
+def _make_auth_wrapper(inner_app):
     """Wrap the SSE app with JWT validation.
 
     Supports two ways to pass the token (checked in order):
@@ -183,26 +183,21 @@ def _make_auth_wrapper(sse_app):
     async def auth_wrapper(scope, receive, send):
         if scope["type"] == "http" and scope["method"] == "GET":
             token = None
-
-            # 1. Try Authorization header first
             headers = dict(scope.get("headers", []))
-            auth_header = headers.get(b"authorization", b"").decode()
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-
-            # 2. Fall back to ?token= query param
+            auth = headers.get(b"authorization", b"").decode()
+            if auth.startswith("Bearer "):
+                token = auth[7:]
             if not token:
                 params = parse_qs(scope.get("query_string", b"").decode())
                 tokens = params.get("token", [])
                 if tokens:
                     token = tokens[0]
-
             if not token or not await _validate_token(token):
                 response = Response("Missing or invalid token", status_code=401)
                 await response(scope, receive, send)
                 return
             _jwt_token_var.set(token)
-        await sse_app(scope, receive, send)
+        await inner_app(scope, receive, send)
 
     return auth_wrapper
 
@@ -218,19 +213,15 @@ async def mcp_root():
     return {
         "name": "GNS3 MCP Server",
         "version": "1.0.0",
-        "protocol": "Model Context Protocol",
-        "transport": "SSE",
         "authentication": ["Authorization: Bearer <jwt>", "?token=<jwt>"],
-        "endpoints": {
+        "transports": {
             "sse": "/v3/mcp/transport/sse",
-            "messages": "/v3/mcp/transport/messages/",
         },
     }
 
 
 def register_starlette_routes(app):
-    """Mount the authenticated SSE app under /v3/mcp/transport."""
-    raw_sse_app = mcp.sse_app(mount_path="")
-    wrapped = _make_auth_wrapper(raw_sse_app)
-    app.mount("/v3/mcp/transport", wrapped, name="mcp-sse")
+    """Mount MCP transports on the FastAPI app."""
+    sse_app = _make_auth_wrapper(mcp.sse_app(mount_path=""))
+    app.mount("/v3/mcp/transport", sse_app, name="mcp-sse")
     log.info("MCP SSE server mounted at /v3/mcp/transport")
