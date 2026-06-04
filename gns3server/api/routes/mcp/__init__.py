@@ -171,23 +171,37 @@ async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
 
 def _make_auth_wrapper(sse_app):
-    """Wrap the SSE app with JWT validation from ?token= query parameter.
+    """Wrap the SSE app with JWT validation.
 
-    The wrapper intercepts GET requests (SSE connections), validates the
-    JWT token, and stores it in a context variable so tool handlers can
-    use it to call the GNS3 REST API.  POST messages are passed through
-    unchanged (they are authenticated by their session association).
+    Supports two ways to pass the token (checked in order):
+      1. Authorization: Bearer <jwt> header
+      2. ?token=<jwt> query parameter
+
+    POST messages are passed through (authenticated by their session).
     """
 
     async def auth_wrapper(scope, receive, send):
         if scope["type"] == "http" and scope["method"] == "GET":
-            params = parse_qs(scope.get("query_string", b"").decode())
-            tokens = params.get("token", [])
-            if not tokens or not await _validate_token(tokens[0]):
+            token = None
+
+            # 1. Try Authorization header first
+            headers = dict(scope.get("headers", []))
+            auth_header = headers.get(b"authorization", b"").decode()
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+            # 2. Fall back to ?token= query param
+            if not token:
+                params = parse_qs(scope.get("query_string", b"").decode())
+                tokens = params.get("token", [])
+                if tokens:
+                    token = tokens[0]
+
+            if not token or not await _validate_token(token):
                 response = Response("Missing or invalid token", status_code=401)
                 await response(scope, receive, send)
                 return
-            _jwt_token_var.set(tokens[0])
+            _jwt_token_var.set(token)
         await sse_app(scope, receive, send)
 
     return auth_wrapper
@@ -206,9 +220,9 @@ async def mcp_root():
         "version": "1.0.0",
         "protocol": "Model Context Protocol",
         "transport": "SSE",
-        "authentication": "?token=<jwt>",
+        "authentication": ["Authorization: Bearer <jwt>", "?token=<jwt>"],
         "endpoints": {
-            "sse": "/v3/mcp/transport/sse?token=<jwt>",
+            "sse": "/v3/mcp/transport/sse",
             "messages": "/v3/mcp/transport/messages/",
         },
     }
