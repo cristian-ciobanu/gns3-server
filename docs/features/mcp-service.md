@@ -46,6 +46,10 @@ jwt_access_token_expire_minutes = 1440  ; 24 hours
 
 ## Available Tools
 
+**30 tools** across 5 categories:
+
+### Project (7)
+
 | Tool | Description | Required Parameters |
 |------|-------------|-------------------|
 | `list_projects` | List all projects | none |
@@ -55,6 +59,49 @@ jwt_access_token_expire_minutes = 1440  ; 24 hours
 | `open_project` | Open a project | `project_id` |
 | `close_project` | Close a project | `project_id` |
 | `get_project_stats` | Get project statistics | `project_id` |
+
+### Node (10)
+
+| Tool | Description | Required Parameters |
+|------|-------------|-------------------|
+| `get_nodes` | List all nodes in a project | `project_id` |
+| `get_node` | Get node details | `project_id`, `node_id` |
+| `start_node` | Start a node | `project_id`, `node_id` |
+| `stop_node` | Stop a node | `project_id`, `node_id` |
+| `reload_node` | Reload a node | `project_id`, `node_id` |
+| `suspend_node` | Suspend a node | `project_id`, `node_id` |
+| `create_node` | Create a node from template | `project_id`, `template_id` |
+| `delete_node` | Delete a node | `project_id`, `node_id` |
+| `update_node` | Update node properties | `project_id`, `node_id` |
+| `get_node_console_info` | Get WebSocket console URL | `project_id`, `node_id` |
+
+### Link (5)
+
+| Tool | Description | Required Parameters |
+|------|-------------|-------------------|
+| `get_links` | List all links in a project | `project_id` |
+| `get_link` | Get link details | `project_id`, `link_id` |
+| `create_link` | Create a link between nodes | `project_id`, `nodes` |
+| `delete_link` | Delete a link | `project_id`, `link_id` |
+| `update_link` | Update link properties | `project_id`, `link_id` |
+
+### Template (5)
+
+| Tool | Description | Required Parameters |
+|------|-------------|-------------------|
+| `list_templates` | List all templates | none |
+| `get_template` | Get template details | `template_id` or `name` |
+| `create_template` | Create a template | `name`, `template_type` |
+| `update_template` | Update a template | `template_id` or `name` |
+| `delete_template` | Delete a template | `template_id` or `name` |
+
+### Compute (3)
+
+| Tool | Description | Required Parameters |
+|------|-------------|-------------------|
+| `list_computes` | List all compute nodes | none |
+| `get_compute` | Get compute details | `compute_id` |
+| `get_compute_images` | List available images | `emulator` |
 
 ## Configuration
 
@@ -124,8 +171,24 @@ sequenceDiagram
 - Tool handlers use `Gns3Connector` (from `custom_gns3fy`) to call GNS3's own REST API, keeping the MCP layer decoupled
 - The JWT token is stored in a `contextvars.ContextVar` so it is available within tool handler threads (Python ≥ 3.9 propagates contextvars through `asyncio.to_thread`)
 
+### Console WebSocket
+
+The `get_node_console_info` tool returns a WebSocket URL for connecting to a node's console. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
+
+Use `websocat` to connect from the command line:
+
+```bash
+websocat wss://host:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
+```
+
 ### Source Files
 
-- `gns3server/api/routes/mcp/__init__.py` — FastMCP server, tool definitions, SSE transport, JWT auth wrapper
-- `gns3server/api/routes/mcp/projects.py` — Project tool handlers using Gns3Connector
-- `gns3server/api/server.py` — Mounts MCP routes via `register_starlette_routes()`
+| File | Purpose |
+|------|---------|
+| `gns3server/api/routes/mcp/__init__.py` | FastMCP server, tool decorators, SSE transport, JWT auth wrapper |
+| `gns3server/api/routes/mcp/projects.py` | Project tool handlers |
+| `gns3server/api/routes/mcp/nodes.py` | Node tool handlers |
+| `gns3server/api/routes/mcp/links.py` | Link tool handlers |
+| `gns3server/api/routes/mcp/templates.py` | Template tool handlers |
+| `gns3server/api/routes/mcp/computes.py` | Compute tool handlers |
+| `gns3server/api/server.py` | Mounts MCP routes via `register_starlette_routes()` |
