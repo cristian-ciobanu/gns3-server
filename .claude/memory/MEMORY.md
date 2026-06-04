@@ -27,3 +27,6 @@
 
 ### Docker Container Stop Delay
 - **[Docker Container Stop Delay](./docker-container-stop-delay.md)** - Some containers take ~5s to stop because they don't handle SIGTERM (AlpiNet, OstinatoWireshark)
+
+### MCP Service
+- **[MCP Service Design](./mcp-service-design.md)** - MCP (Model Context Protocol) service architecture using FastMCP with SSE transport, JWT auth, 29 tools across 5 domains
