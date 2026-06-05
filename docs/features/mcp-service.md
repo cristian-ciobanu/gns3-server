@@ -231,10 +231,24 @@ sequenceDiagram
 
 The `get_node_console_info` tool returns a WebSocket URL for connecting to a node's console. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
 
+The WebSocket URL is constructed using the server's `_server_url()`, which resolves the host as follows:
+
+| `Server.host` value | Resolved host in URL |
+|:---|:---|
+| Specific IP or hostname (e.g. `192.168.1.3`) | Used as-is |
+| `0.0.0.0` (IPv4 any, default) | Detected via **default route interface IP** |
+| `::` (IPv6 any) | Detected via default route interface IP |
+| Detection failure | Fallback to `127.0.0.1` |
+
+When `Server.host` is `0.0.0.0` (listen on all interfaces), the MCP server discovers the default route interface IP using a UDP socket connect to `8.8.8.8:80` — no network data is sent, the operating system simply selects the interface that would be used for the default route. This ensures the returned WebSocket URL uses a reachable address (e.g. `192.168.1.3` instead of `127.0.0.1`).
+
+If the configured host is already a specific IP or hostname (not `0.0.0.0`), it is used directly in the URL without modification.
+
 Use `websocat` to connect from the command line:
 
 ```bash
-websocat wss://host:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
+# The host in the URL is automatically resolved to a reachable address
+websocat ws://192.168.1.3:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
 ```
 
 ### Source Files
