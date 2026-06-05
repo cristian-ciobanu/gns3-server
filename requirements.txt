@@ -31,6 +31,9 @@ typing-extensions>=4.15.0
 requests>=2.34.2
 urllib3>=2.7.0
 
+# MCP (Model Context Protocol) dependencies
+fastmcp>=3.4.0
+
 # ==============================================================================
 # AI Copilot Optional Dependencies
 # ==============================================================================
