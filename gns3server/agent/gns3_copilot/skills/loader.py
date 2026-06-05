@@ -98,7 +98,7 @@ class SkillsLoader:
 
     def load_device_skills(self) -> Dict[str, Dict[str, Any]]:
         """
-        Load all device/feature skills from YAML files.
+        Load all device skills from YAML files.
 
         Returns:
             Dictionary mapping skill keys to skill definitions
@@ -131,7 +131,48 @@ class SkillsLoader:
             except Exception as e:
                 logger.error(f"Failed to load skill from {yaml_file}: {e}")
 
-        logger.debug(f"Loaded {len(skills)} device skills from {device_dir}")
+        logger.debug(f"Loaded {len(skills)} device skills from device directory")
+        return skills
+
+    def load_feature_skills(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load all feature skills from YAML files.
+
+        Feature skills are network planning and design functionalities
+        (e.g., topology planner), not device-specific features.
+
+        Returns:
+            Dictionary mapping skill keys to skill definitions
+        """
+        if yaml is None:
+            logger.error("PyYAML is not installed. Cannot load skills from YAML.")
+            return {}
+
+        skills = {}
+        feature_dir = self.skills_dir / "feature"
+
+        if not feature_dir.exists():
+            logger.warning(f"Feature skills directory not found: {feature_dir}")
+            return {}
+
+        for yaml_file in feature_dir.glob("*.yaml"):
+            try:
+                skill_data = self._load_yaml(yaml_file)
+                if not skill_data:
+                    logger.warning(f"Skipping empty YAML file: {yaml_file}")
+                    continue
+                # Use device_type from YAML content as the key
+                # Fallback to filename stem if device_type not present
+                skill_key = skill_data.get("device_type") if isinstance(skill_data, dict) else None
+                if not skill_key:
+                    skill_key = yaml_file.stem
+                    logger.warning(f"No device_type in {yaml_file}, using filename '{skill_key}' as key")
+                skills[skill_key] = skill_data
+                logger.debug(f"Loaded feature skill: {skill_key} from {yaml_file}")
+            except Exception as e:
+                logger.error(f"Failed to load feature skill from {yaml_file}: {e}")
+
+        logger.debug(f"Loaded {len(skills)} feature skills from feature directory")
         return skills
 
     def load_prompt(self, prompt_name: str) -> str:

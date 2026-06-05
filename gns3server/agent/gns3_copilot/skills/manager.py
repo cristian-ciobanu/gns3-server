@@ -227,8 +227,16 @@ class SkillsManager:
                     logger.error(f"Invalid skill format for {skill_key}, skipping")
                     continue
 
-            # Load new device/feature skills from YAML files
+            # Load new device skills from YAML files
             new_device_skills = self.loader.load_device_skills()
+
+            # Load new feature skills from YAML files
+            new_feature_skills = self.loader.load_feature_skills()
+
+            # Merge device and feature skills into single registry
+            all_skills = {}
+            all_skills.update(new_device_skills)
+            all_skills.update(new_feature_skills)
 
             # Update registries (safe replace - never leaves dict empty)
             for k in list(INJECTION_SKILLS_REGISTRY):
@@ -237,11 +245,11 @@ class SkillsManager:
             INJECTION_SKILLS_REGISTRY.update(new_injection_skills)
 
             for k in list(SKILLS_REGISTRY):
-                if k not in new_device_skills:
+                if k not in all_skills:
                     del SKILLS_REGISTRY[k]
-            SKILLS_REGISTRY.update(new_device_skills)
+            SKILLS_REGISTRY.update(all_skills)
 
-            logger.info(f"Loaded {len(new_injection_skills)} injection skills and {len(new_device_skills)} device skills")
+            logger.info(f"Loaded {len(new_injection_skills)} injection skills, {len(new_device_skills)} device skills, and {len(new_feature_skills)} feature skills")
             return True
         except Exception as e:
             logger.error(f"Failed to reload skills: {e}")
