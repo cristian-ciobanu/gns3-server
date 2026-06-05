@@ -162,7 +162,31 @@ class ServerSettings(BaseModel):
     skills_repo_url: str = "https://github.com/gns3/gns3-skills.git"
     skills_repo_branch: str = "main"
     skills_auto_update: bool = True
+
+    # MCP (Model Context Protocol) transport security settings
+    # DNS rebinding protection is disabled by default to allow connections
+    # from any host (aligns with GNS3 server's 0.0.0.0 binding).
+    # Users with security requirements can enable protection and specify
+    # allowed hosts using "host:*" port wildcard patterns.
+    mcp_enable_dns_rebinding_protection: bool = False
+    mcp_allowed_hosts: list[str] = Field(default_factory=list)
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
+
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
+
+    @field_validator("mcp_allowed_hosts", mode="before")
+    @classmethod
+    def split_mcp_allowed_hosts(cls, v):
+        if v and isinstance(v, str):
+            return v.split(",")
+        return list()
+
+    @field_validator("mcp_allowed_origins", mode="before")
+    @classmethod
+    def split_mcp_allowed_origins(cls, v):
+        if v and isinstance(v, str):
+            return v.split(",")
+        return list()
 
     @field_validator("additional_images_paths", mode="before")
     @classmethod

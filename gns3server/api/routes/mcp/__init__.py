@@ -30,6 +30,7 @@ import contextvars
 import json
 import asyncio
 import logging
+import socket
 from typing import Any, Annotated
 from urllib.parse import parse_qs
 
@@ -39,6 +40,7 @@ from fastapi.responses import Response
 from pydantic import Field
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from gns3server.config import Config
 from gns3server.services import auth_service
@@ -93,15 +95,42 @@ async def _validate_token(token: str) -> bool:
 def _server_url() -> str:
     cfg = Config.instance().settings
     host = cfg.Server.host
-    if host == "0.0.0.0":
-        host = "127.0.0.1"
+    if host in ("0.0.0.0", "::"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(0.1)
+                s.connect(("8.8.8.8", 80))
+                host = s.getsockname()[0]
+        except OSError:
+            host = "127.0.0.1"
     scheme = "https" if cfg.Server.enable_ssl else "http"
     return f"{scheme}://{host}:{cfg.Server.port}"
 
 
 # ── FastMCP Server ────────────────────────────────────────────────────
 
-mcp = FastMCP("GNS3 MCP Server")
+def _create_mcp_server() -> FastMCP:
+    """Create MCP server with security settings from configuration."""
+    cfg = Config.instance().settings.Server
+
+    # Always pass an explicit TransportSecuritySettings to prevent FastMCP
+    # from auto-enabling protection when host is localhost (its default).
+    if cfg.mcp_enable_dns_rebinding_protection:
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=cfg.mcp_allowed_hosts or ["127.0.0.1:*", "localhost:*"],
+            allowed_origins=cfg.mcp_allowed_origins or ["http://127.0.0.1:*", "http://localhost:*"],
+        )
+    else:
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
+
+    mcp = FastMCP("GNS3 MCP Server", transport_security=transport_security)
+    return mcp
+
+
+mcp = _create_mcp_server()
 
 
 # ── Tool handlers ─────────────────────────────────────────────────────

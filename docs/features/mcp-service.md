@@ -134,6 +134,62 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
+## Transport Security
+
+MCP server uses FastMCP's DNS rebinding protection to prevent attackers from
+exploiting DNS resolution to access the MCP endpoint through unauthorized domains.
+
+### Default Behaviour
+
+DNS rebinding protection is **disabled by default**, allowing connections from
+any host. This aligns with GNS3 server's default `host = 0.0.0.0` binding policy,
+which is designed for VM distribution scenarios where users access the server
+from various network locations.
+
+### Enabling Protection
+
+Add to `gns3_server.conf` under the `[Server]` section:
+
+```ini
+; Enable DNS rebinding protection for MCP server
+mcp_enable_dns_rebinding_protection = True
+
+; Allowed hosts (comma-separated, "host:*" port wildcard patterns only)
+mcp_allowed_hosts = 127.0.0.1:*,localhost:*,192.168.1.3:*
+
+; Allowed origins (comma-separated)
+mcp_allowed_origins = http://127.0.0.1:*,http://localhost:*,http://192.168.1.3:*
+```
+
+> **Note**: The MCP library only supports `"host:*"` port wildcard patterns
+> (e.g., `"192.168.1.3:*"`). Standalone `"*"` wildcards are not supported.
+
+### Protection Mechanism
+
+When protection is enabled, the MCP server validates the `Host` header of
+incoming SSE connection requests:
+
+```python
+# Verify the request's Host header matches allowed patterns
+validate_request → check Host header → 421 Misdirected Request if invalid
+```
+
+This prevents DNS rebinding attacks:
+1. Attacker registers `evil.com` pointing to your server's IP
+2. User's browser makes requests to `evil.com:3080`
+3. MCP server checks Host header = `"evil.com:3080"`
+4. `"evil.com:3080"` is not in `allowed_hosts` → connection rejected
+
+### Behaviour Summary
+
+| `mcp_enable_dns_rebinding_protection` | Result |
+|:---|:---|
+| `False` (default) | All hosts allowed |
+| `True` + correct hosts configured | Only configured hosts allowed |
+| `True` + missing/wrong hosts | Connections rejected with 421 |
+
+For public-facing MCP servers, set `allowed_hosts` to your server's domain name.
+
 ## Architecture
 
 ```mermaid
@@ -175,10 +231,24 @@ sequenceDiagram
 
 The `get_node_console_info` tool returns a WebSocket URL for connecting to a node's console. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
 
+The WebSocket URL is constructed using the server's `_server_url()`, which resolves the host as follows:
+
+| `Server.host` value | Resolved host in URL |
+|:---|:---|
+| Specific IP or hostname (e.g. `192.168.1.3`) | Used as-is |
+| `0.0.0.0` (IPv4 any, default) | Detected via **default route interface IP** |
+| `::` (IPv6 any) | Detected via default route interface IP |
+| Detection failure | Fallback to `127.0.0.1` |
+
+When `Server.host` is `0.0.0.0` (listen on all interfaces), the MCP server discovers the default route interface IP using a UDP socket connect to `8.8.8.8:80` — no network data is sent, the operating system simply selects the interface that would be used for the default route. This ensures the returned WebSocket URL uses a reachable address (e.g. `192.168.1.3` instead of `127.0.0.1`).
+
+If the configured host is already a specific IP or hostname (not `0.0.0.0`), it is used directly in the URL without modification.
+
 Use `websocat` to connect from the command line:
 
 ```bash
-websocat wss://host:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
+# The host in the URL is automatically resolved to a reachable address
+websocat ws://192.168.1.3:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
 ```
 
 ### Source Files
