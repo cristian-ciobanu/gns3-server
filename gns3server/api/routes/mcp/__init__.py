@@ -39,6 +39,7 @@ from fastapi.responses import Response
 from pydantic import Field
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from gns3server.config import Config
 from gns3server.services import auth_service
@@ -101,7 +102,22 @@ def _server_url() -> str:
 
 # ── FastMCP Server ────────────────────────────────────────────────────
 
-mcp = FastMCP("GNS3 MCP Server")
+def _create_mcp_server() -> FastMCP:
+    """Create MCP server with security settings from configuration."""
+    cfg = Config.instance().settings.Server
+
+    mcp = FastMCP(
+        "GNS3 MCP Server",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=cfg.mcp_enable_dns_rebinding_protection,
+            allowed_hosts=cfg.mcp_allowed_hosts,
+            allowed_origins=cfg.mcp_allowed_origins,
+        ),
+    )
+    return mcp
+
+
+mcp = _create_mcp_server()
 
 
 # ── Tool handlers ─────────────────────────────────────────────────────
