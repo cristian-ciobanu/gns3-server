@@ -164,9 +164,13 @@ class ServerSettings(BaseModel):
     skills_auto_update: bool = True
 
     # MCP (Model Context Protocol) transport security settings
-    mcp_enable_dns_rebinding_protection: bool = True
-    mcp_allowed_hosts: list[str] = Field(default=["*"], description="Allowed Host header values for MCP server")
-    mcp_allowed_origins: list[str] = Field(default=["*"], description="Allowed Origin header values for MCP server")
+    # DNS rebinding protection is disabled by default to allow connections
+    # from any host (aligns with GNS3 server's 0.0.0.0 binding).
+    # Users with security requirements can enable protection and specify
+    # allowed hosts using "host:*" port wildcard patterns.
+    mcp_enable_dns_rebinding_protection: bool = False
+    mcp_allowed_hosts: list[str] = Field(default_factory=list)
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 

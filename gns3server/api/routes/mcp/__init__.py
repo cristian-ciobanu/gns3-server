@@ -106,14 +106,20 @@ def _create_mcp_server() -> FastMCP:
     """Create MCP server with security settings from configuration."""
     cfg = Config.instance().settings.Server
 
-    mcp = FastMCP(
-        "GNS3 MCP Server",
-        transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=cfg.mcp_enable_dns_rebinding_protection,
-            allowed_hosts=cfg.mcp_allowed_hosts,
-            allowed_origins=cfg.mcp_allowed_origins,
-        ),
-    )
+    # Always pass an explicit TransportSecuritySettings to prevent FastMCP
+    # from auto-enabling protection when host is localhost (its default).
+    if cfg.mcp_enable_dns_rebinding_protection:
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=cfg.mcp_allowed_hosts or ["127.0.0.1:*", "localhost:*"],
+            allowed_origins=cfg.mcp_allowed_origins or ["http://127.0.0.1:*", "http://localhost:*"],
+        )
+    else:
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
+
+    mcp = FastMCP("GNS3 MCP Server", transport_security=transport_security)
     return mcp
 
 
