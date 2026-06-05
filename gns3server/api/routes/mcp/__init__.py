@@ -30,6 +30,7 @@ import contextvars
 import json
 import asyncio
 import logging
+import socket
 from typing import Any, Annotated
 from urllib.parse import parse_qs
 
@@ -94,8 +95,14 @@ async def _validate_token(token: str) -> bool:
 def _server_url() -> str:
     cfg = Config.instance().settings
     host = cfg.Server.host
-    if host == "0.0.0.0":
-        host = "127.0.0.1"
+    if host in ("0.0.0.0", "::"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(0.1)
+                s.connect(("8.8.8.8", 80))
+                host = s.getsockname()[0]
+        except OSError:
+            host = "127.0.0.1"
     scheme = "https" if cfg.Server.enable_ssl else "http"
     return f"{scheme}://{host}:{cfg.Server.port}"
 
