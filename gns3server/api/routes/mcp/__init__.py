@@ -30,11 +30,13 @@ import contextvars
 import json
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Annotated
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter
 from fastapi.responses import Response
+
+from pydantic import Field
 
 from mcp.server.fastmcp import FastMCP
 
@@ -121,23 +123,19 @@ async def list_projects() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_project(project_id: str) -> list[dict[str, Any]]:
-    """Get detailed information about a specific project.
-
-    Args:
-        project_id: Project UUID
-    """
+async def get_project(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific project."""
     return await asyncio.to_thread(_run_handler_sync, get_project_handler, {"project_id": project_id})
 
 
 @mcp.tool()
-async def create_project(name: str, description: str = "") -> list[dict[str, Any]]:
-    """Create a new GNS3 project.
-
-    Args:
-        name: Project name
-        description: Optional project description
-    """
+async def create_project(
+    name: Annotated[str, Field(description="Project name")],
+    description: Annotated[str, Field(description="Optional project description")] = "",
+) -> list[dict[str, Any]]:
+    """Create a new GNS3 project."""
     params = {"name": name}
     if description:
         params["description"] = description
@@ -145,42 +143,32 @@ async def create_project(name: str, description: str = "") -> list[dict[str, Any
 
 
 @mcp.tool()
-async def delete_project(project_id: str) -> list[dict[str, Any]]:
-    """Delete a GNS3 project permanently.
-
-    Args:
-        project_id: UUID of the project to delete
-    """
+async def delete_project(
+    project_id: Annotated[str, Field(description="UUID of the project to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a GNS3 project permanently."""
     return await asyncio.to_thread(_run_handler_sync, delete_project_handler, {"project_id": project_id})
 
 
 @mcp.tool()
-async def open_project(project_id: str) -> list[dict[str, Any]]:
-    """Open a closed GNS3 project.
-
-    Args:
-        project_id: Project UUID
-    """
+async def open_project(
+    project_id: Annotated[str, Field(description="UUID of the project to open")],
+) -> list[dict[str, Any]]:
+    """Open a closed GNS3 project."""
     return await asyncio.to_thread(_run_handler_sync, open_project_handler, {"project_id": project_id})
 
-
 @mcp.tool()
-async def close_project(project_id: str) -> list[dict[str, Any]]:
-    """Close an open GNS3 project.
-
-    Args:
-        project_id: Project UUID
-    """
+async def close_project(
+    project_id: Annotated[str, Field(description="UUID of the project to close")],
+) -> list[dict[str, Any]]:
+    """Close an open GNS3 project."""
     return await asyncio.to_thread(_run_handler_sync, close_project_handler, {"project_id": project_id})
 
-
 @mcp.tool()
-async def get_project_stats(project_id: str) -> list[dict[str, Any]]:
-    """Get statistics (nodes, links, snapshots, drawings) for a project.
-
-    Args:
-        project_id: Project UUID
-    """
+async def get_project_stats(
+    project_id: Annotated[str, Field(description="UUID of the project to get statistics for")],
+) -> list[dict[str, Any]]:
+    """Get statistics (nodes, links, snapshots, drawings) for a project."""
     return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
 
 
@@ -193,71 +181,55 @@ async def get_nodes(project_id: str) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Get detailed information about a specific node.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def get_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific node."""
     return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
 
-
 @mcp.tool()
-async def start_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Start a node in a project.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def start_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to start")],
+) -> list[dict[str, Any]]:
+    """Start a node in a project."""
     return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
 
-
 @mcp.tool()
-async def stop_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Stop a node in a project.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def stop_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to stop")],
+) -> list[dict[str, Any]]:
+    """Stop a node in a project."""
     return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
 
-
 @mcp.tool()
-async def reload_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Reload (restart) a node in a project.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def reload_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to reload")],
+) -> list[dict[str, Any]]:
+    """Reload (restart) a node in a project."""
     return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
 
-
 @mcp.tool()
-async def suspend_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Suspend a node in a project.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def suspend_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to suspend")],
+) -> list[dict[str, Any]]:
+    """Suspend a node in a project."""
     return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
 @mcp.tool()
-async def create_node(project_id: str, template_id: str, x: int = 0, y: int = 0, compute_id: str = "local") -> list[dict[str, Any]]:
-    """Create a new node from a template in a project.
-
-    Args:
-        project_id: Project UUID
-        template_id: Template UUID
-        x: X coordinate (optional)
-        y: Y coordinate (optional)
-        compute_id: Compute ID (optional, default: local)
-    """
+async def create_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    template_id: Annotated[str, Field(description="UUID of the template to create the node from")],
+    x: Annotated[int, Field(description="X coordinate on the project canvas")] = 0,
+    y: Annotated[int, Field(description="Y coordinate on the project canvas")] = 0,
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Create a new node from a template in a project."""
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
         "x": x, "y": y, "compute_id": compute_id,
@@ -265,50 +237,49 @@ async def create_node(project_id: str, template_id: str, x: int = 0, y: int = 0,
 
 
 @mcp.tool()
-async def delete_node(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Delete a node from a project.
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def delete_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a node from a project."""
     return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
 
 
 @mcp.tool()
-async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict[str, Any]]:
-    """Update a node's properties (name, position, etc.).
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
-    """
+async def update_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to update")],
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update a node's properties (name, position, etc.)."""
     params = {"project_id": project_id, "node_id": node_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_node_handler, params)
 
 
 @mcp.tool()
-async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Get console WebSocket URL and send configuration commands via websocat.
+async def get_node_console_info(
+    project_id: Annotated[str, Field(description="UUID of the project containing the node")],
+    node_id: Annotated[str, Field(description="UUID of the node to get console info for")],
+) -> list[dict[str, Any]]:
+    """Get WebSocket console connection info for a node.
+
+    Returns the WebSocket URL, console type (telnet/ssh/vnc), and other
+    connection details needed to interact with a node's console via WebSocket.
 
     Complete workflow:
-      1. Preparation: Call this tool with project_id and node_id
-      2. Connection: Use websocat in text mode (-t) to connect
+      1. Call this tool with project_id and node_id to get the WebSocket URL
+      2. Connect to the returned URL using websocat in text mode (-t):
          > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
-      3. Send commands: Use heredoc (<<<) with \\r\\n as line endings
+      3. Send device commands with \\r\\n line endings via heredoc:
          > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
       4. Receive response: websocat receives and displays device output
          Use 'timeout' to avoid connection hanging:
          > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
 
     Key points:
-      - Use \\r\\n (not \\n) to match Telnet/Console protocol
-      - $'...' format supports escape sequences
-      - Set timeout to prevent hanging
-
-    Args:
-        project_id: Project UUID
-        node_id: Node UUID
+      - Use \\r\\n (not \\n) to match console protocol line endings
+      - Use $'...' format for escape sequences in bash
+      - Set a timeout to prevent hanging connections
     """
     return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
         "project_id": project_id, "node_id": node_id,
@@ -324,26 +295,22 @@ async def get_links(project_id: str) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
-    """Get detailed information about a specific link.
-
-    Args:
-        project_id: Project UUID
-        link_id: Link UUID
-    """
+async def get_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific link."""
     return await asyncio.to_thread(_run_handler_sync, get_link_handler, {"project_id": project_id, "link_id": link_id})
 
 
 @mcp.tool()
-async def create_link(project_id: str, nodes: list, link_type: str = "ethernet", filters: dict = None) -> list[dict[str, Any]]:
-    """Create a link between two nodes in a project.
-
-    Args:
-        project_id: Project UUID
-        nodes: List of node connections, e.g. [{"node_id": "...", "adapter_number": 0, "port_number": 0}, ...]
-        link_type: Link type - ethernet or serial (optional)
-        filters: Packet filters (optional)
-    """
+async def create_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
+    link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
+    filters: Annotated[dict, Field(description="Optional packet filters")] = None,
+) -> list[dict[str, Any]]:
+    """Create a link between two nodes in a project."""
     params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
     if filters:
         params["filters"] = filters
@@ -351,24 +318,21 @@ async def create_link(project_id: str, nodes: list, link_type: str = "ethernet",
 
 
 @mcp.tool()
-async def delete_link(project_id: str, link_id: str) -> list[dict[str, Any]]:
-    """Delete a link from a project.
-
-    Args:
-        project_id: Project UUID
-        link_id: Link UUID
-    """
+async def delete_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a link from a project."""
     return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
 
 
 @mcp.tool()
-async def update_link(project_id: str, link_id: str, **kwargs: Any) -> list[dict[str, Any]]:
-    """Update a link's properties (suspend, filters, etc.).
-
-    Args:
-        project_id: Project UUID
-        link_id: Link UUID
-    """
+async def update_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link to update")],
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update a link's properties (suspend, filters, etc.)."""
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
@@ -382,52 +346,45 @@ async def list_templates() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_template(template_id: str = None, name: str = None) -> list[dict[str, Any]]:
-    """Get detailed information about a specific template.
-
-    Args:
-        template_id: Template UUID (optional if name is provided)
-        name: Template name (optional if template_id is provided)
-    """
+async def get_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific template."""
     return await asyncio.to_thread(_run_handler_sync, get_template_handler, {
         "template_id": template_id, "name": name,
     })
 
 
 @mcp.tool()
-async def create_template(name: str, template_type: str, compute_id: str = "local") -> list[dict[str, Any]]:
-    """Create a new template.
-
-    Args:
-        name: Template name
-        template_type: Template type (e.g. qemu, docker, dynamips)
-        compute_id: Compute ID (optional, default: local)
-    """
+async def create_template(
+    name: Annotated[str, Field(description="Template name")],
+    template_type: Annotated[str, Field(description="Template type (e.g. qemu, docker, dynamips)")],
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Create a new template."""
     return await asyncio.to_thread(_run_handler_sync, create_template_handler, {
         "name": name, "template_type": template_type, "compute_id": compute_id,
     })
 
 
 @mcp.tool()
-async def update_template(template_id: str = None, name: str = None, **kwargs: Any) -> list[dict[str, Any]]:
-    """Update an existing template's properties.
-
-    Args:
-        template_id: Template UUID (optional if name is provided)
-        name: Template name (optional if template_id is provided)
-    """
+async def update_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update an existing template's properties."""
     params = {"template_id": template_id, "name": name, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_template_handler, params)
 
 
 @mcp.tool()
-async def delete_template(template_id: str = None, name: str = None) -> list[dict[str, Any]]:
-    """Delete a template.
-
-    Args:
-        template_id: Template UUID (optional if name is provided)
-        name: Template name (optional if template_id is provided)
-    """
+async def delete_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+) -> list[dict[str, Any]]:
+    """Delete a template."""
     return await asyncio.to_thread(_run_handler_sync, delete_template_handler, {
         "template_id": template_id, "name": name,
     })
@@ -442,23 +399,19 @@ async def list_computes() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_compute(compute_id: str = "local") -> list[dict[str, Any]]:
-    """Get detailed information about a compute node.
-
-    Args:
-        compute_id: Compute ID (default: local)
-    """
+async def get_compute(
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Get detailed information about a compute node."""
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
 
 @mcp.tool()
-async def get_compute_images(emulator: str, compute_id: str = "local") -> list[dict[str, Any]]:
-    """List available images for an emulator on a compute node.
-
-    Args:
-        emulator: Emulator type (e.g. qemu, iou, docker)
-        compute_id: Compute ID (default: local)
-    """
+async def get_compute_images(
+    emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """List available images for an emulator on a compute node."""
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,
     })
