@@ -1,0 +1,476 @@
+#
+# Copyright (C) 2026 GNS3 Technologies Inc.
+# Author: Yue Guobin
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+"""
+MCP (Model Context Protocol) service for GNS3 server.
+
+Implements the standard MCP protocol over SSE transport using FastMCP:
+
+  /v3/mcp/sse     — SSE stream
+  /v3/mcp/messages/ — JSON-RPC messages
+
+Tools are registered via @mcp.tool() decorators.
+"""
+
+import contextvars
+import json
+import asyncio
+import logging
+from typing import Any, Annotated
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter
+from fastapi.responses import Response
+
+from pydantic import Field
+
+from mcp.server.fastmcp import FastMCP
+
+from gns3server.config import Config
+from gns3server.services import auth_service
+from .projects import (
+    list_projects_handler, get_project_handler, create_project_handler,
+    delete_project_handler, open_project_handler, close_project_handler,
+    get_project_stats_handler,
+)
+from .nodes import (
+    get_nodes_handler, get_node_handler, start_node_handler,
+    stop_node_handler, reload_node_handler, suspend_node_handler,
+    create_node_handler, delete_node_handler, update_node_handler,
+    get_node_console_info_handler,
+)
+from .links import (
+    get_links_handler, get_link_handler, create_link_handler,
+    delete_link_handler, update_link_handler,
+)
+from .templates import (
+    list_templates_handler, get_template_handler, create_template_handler,
+    update_template_handler, delete_template_handler,
+)
+from .computes import (
+    list_computes_handler, get_compute_handler, get_compute_images_handler,
+)
+
+log = logging.getLogger(__name__)
+
+
+# ── Per‑connection JWT token  ─────────────────────────────────────────
+# Set during SSE authentication, read by tool handlers running in the
+# same asyncio task (contextvars propagate through asyncio.to_thread).
+
+_jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mcp_jwt_token", default=None
+)
+
+
+# ── Token validation ──────────────────────────────────────────────────
+
+async def _validate_token(token: str) -> bool:
+    """Return True if token is a valid GNS3 JWT."""
+    try:
+        auth_service.get_username_from_token(token)
+        return True
+    except Exception:
+        return False
+
+
+# ── Server URL helper ─────────────────────────────────────────────────
+
+def _server_url() -> str:
+    cfg = Config.instance().settings
+    host = cfg.Server.host
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    scheme = "https" if cfg.Server.enable_ssl else "http"
+    return f"{scheme}://{host}:{cfg.Server.port}"
+
+
+# ── FastMCP Server ────────────────────────────────────────────────────
+
+mcp = FastMCP("GNS3 MCP Server")
+
+
+# ── Tool handlers ─────────────────────────────────────────────────────
+
+def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run a synchronous Gns3Connector handler in a thread."""
+    ctx = {
+        "server_url": _server_url(),
+        "jwt_token": _jwt_token_var.get(),
+    }
+    result = handler(params, ctx)
+    return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
+
+
+@mcp.tool()
+async def list_projects() -> list[dict[str, Any]]:
+    """List all GNS3 projects accessible to the current user."""
+    return await asyncio.to_thread(_run_handler_sync, list_projects_handler, {})
+
+
+@mcp.tool()
+async def get_project(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific project."""
+    return await asyncio.to_thread(_run_handler_sync, get_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def create_project(
+    name: Annotated[str, Field(description="Project name")],
+    description: Annotated[str, Field(description="Optional project description")] = "",
+) -> list[dict[str, Any]]:
+    """Create a new GNS3 project."""
+    params = {"name": name}
+    if description:
+        params["description"] = description
+    return await asyncio.to_thread(_run_handler_sync, create_project_handler, params)
+
+
+@mcp.tool()
+async def delete_project(
+    project_id: Annotated[str, Field(description="UUID of the project to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a GNS3 project permanently."""
+    return await asyncio.to_thread(_run_handler_sync, delete_project_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def open_project(
+    project_id: Annotated[str, Field(description="UUID of the project to open")],
+) -> list[dict[str, Any]]:
+    """Open a closed GNS3 project."""
+    return await asyncio.to_thread(_run_handler_sync, open_project_handler, {"project_id": project_id})
+
+@mcp.tool()
+async def close_project(
+    project_id: Annotated[str, Field(description="UUID of the project to close")],
+) -> list[dict[str, Any]]:
+    """Close an open GNS3 project."""
+    return await asyncio.to_thread(_run_handler_sync, close_project_handler, {"project_id": project_id})
+
+@mcp.tool()
+async def get_project_stats(
+    project_id: Annotated[str, Field(description="UUID of the project to get statistics for")],
+) -> list[dict[str, Any]]:
+    """Get statistics (nodes, links, snapshots, drawings) for a project."""
+    return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
+
+
+# ── Node tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_nodes(project_id: str) -> list[dict[str, Any]]:
+    """List all nodes in a project."""
+    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def get_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific node."""
+    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
+
+@mcp.tool()
+async def start_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to start")],
+) -> list[dict[str, Any]]:
+    """Start a node in a project."""
+    return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
+
+@mcp.tool()
+async def stop_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to stop")],
+) -> list[dict[str, Any]]:
+    """Stop a node in a project."""
+    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
+
+@mcp.tool()
+async def reload_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to reload")],
+) -> list[dict[str, Any]]:
+    """Reload (restart) a node in a project."""
+    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
+
+@mcp.tool()
+async def suspend_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to suspend")],
+) -> list[dict[str, Any]]:
+    """Suspend a node in a project."""
+    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def create_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    template_id: Annotated[str, Field(description="UUID of the template to create the node from")],
+    x: Annotated[int, Field(description="X coordinate on the project canvas")] = 0,
+    y: Annotated[int, Field(description="Y coordinate on the project canvas")] = 0,
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Create a new node from a template in a project."""
+    return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
+        "project_id": project_id, "template_id": template_id,
+        "x": x, "y": y, "compute_id": compute_id,
+    })
+
+
+@mcp.tool()
+async def delete_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a node from a project."""
+    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
+
+
+@mcp.tool()
+async def update_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to update")],
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update a node's properties (name, position, etc.)."""
+    params = {"project_id": project_id, "node_id": node_id, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_node_handler, params)
+
+
+@mcp.tool()
+async def get_node_console_info(
+    project_id: Annotated[str, Field(description="UUID of the project containing the node")],
+    node_id: Annotated[str, Field(description="UUID of the node to get console info for")],
+) -> list[dict[str, Any]]:
+    """Get WebSocket console connection info for a node.
+
+    Returns the WebSocket URL, console type (telnet/ssh/vnc), and other
+    connection details needed to interact with a node's console via WebSocket.
+
+    Complete workflow:
+      1. Call this tool with project_id and node_id to get the WebSocket URL
+      2. Connect to the returned URL using websocat in text mode (-t):
+         > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
+      3. Send device commands with \\r\\n line endings via heredoc:
+         > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
+      4. Receive response: websocat receives and displays device output
+         Use 'timeout' to avoid connection hanging:
+         > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
+
+    Key points:
+      - Use \\r\\n (not \\n) to match console protocol line endings
+      - Use $'...' format for escape sequences in bash
+      - Set a timeout to prevent hanging connections
+    """
+    return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
+        "project_id": project_id, "node_id": node_id,
+    })
+
+
+# ── Link tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_links(project_id: str) -> list[dict[str, Any]]:
+    """List all links in a project."""
+    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def get_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific link."""
+    return await asyncio.to_thread(_run_handler_sync, get_link_handler, {"project_id": project_id, "link_id": link_id})
+
+
+@mcp.tool()
+async def create_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
+    link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
+    filters: Annotated[dict, Field(description="Optional packet filters")] = None,
+) -> list[dict[str, Any]]:
+    """Create a link between two nodes in a project."""
+    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
+    if filters:
+        params["filters"] = filters
+    return await asyncio.to_thread(_run_handler_sync, create_link_handler, params)
+
+
+@mcp.tool()
+async def delete_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a link from a project."""
+    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
+
+
+@mcp.tool()
+async def update_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link to update")],
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update a link's properties (suspend, filters, etc.)."""
+    params = {"project_id": project_id, "link_id": link_id, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
+
+
+# ── Template tools ────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_templates() -> list[dict[str, Any]]:
+    """List all available templates on the server."""
+    return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {})
+
+
+@mcp.tool()
+async def get_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific template."""
+    return await asyncio.to_thread(_run_handler_sync, get_template_handler, {
+        "template_id": template_id, "name": name,
+    })
+
+
+@mcp.tool()
+async def create_template(
+    name: Annotated[str, Field(description="Template name")],
+    template_type: Annotated[str, Field(description="Template type (e.g. qemu, docker, dynamips)")],
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Create a new template."""
+    return await asyncio.to_thread(_run_handler_sync, create_template_handler, {
+        "name": name, "template_type": template_type, "compute_id": compute_id,
+    })
+
+
+@mcp.tool()
+async def update_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Update an existing template's properties."""
+    params = {"template_id": template_id, "name": name, **kwargs}
+    return await asyncio.to_thread(_run_handler_sync, update_template_handler, params)
+
+
+@mcp.tool()
+async def delete_template(
+    template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
+    name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
+) -> list[dict[str, Any]]:
+    """Delete a template."""
+    return await asyncio.to_thread(_run_handler_sync, delete_template_handler, {
+        "template_id": template_id, "name": name,
+    })
+
+
+# ── Compute tools ─────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_computes() -> list[dict[str, Any]]:
+    """List all compute nodes available to the server."""
+    return await asyncio.to_thread(_run_handler_sync, list_computes_handler, {})
+
+
+@mcp.tool()
+async def get_compute(
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """Get detailed information about a compute node."""
+    return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
+
+
+@mcp.tool()
+async def get_compute_images(
+    emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
+    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+) -> list[dict[str, Any]]:
+    """List available images for an emulator on a compute node."""
+    return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
+        "emulator": emulator, "compute_id": compute_id,
+    })
+
+
+# ── Auth‑wrapped SSE app ──────────────────────────────────────────────
+
+def _make_auth_wrapper(inner_app):
+    """Wrap the SSE app with JWT validation.
+
+    Supports two ways to pass the token (checked in order):
+      1. Authorization: Bearer <jwt> header
+      2. ?token=<jwt> query parameter
+
+    POST messages are passed through (authenticated by their session).
+    """
+
+    async def auth_wrapper(scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET":
+            token = None
+            headers = dict(scope.get("headers", []))
+            auth = headers.get(b"authorization", b"").decode()
+            if auth.startswith("Bearer "):
+                token = auth[7:]
+            if not token:
+                params = parse_qs(scope.get("query_string", b"").decode())
+                tokens = params.get("token", [])
+                if tokens:
+                    token = tokens[0]
+            if not token or not await _validate_token(token):
+                response = Response("Missing or invalid token", status_code=401)
+                await response(scope, receive, send)
+                return
+            _jwt_token_var.set(token)
+        await inner_app(scope, receive, send)
+
+    return auth_wrapper
+
+
+# ── FastAPI router ────────────────────────────────────────────────────
+
+router = APIRouter(prefix="/mcp", tags=["MCP"])
+
+
+@router.get("/")
+async def mcp_root():
+    """MCP service metadata."""
+    return {
+        "name": "GNS3 MCP Server",
+        "version": "1.0.0",
+        "authentication": ["Authorization: Bearer <jwt>", "?token=<jwt>"],
+        "transports": {
+            "sse": "/v3/mcp/transport/sse",
+        },
+    }
+
+
+def register_starlette_routes(app):
+    """Mount MCP transports on the FastAPI app."""
+    sse_app = _make_auth_wrapper(mcp.sse_app(mount_path=""))
+    app.mount("/v3/mcp/transport", sse_app, name="mcp-sse")
+    log.info("MCP SSE server mounted at /v3/mcp/transport")

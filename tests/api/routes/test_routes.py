@@ -41,7 +41,8 @@ ALLOWED_CONTROLLER_ENDPOINTS = [
     ("/v3/symbols", "GET"),
     ("/v3/symbols/{symbol_id:path}/raw", "GET"),
     ("/v3/symbols/{symbol_id:path}/dimensions", "GET"),
-    ("/v3/symbols/default_symbols", "GET")
+    ("/v3/symbols/default_symbols", "GET"),
+    ("/v3/mcp/", "GET"),
 ]
 
 class TestRoutes:
