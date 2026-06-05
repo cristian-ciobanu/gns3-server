@@ -289,7 +289,22 @@ async def update_node(project_id: str, node_id: str, **kwargs: Any) -> list[dict
 
 @mcp.tool()
 async def get_node_console_info(project_id: str, node_id: str) -> list[dict[str, Any]]:
-    """Get console WebSocket URL for a node (use websocat to connect).
+    """Get console WebSocket URL and send configuration commands via websocat.
+
+    Complete workflow:
+      1. Preparation: Call this tool with project_id and node_id
+      2. Connection: Use websocat in text mode (-t) to connect
+         > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
+      3. Send commands: Use heredoc (<<<) with \\r\\n as line endings
+         > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
+      4. Receive response: websocat receives and displays device output
+         Use 'timeout' to avoid connection hanging:
+         > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
+
+    Key points:
+      - Use \\r\\n (not \\n) to match Telnet/Console protocol
+      - $'...' format supports escape sequences
+      - Set timeout to prevent hanging
 
     Args:
         project_id: Project UUID
