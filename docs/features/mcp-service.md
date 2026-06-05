@@ -134,6 +134,62 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
+## Transport Security
+
+MCP server uses FastMCP's DNS rebinding protection to prevent attackers from
+exploiting DNS resolution to access the MCP endpoint through unauthorized domains.
+
+### Default Behaviour
+
+DNS rebinding protection is **disabled by default**, allowing connections from
+any host. This aligns with GNS3 server's default `host = 0.0.0.0` binding policy,
+which is designed for VM distribution scenarios where users access the server
+from various network locations.
+
+### Enabling Protection
+
+Add to `gns3_server.conf` under the `[Server]` section:
+
+```ini
+; Enable DNS rebinding protection for MCP server
+mcp_enable_dns_rebinding_protection = True
+
+; Allowed hosts (comma-separated, "host:*" port wildcard patterns only)
+mcp_allowed_hosts = 127.0.0.1:*,localhost:*,192.168.1.3:*
+
+; Allowed origins (comma-separated)
+mcp_allowed_origins = http://127.0.0.1:*,http://localhost:*,http://192.168.1.3:*
+```
+
+> **Note**: The MCP library only supports `"host:*"` port wildcard patterns
+> (e.g., `"192.168.1.3:*"`). Standalone `"*"` wildcards are not supported.
+
+### Protection Mechanism
+
+When protection is enabled, the MCP server validates the `Host` header of
+incoming SSE connection requests:
+
+```python
+# Verify the request's Host header matches allowed patterns
+validate_request → check Host header → 421 Misdirected Request if invalid
+```
+
+This prevents DNS rebinding attacks:
+1. Attacker registers `evil.com` pointing to your server's IP
+2. User's browser makes requests to `evil.com:3080`
+3. MCP server checks Host header = `"evil.com:3080"`
+4. `"evil.com:3080"` is not in `allowed_hosts` → connection rejected
+
+### Behaviour Summary
+
+| `mcp_enable_dns_rebinding_protection` | Result |
+|:---|:---|
+| `False` (default) | All hosts allowed |
+| `True` + correct hosts configured | Only configured hosts allowed |
+| `True` + missing/wrong hosts | Connections rejected with 421 |
+
+For public-facing MCP servers, set `allowed_hosts` to your server's domain name.
+
 ## Architecture
 
 ```mermaid
