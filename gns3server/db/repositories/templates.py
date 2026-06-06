@@ -16,6 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import logging
 
 from uuid import UUID
 from typing import List, Union, Optional
@@ -28,6 +29,8 @@ from .base import BaseRepository
 
 import gns3server.db.models as models
 from gns3server import schemas
+
+log = logging.getLogger(__name__)
 
 TEMPLATE_TYPE_TO_MODEL = {
     "cloud": models.CloudTemplate,
@@ -123,8 +126,16 @@ class TemplatesRepository(BaseRepository):
                 where(models.Image.filename == image_name, models.Image.path.endswith(image_path))
         else:
             query = select(models.Image).where(models.Image.filename == image_name)
+        query = query.order_by(models.Image.image_id)
         result = await self._db_session.execute(query)
-        return result.scalars().one_or_none()
+        images = result.scalars().all()
+        if len(images) > 1:
+            log.warning(
+                f"Multiple DB entries found for image '{image_path}' "
+                f"({len(images)} rows). This indicates a data integrity issue. "
+                f"Using the entry with the lowest image_id ({images[0].image_id})."
+            )
+        return images[0] if images else None
 
     async def add_image_to_template(
             self,
