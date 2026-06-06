@@ -48,7 +48,7 @@ class ImagesRepository(BaseRepository):
         else:
             query = select(models.Image).where(models.Image.filename == image_name)
         result = await self._db_session.execute(query)
-        return result.scalars().one_or_none()
+        return result.scalars().first()
 
     async def get_image_by_checksum(self, checksum: str, image_dir: str = None) -> Optional[models.Image]:
         """

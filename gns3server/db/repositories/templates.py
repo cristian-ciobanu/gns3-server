@@ -124,7 +124,9 @@ class TemplatesRepository(BaseRepository):
         else:
             query = select(models.Image).where(models.Image.filename == image_name)
         result = await self._db_session.execute(query)
-        return result.scalars().one_or_none()
+        # Use first() instead of one_or_none() to handle cases where multiple
+        # DB rows share the same filename (e.g. image discovered in multiple paths)
+        return result.scalars().first()
 
     async def add_image_to_template(
             self,
