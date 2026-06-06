@@ -52,12 +52,16 @@ def list_templates_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
 def get_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     template_id = params.get("template_id")
     name = params.get("name")
+
     if not template_id and not name:
         return {"error": "template_id or name is required"}
+
     conn = _get_connector(gns3_ctx)
     template = conn.get_template(name=name, template_id=template_id)
+
     if template is None:
         return {"error": "Template not found"}
+
     return template
 
 
@@ -66,26 +70,43 @@ def create_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
     template_type = params.get("template_type")
     if not name or not template_type:
         return {"error": "name and template_type are required"}
+
     conn = _get_connector(gns3_ctx)
-    return conn.create_template(**params)
+
+    # Handle nested kwargs structure from MCP clients
+    if "kwargs" in params and isinstance(params["kwargs"], dict):
+        create_params = params["kwargs"]
+    else:
+        create_params = params
+
+    return conn.create_template(**create_params)
 
 
 def update_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     template_id = params.get("template_id")
     name = params.get("name")
+
     if not template_id and not name:
         return {"error": "template_id or name is required"}
+
     conn = _get_connector(gns3_ctx)
-    return conn.update_template(name=name, template_id=template_id, **{
-        k: v for k, v in params.items() if k not in ("template_id", "name")
-    })
+
+    # Extract update parameters - handle nested kwargs structure from MCP clients
+    if "kwargs" in params and isinstance(params["kwargs"], dict):
+        update_params = params["kwargs"]
+    else:
+        update_params = {k: v for k, v in params.items() if k not in ("template_id", "name", "kwargs")}
+
+    return conn.update_template(name=name, template_id=template_id, **update_params)
 
 
 def delete_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     template_id = params.get("template_id")
     name = params.get("name")
+
     if not template_id and not name:
         return {"error": "template_id or name is required"}
+
     conn = _get_connector(gns3_ctx)
     conn.delete_template(name=name, template_id=template_id)
     return {"message": f"Template deleted"}
