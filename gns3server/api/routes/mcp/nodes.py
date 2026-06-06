@@ -132,7 +132,13 @@ def update_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    update_data = {k: v for k, v in params.items() if k not in ("project_id", "node_id")}
+
+    # Extract update parameters - handle nested kwargs structure from MCP clients
+    if "kwargs" in params and isinstance(params["kwargs"], dict):
+        update_data = params["kwargs"]
+    else:
+        update_data = {k: v for k, v in params.items() if k not in ("project_id", "node_id", "kwargs")}
+
     url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}"
     return conn.http_call("put", url, json_data=update_data).json()
 

@@ -391,9 +391,19 @@ async def create_link(
     project_id: Annotated[str, Field(description="UUID of the project")],
     nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
-    filters: Annotated[dict, Field(description="Optional packet filters")] = None,
+    filters: Annotated[dict, Field(description="Optional packet filters (must use array format): frequency_drop: [N], packet_loss: [rate], delay: [ms, jitter], corrupt: [rate], bpf: [expression]")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a link between two nodes in a project."""
+    """Create a link between two nodes in a project.
+
+    Filters must use array format:
+    - frequency_drop: [N] - Drop every Nth packet (N: -1 to 32767)
+    - packet_loss: [rate] - Packet loss percentage (rate: 0 to 100)
+    - delay: [ms, jitter] - Latency and jitter in milliseconds
+    - corrupt: [rate] - Packet corruption percentage (rate: 0 to 100)
+    - bpf: [expression] - Berkeley Packet Filter expression
+
+    Example: {"filters": {"delay": [100, 10], "packet_loss": [5]}}
+    """
     params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
     if filters:
         params["filters"] = filters
@@ -415,7 +425,23 @@ async def update_link(
     link_id: Annotated[str, Field(description="UUID of the link to update")],
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
-    """Update a link's properties (suspend, filters, etc.)."""
+    """Update a link's properties (suspend, filters, etc.).
+
+    Supported kwargs:
+    - suspend: boolean - Suspend or resume the link
+    - filters: dict - Packet filters (must use array format):
+      * frequency_drop: [N] - Drop every Nth packet (N: -1 to 32767)
+      * packet_loss: [rate] - Packet loss percentage (rate: 0 to 100)
+      * delay: [ms, jitter] - Latency and jitter in milliseconds
+      * corrupt: [rate] - Packet corruption percentage (rate: 0 to 100)
+      * bpf: [expression] - Berkeley Packet Filter expression
+
+    Example filters:
+      {"filters": {"frequency_drop": [10]}}
+      {"filters": {"delay": [100, 10]}}
+      {"filters": {"packet_loss": [5]}}
+      {"filters": {"delay": [50, 5], "packet_loss": [2]}}
+    """
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
