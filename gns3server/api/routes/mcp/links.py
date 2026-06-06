@@ -153,7 +153,10 @@ LINK_TOOLS = [
                     },
                 },
                 "link_type": {"type": "string", "description": "Link type: ethernet or serial (optional)"},
-                "filters": {"type": "object", "description": "Packet filters (optional)"},
+                "filters": {
+                    "type": "object",
+                    "description": "Packet filters (optional). Must use array format: frequency_drop: [N], packet_loss: [rate], delay: [ms, jitter], corrupt: [rate], bpf: [expression]"
+                },
             },
             "required": ["project_id", "nodes"],
         },
@@ -181,7 +184,10 @@ LINK_TOOLS = [
                 "project_id": {"type": "string", "description": "Project UUID"},
                 "link_id": {"type": "string", "description": "Link UUID"},
                 "suspend": {"type": "boolean", "description": "Suspend the link (optional)"},
-                "filters": {"type": "object", "description": "Packet filters (optional)"},
+                "filters": {
+                    "type": "object",
+                    "description": "Packet filters (optional). Must use array format: frequency_drop: [N], packet_loss: [rate], delay: [ms, jitter], corrupt: [rate], bpf: [expression]. Example: {\"frequency_drop\": [10], \"packet_loss\": [5]}"
+                },
             },
             "required": ["project_id", "link_id"],
         },
