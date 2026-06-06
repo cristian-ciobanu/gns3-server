@@ -47,8 +47,16 @@ class ImagesRepository(BaseRepository):
                 where(models.Image.filename == image_name, models.Image.path.endswith(image_path))
         else:
             query = select(models.Image).where(models.Image.filename == image_name)
+        query = query.order_by(models.Image.image_id)
         result = await self._db_session.execute(query)
-        return result.scalars().first()
+        images = result.scalars().all()
+        if len(images) > 1:
+            log.warning(
+                f"Multiple DB entries found for image '{image_path}' "
+                f"({len(images)} rows). This indicates a data integrity issue. "
+                f"Using the entry with the lowest image_id ({images[0].image_id})."
+            )
+        return images[0] if images else None
 
     async def get_image_by_checksum(self, checksum: str, image_dir: str = None) -> Optional[models.Image]:
         """
