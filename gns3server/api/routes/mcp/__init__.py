@@ -72,11 +72,11 @@ log = logging.getLogger(__name__)
 
 # ── Server ready state ────────────────────────────────────────────────
 # Tracks whether GNS3 server has completed initialization.
-# MCP connections are rejected until startup completes to prevent
+# MCP connections wait up to 5 seconds for startup to complete, then return
+# 503 Service Unavailable if initialization is not complete to prevent
 # "Received request before initialization was complete" errors.
 
-_mcp_server_ready = False
-_mcp_ready_lock = asyncio.Lock()
+_mcp_ready_event = asyncio.Event()
 
 
 def set_mcp_server_ready(ready: bool = True) -> None:
@@ -89,10 +89,11 @@ def set_mcp_server_ready(ready: bool = True) -> None:
     Args:
         ready: True to mark server as ready, False to mark as not ready
     """
-    global _mcp_server_ready
-    _mcp_server_ready = ready
     if ready:
+        _mcp_ready_event.set()
         log.info("MCP server is now ready to accept connections")
+    else:
+        _mcp_ready_event.clear()
 
 
 async def wait_for_mcp_ready() -> bool:
@@ -105,26 +106,16 @@ async def wait_for_mcp_ready() -> bool:
     Returns immediately if already ready. Otherwise waits with a timeout
     and returns False if server does not become ready in time.
     """
-    global _mcp_server_ready
-    if _mcp_server_ready:
+    if _mcp_ready_event.is_set():
         return True
 
     log.debug("MCP server not ready yet, waiting for initialization to complete...")
 
-    async with _mcp_ready_lock:
-        # Double-check after acquiring lock
-        if _mcp_server_ready:
-            return True
-
-        # Wait with a timeout to prevent indefinite blocking
-        # Timeout: 5 seconds (50 * 0.1s)
-        for _ in range(50):
-            if _mcp_server_ready:
-                log.debug("MCP server is now ready, proceeding with connection")
-                return True
-            await asyncio.sleep(0.1)
-
-        # Timeout reached - server not ready
+    try:
+        await asyncio.wait_for(_mcp_ready_event.wait(), timeout=5.0)
+        log.debug("MCP server is now ready, proceeding with connection")
+        return True
+    except asyncio.TimeoutError:
         log.warning(
             "MCP server ready check timed out after 5 seconds - "
             "GNS3 server initialization may have issues"
