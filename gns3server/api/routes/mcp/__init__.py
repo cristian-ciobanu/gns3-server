@@ -70,6 +70,65 @@ from .computes import (
 log = logging.getLogger(__name__)
 
 
+# ── Server ready state ────────────────────────────────────────────────
+# Tracks whether GNS3 server has completed initialization.
+# MCP connections are rejected until startup completes to prevent
+# "Received request before initialization was complete" errors.
+
+_mcp_server_ready = False
+_mcp_ready_lock = asyncio.Lock()
+
+
+def set_mcp_server_ready(ready: bool = True) -> None:
+    """
+    Set MCP server ready state.
+
+    Should be called after GNS3 startup completes (database, controller, etc.)
+    to allow MCP connections to proceed.
+
+    Args:
+        ready: True to mark server as ready, False to mark as not ready
+    """
+    global _mcp_server_ready
+    _mcp_server_ready = ready
+    if ready:
+        log.info("MCP server is now ready to accept connections")
+
+
+async def wait_for_mcp_ready() -> None:
+    """
+    Wait until MCP server is ready before accepting connections.
+
+    Returns immediately if already ready. Otherwise waits with a timeout
+    to prevent indefinite blocking during server startup issues.
+    """
+    global _mcp_server_ready
+    if _mcp_server_ready:
+        return
+
+    log.debug("MCP server not ready yet, waiting for initialization to complete...")
+
+    async with _mcp_ready_lock:
+        # Double-check after acquiring lock
+        if _mcp_server_ready:
+            return
+
+        # Wait with a timeout to prevent indefinite blocking
+        # Timeout: 5 seconds (50 * 0.1s)
+        for _ in range(50):
+            if _mcp_server_ready:
+                log.debug("MCP server is now ready, proceeding with connection")
+                return
+            await asyncio.sleep(0.1)
+
+        # Timeout reached - log warning but allow connection anyway
+        # This prevents complete deadlocks if startup has issues
+        log.warning(
+            "MCP server ready check timed out after 5 seconds, "
+            "allowing connection anyway (may experience errors)"
+        )
+
+
 # ── Per‑connection JWT token  ─────────────────────────────────────────
 # Set during SSE authentication, read by tool handlers running in the
 # same asyncio task (contextvars propagate through asyncio.to_thread).
@@ -459,6 +518,9 @@ def _make_auth_wrapper(inner_app):
     """
 
     async def auth_wrapper(scope, receive, send):
+        # Wait for GNS3 server to complete initialization before accepting MCP connections
+        await wait_for_mcp_ready()
+
         if scope["type"] == "http" and scope["method"] == "GET":
             token = None
             headers = dict(scope.get("headers", []))
