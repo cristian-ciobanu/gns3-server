@@ -94,7 +94,13 @@ def update_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id or not link_id:
         return {"error": "project_id and link_id are required"}
     conn = _get_connector(gns3_ctx)
-    update_data = {k: v for k, v in params.items() if k not in ("project_id", "link_id")}
+
+    # Extract update parameters - handle nested kwargs structure from MCP clients
+    if "kwargs" in params and isinstance(params["kwargs"], dict):
+        update_data = params["kwargs"]
+    else:
+        update_data = {k: v for k, v in params.items() if k not in ("project_id", "link_id", "kwargs")}
+
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}"
     return conn.http_call("put", url, json_data=update_data).json()
 
