@@ -44,6 +44,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from gns3server.config import Config
 from gns3server.services import auth_service
+from gns3server.utils.request_utils import extract_client_info
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -68,6 +69,59 @@ from .computes import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# ── Server ready state ────────────────────────────────────────────────
+# Tracks whether GNS3 server has completed initialization.
+# MCP connections wait up to 5 seconds for startup to complete, then return
+# 503 Service Unavailable if initialization is not complete to prevent
+# "Received request before initialization was complete" errors.
+
+_mcp_ready_event = asyncio.Event()
+
+
+def set_mcp_server_ready(ready: bool = True) -> None:
+    """
+    Set MCP server ready state.
+
+    Should be called after GNS3 startup completes (database, controller, etc.)
+    to allow MCP connections to proceed.
+
+    Args:
+        ready: True to mark server as ready, False to mark as not ready
+    """
+    if ready:
+        _mcp_ready_event.set()
+        log.info("MCP server is now ready to accept connections")
+    else:
+        _mcp_ready_event.clear()
+
+
+async def wait_for_mcp_ready() -> bool:
+    """
+    Wait until MCP server is ready before accepting connections.
+
+    Returns:
+        True if server is ready, False if timeout reached
+
+    Returns immediately if already ready. Otherwise waits with a timeout
+    and returns False if server does not become ready in time.
+    """
+    if _mcp_ready_event.is_set():
+        return True
+
+    log.debug("MCP server not ready yet, waiting for initialization to complete...")
+
+    try:
+        await asyncio.wait_for(_mcp_ready_event.wait(), timeout=5.0)
+        log.debug("MCP server is now ready, proceeding with connection")
+        return True
+    except asyncio.TimeoutError:
+        log.warning(
+            "MCP server ready check timed out after 5 seconds - "
+            "GNS3 server initialization may have issues"
+        )
+        return False
 
 
 # ── Per‑connection JWT token  ─────────────────────────────────────────
@@ -485,6 +539,22 @@ def _make_auth_wrapper(inner_app):
     """
 
     async def auth_wrapper(scope, receive, send):
+        # Wait for GNS3 server to complete initialization before accepting MCP connections
+        server_ready = await wait_for_mcp_ready()
+        if not server_ready:
+            # Server initialization timed out - return 503 Service Unavailable
+            client_info = extract_client_info(scope, auth_service)
+            log.warning(
+                f"Rejecting MCP connection - GNS3 server initialization not complete. "
+                f"Client: {client_info['host']}:{client_info['port']} ({client_info['user_info']}, Path: {client_info['path']})"
+            )
+            response = Response(
+                "GNS3 server initialization not complete - please retry later",
+                status_code=503
+            )
+            await response(scope, receive, send)
+            return
+
         if scope["type"] == "http" and scope["method"] == "GET":
             token = None
             headers = dict(scope.get("headers", []))
