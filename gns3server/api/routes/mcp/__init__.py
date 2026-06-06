@@ -44,6 +44,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from gns3server.config import Config
 from gns3server.services import auth_service
+from gns3server.utils.request_utils import extract_client_info
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -516,6 +517,11 @@ def _make_auth_wrapper(inner_app):
         server_ready = await wait_for_mcp_ready()
         if not server_ready:
             # Server initialization timed out - return 503 Service Unavailable
+            client_info = extract_client_info(scope, auth_service)
+            log.warning(
+                f"Rejecting MCP connection - GNS3 server initialization not complete. "
+                f"Client: {client_info['host']}:{client_info['port']} ({client_info['user_info']}, Path: {client_info['path']})"
+            )
             response = Response(
                 "GNS3 server initialization not complete - please retry later",
                 status_code=503
