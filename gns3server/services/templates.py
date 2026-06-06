@@ -267,9 +267,13 @@ class TemplatesService:
             raise ControllerNotFoundError(f"Template '{template_id}' not found")
         return template
 
-    async def _remove_image(self, template_id: UUID, image_path:str) -> None:
+    async def _remove_image(self, template_id: UUID, image_path: str) -> None:
 
+        if not image_path:
+            return
         image = await self._templates_repo.get_image(image_path)
+        if image is None:
+            return
         await self._templates_repo.remove_image_from_template(template_id, image)
 
     async def update_template(self, template_id: UUID, template_update: schemas.TemplateUpdate) -> dict:
