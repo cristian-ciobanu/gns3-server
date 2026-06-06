@@ -95,38 +95,41 @@ def set_mcp_server_ready(ready: bool = True) -> None:
         log.info("MCP server is now ready to accept connections")
 
 
-async def wait_for_mcp_ready() -> None:
+async def wait_for_mcp_ready() -> bool:
     """
     Wait until MCP server is ready before accepting connections.
 
+    Returns:
+        True if server is ready, False if timeout reached
+
     Returns immediately if already ready. Otherwise waits with a timeout
-    to prevent indefinite blocking during server startup issues.
+    and returns False if server does not become ready in time.
     """
     global _mcp_server_ready
     if _mcp_server_ready:
-        return
+        return True
 
     log.debug("MCP server not ready yet, waiting for initialization to complete...")
 
     async with _mcp_ready_lock:
         # Double-check after acquiring lock
         if _mcp_server_ready:
-            return
+            return True
 
         # Wait with a timeout to prevent indefinite blocking
         # Timeout: 5 seconds (50 * 0.1s)
         for _ in range(50):
             if _mcp_server_ready:
                 log.debug("MCP server is now ready, proceeding with connection")
-                return
+                return True
             await asyncio.sleep(0.1)
 
-        # Timeout reached - log warning but allow connection anyway
-        # This prevents complete deadlocks if startup has issues
+        # Timeout reached - server not ready
         log.warning(
-            "MCP server ready check timed out after 5 seconds, "
-            "allowing connection anyway (may experience errors)"
+            "MCP server ready check timed out after 5 seconds - "
+            "GNS3 server initialization may have issues"
         )
+        return False
 
 
 # ── Per‑connection JWT token  ─────────────────────────────────────────
@@ -519,7 +522,15 @@ def _make_auth_wrapper(inner_app):
 
     async def auth_wrapper(scope, receive, send):
         # Wait for GNS3 server to complete initialization before accepting MCP connections
-        await wait_for_mcp_ready()
+        server_ready = await wait_for_mcp_ready()
+        if not server_ready:
+            # Server initialization timed out - return 503 Service Unavailable
+            response = Response(
+                "GNS3 server initialization not complete - please retry later",
+                status_code=503
+            )
+            await response(scope, receive, send)
+            return
 
         if scope["type"] == "http" and scope["method"] == "GET":
             token = None
