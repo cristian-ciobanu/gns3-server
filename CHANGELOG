@@ -1,5 +1,106 @@
 # Change Log
 
+## 3.1.0a3 06/06/2026
+
+* Bundle web-ui v3.1.0a3
+* fix: update MCP link tools descriptions with detailed filter info
+* fix: correct MCP nodes and links tool parameter handling for nested kwargs
+* fix: correct MCP template tool parameter handling for nested kwargs
+* feat: add client information logging to MCP connection rejection
+* refactor: replace MCP ready state polling with asyncio.Event
+* fix: revert duplicate image check to fix failing tests
+* fix (templates): Add ordering to handle the duplicate cases gracefully
+* fix(templates): Database error detected when saving a template with a disk image change
+* fix: return 503 error on MCP server ready timeout
+* fix: add MCP server ready check to prevent initialization errors
+* fix: resolve MCP server URL host via default route IP when bound to 0.0.0.0
+* fix: correct MCP transport security config to actually allow all hosts by default
+* feat: add configurable MCP transport security settings via gns3_server.conf
+* fix: add load_feature_skills() to properly load network planning features
+* refactor: convert all MCP tool parameter descriptions to Annotated+Field
+* fix: remove platformdirs upper bound to resolve fastmcp-slim dependency conflict
+* fix: add missing fastmcp dependency to resolve CI test failures
+* refactor: move all imports to top of __init__.py
+* test: add /v3/mcp/ to allowed public endpoints
+* fix: remove console_host/port from get_node_console_info
+* feat: add get_node_console_info tool
+* feat: add 3 Compute MCP tools - Add list_computes, get_compute, get_compute_images - Total MCP tools: 29
+* feat: add 5 Template MCP tools
+* feat: add Node and Link MCP tools, update copyright - Add 9 node tools and 5 link tools - Update copyright year to 2026, add author
+* feat: complete MCP SSE transport with JWT auth
+* feat: support Authorization header and query param for MCP token
+* feat: implement standard MCP protocol with SSE transport
+* feat: add MCP (Model Context Protocol) service with project tools
+* Add project memory: Docker container stop delay analysis
+* Remove extra blank line from merge
+* Revert container state detection in create()
+* Fix Docker VM tests for container status detection on node creation
+* Add running project check for fast duplication
+* Move running project check before fast duplication
+* Add running project check for fast duplication
+* Fix Docker container status detection on node creation
+* Fix web-ui update script to handle custom GitHub URL changes
+* Fix unnecessary Docker container recreation when renaming a project
+* Fix project rename and duplicate issues
+* Fix double deletion issue in remove_resource_from_pool
+* Complete fix: delete resource records when deleting resource pool
+* Apply fix from PR #2315: delete resource from resource table when removing from pool
+* Remove deprecated 'PermissionsStartOnly' setting for Systemd service. Ref #1830
+* Optimize project loading by implementing parallel node creation
+* Fix delay filter validation: ensure delay: [0, X] returns proper error message
+* Fix packet filter validation tests: use correct ubridge filter type names
+* Update tests to match show_interface_labels default change
+* Set default value of show_interface_labels to True
+* Optimize project variable updates to use parallel node processing
+* Fix ghost Docker nodes causing 60-second VNC timeout on variable updates
+* Fix Docker container variable compatibility with Pydantic models
+* Fix delay latency minimum: ubridge rejects latency <= 0
+* Improve packet filter validation: use tcpdump, handle multi-line BPF, safe project load
+* Add packet filter parameter validation to prevent ubridge errors
+* chore: update GNS3 skills repository to official organization
+* docs: update RBAC user isolation design doc to match actual implementation
+* docs: update skills repo URL in command-security.md
+* docs: remove Chinese overview docs, keep only English versions
+* docs: add overview docs for packet analysis, fault injection, and AI assistant
+* feat: add mermaid-to-SVG conversion script with environment setup
+* test: fix privilege count assertions after adding LLMConfig privileges
+* docs: add user node limit roadmap
+* test: fix RBAC test to match implementation logic
+* test: add --prefix and --cleanup-only parameters to benchmark script
+* perf: batch RBAC permission checking for GET /projects
+* test: add benchmark script for GET /projects performance testing
+* fix: prevent duplicate projects when user projects are in resource pools
+* fix: check both regular ACEs and resource pool ACEs for proper access control
+* test: update RBAC test to use test_user.username for user isolation
+* docs: add Phase 9 and 10 user self-registration and email service
+* docs: add Phase 8 per-user project namespace to roadmap
+* docs: add Phase 7 resource pool renaming to roadmap
+* feat: add alembic migration for LLMConfig privileges
+* feat: add independent LLMConfig permissions for AI profile management
+* docs: add Phase 6 frontend permission query API to roadmap
+* docs: add Phase 5 ACE architecture refactoring plan to roadmap
+* feat: remove resource pools from 'all endpoints' list
+* refactor: add efficient get_aces_for_path method for resource pool checks
+* feat: prevent deletion of resource pools used by ACE configurations
+* docs: update RBAC user isolation roadmap and add design memory
+* feat: fix permission check logic to properly handle ACE and user isolation
+* feat: implement layered permission checks for proper user isolation and sharing
+* feat: implement simple user isolation based on project ownership
+* fix: clean BPF syntax error message and specify loopback interface
+* feat: add BPF syntax validation using tshark
+* feat: add show_filters_icon parameter to packet filter tool
+* docs: add GNS3 appliance loading mechanism to memory
+* feat: add packet filter management tool for GNS3-Copilot fault injection
+* fix: update test_json expected output to include show_filters_icon field
+* fix: add getattr fallback to show_filters_icon property for backward compatibility
+* feat: add show_filters_icon property to Link for controlling Web UI filter icon display
+* fix: ensure show_filters_icon is always returned in API responses
+* feat: add show_filters_icon property to Link for controlling Web UI filter icon display
+* fix: remove explicit paramiko pin to resolve dependency conflict with netmiko
+* fix: update netmiko to 4.7.0 and pin paramiko>=5.0.0 to fix CVE-2026-44405
+* fix: close DockerHTTPClient session to prevent UnixConnector leak in Web Wireshark
+
+
 ## 3.1.0a2 12/05/2026
 
 * Bundle web-ui v3.1.0a2
