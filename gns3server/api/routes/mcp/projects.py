@@ -109,6 +109,53 @@ def get_project_stats_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
     return conn.http_call("get", url).json()
 
 
+def update_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    kwargs = {k: v for k, v in params.items() if k != "project_id" and v is not None}
+    return conn.update_project(project_id=project_id, **kwargs)
+
+
+def duplicate_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    name = params.get("name")
+    if not name:
+        return {"error": "name is required"}
+    conn = _get_connector(gns3_ctx)
+    kwargs = {k: v for k, v in params.items() if k not in ("project_id",) and v is not None}
+    return conn.duplicate_project(project_id=project_id, **kwargs)
+
+
+def get_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    try:
+        content = conn.get_project_file(project_id=project_id, file_path="README.txt")
+        return {"project_id": project_id, "file": "README.txt", "content": content}
+    except Exception as e:
+        if "404" in str(e):
+            return {"project_id": project_id, "file": "README.txt", "content": None, "message": "README.txt does not exist yet"}
+        raise
+
+
+def update_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    content = params.get("content")
+    if content is None:
+        return {"error": "content is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.write_project_file(project_id=project_id, file_path="README.txt", content=content)
+    return {"message": "README.txt updated", "project_id": project_id}
+
+
 # ── Tool definitions (consumed by mcp/__init__.py) ─────────────────────────
 
 PROJECT_TOOLS = [
@@ -190,5 +237,69 @@ PROJECT_TOOLS = [
             "required": ["project_id"],
         },
         "handler": get_project_stats_handler,
+    },
+    {
+        "name": "update_project",
+        "description": "Update a project's properties (name, auto_close, auto_open, etc.)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "name": {"type": "string", "description": "New project name"},
+                "auto_close": {"type": "boolean", "description": "Close project when last client leaves"},
+                "auto_open": {"type": "boolean", "description": "Project opens when GNS3 starts"},
+                "auto_start": {"type": "boolean", "description": "Project starts when opened"},
+                "scene_width": {"type": "integer", "description": "Width of the drawing area"},
+                "scene_height": {"type": "integer", "description": "Height of the drawing area"},
+                "zoom": {"type": "integer", "description": "Zoom of the drawing area"},
+                "show_layers": {"type": "boolean", "description": "Show layers on the drawing area"},
+                "snap_to_grid": {"type": "boolean", "description": "Snap to grid on the drawing area"},
+                "show_grid": {"type": "boolean", "description": "Show the grid on the drawing area"},
+                "grid_size": {"type": "integer", "description": "Grid size for the drawing area for nodes"},
+                "drawing_grid_size": {"type": "integer", "description": "Grid size for the drawing area for drawings"},
+                "show_interface_labels": {"type": "boolean", "description": "Show interface labels on the drawing area"},
+            },
+            "required": ["project_id"],
+        },
+        "handler": update_project_handler,
+    },
+    {
+        "name": "duplicate_project",
+        "description": "Duplicate a project",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "UUID of the project to duplicate"},
+                "name": {"type": "string", "description": "New project name"},
+                "reset_mac_addresses": {"type": "boolean", "description": "Reset MAC addresses for this project"},
+            },
+            "required": ["project_id", "name"],
+        },
+        "handler": duplicate_project_handler,
+    },
+    {
+        "name": "get_project_readme",
+        "description": "Get the content of a project's README.txt file (project documentation)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+            },
+            "required": ["project_id"],
+        },
+        "handler": get_project_readme_handler,
+    },
+    {
+        "name": "update_project_readme",
+        "description": "Update or create a project's README.txt file (project documentation)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "content": {"type": "string", "description": "Content to write to README.txt"},
+            },
+            "required": ["project_id", "content"],
+        },
+        "handler": update_project_readme_handler,
     },
 ]
