@@ -304,16 +304,16 @@ async def duplicate_project(
 async def get_project_readme(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
-    """Get the content of a project's README.txt file — the project documentation."""
+    """Get the content of a project's README.txt file — the project documentation (Markdown format)."""
     return await asyncio.to_thread(_run_handler_sync, get_project_readme_handler, {"project_id": project_id})
 
 
 @mcp.tool()
 async def update_project_readme(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    content: Annotated[str, Field(description="Content to write to README.txt")],
+    content: Annotated[str, Field(description="Content to write to README.txt (Markdown format)")],
 ) -> list[dict[str, Any]]:
-    """Update or create a project's README.txt file — the project documentation."""
+    """Update or create a project's README.txt file — the project documentation (Markdown format)."""
     return await asyncio.to_thread(_run_handler_sync, update_project_readme_handler, {"project_id": project_id, "content": content})
 
 

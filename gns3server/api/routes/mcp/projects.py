@@ -279,7 +279,7 @@ PROJECT_TOOLS = [
     },
     {
         "name": "get_project_readme",
-        "description": "Get the content of a project's README.txt file (project documentation)",
+        "description": "Get the content of a project's README.txt file (project documentation, Markdown format)",
         "parameters": {
             "type": "object",
             "properties": {
@@ -291,12 +291,12 @@ PROJECT_TOOLS = [
     },
     {
         "name": "update_project_readme",
-        "description": "Update or create a project's README.txt file (project documentation)",
+        "description": "Update or create a project's README.txt file (project documentation, Markdown format)",
         "parameters": {
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "Project UUID"},
-                "content": {"type": "string", "description": "Content to write to README.txt"},
+                "content": {"type": "string", "description": "Content to write to README.txt (Markdown format)"},
             },
             "required": ["project_id", "content"],
         },
