@@ -55,7 +55,7 @@ from typing import Any
 from typing import ParamSpec
 from typing import TypeVar
 from typing import cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import jwt
 import requests
@@ -707,6 +707,80 @@ class Gns3Connector:
         _url = f"{self.base_url}/projects/{project_id}"
         self.http_call("delete", _url)
         return None
+
+    def update_project(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        """
+        Update a project's properties.
+
+        **Required Attributes:**
+
+        - `project_id`
+
+        **Optional Attributes:**
+
+        - `name`, `auto_close`, `auto_open`, `auto_start`
+        - `scene_height`, `scene_width`, `zoom`
+        - `show_layers`, `snap_to_grid`, `show_grid`, `grid_size`, `drawing_grid_size`
+        - `show_interface_labels`, `supplier`, `variables`
+
+        **Returns**
+
+        JSON project information
+        """
+        _url = f"{self.base_url}/projects/{project_id}"
+        _response = self.http_call("put", _url, json_data=kwargs)
+        return cast(dict[str, Any], _response.json())
+
+    def duplicate_project(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        """
+        Duplicate a project from a given project_id.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `name` (in kwargs)
+
+        **Returns**
+
+        JSON project information
+        """
+        _url = f"{self.base_url}/projects/{project_id}/duplicate"
+        if "name" not in kwargs:
+            raise ValueError("Parameter 'name' is mandatory")
+        _response = self.http_call("post", _url, json_data=kwargs)
+        return cast(dict[str, Any], _response.json())
+
+    def get_project_file(self, project_id: str, file_path: str) -> str:
+        """
+        Get the content of a file in a project.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `file_path`
+
+        **Returns**
+
+        File content as text string
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
+        _response = self.http_call("get", _url)
+        return _response.text
+
+    def write_project_file(self, project_id: str, file_path: str, content: str) -> None:
+        """
+        Write content to a file in a project. Creates the file if it doesn't exist.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `file_path`
+        - `content`
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
+        self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
 
     def get_computes(self) -> list[dict[str, Any]]:
         """

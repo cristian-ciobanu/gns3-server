@@ -48,7 +48,8 @@ from gns3server.utils.request_utils import extract_client_info
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
-    get_project_stats_handler,
+    get_project_stats_handler, update_project_handler, duplicate_project_handler,
+    get_project_readme_handler, update_project_readme_handler,
 )
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
@@ -253,6 +254,67 @@ async def get_project_stats(
 ) -> list[dict[str, Any]]:
     """Get statistics (nodes, links, snapshots, drawings) for a project."""
     return await asyncio.to_thread(_run_handler_sync, get_project_stats_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def update_project(
+    project_id: Annotated[str, Field(description="UUID of the project to update")],
+    name: Annotated[str, Field(description="New project name")] = None,
+    auto_close: Annotated[bool, Field(description="Close project when last client leaves")] = None,
+    auto_open: Annotated[bool, Field(description="Project opens when GNS3 starts")] = None,
+    auto_start: Annotated[bool, Field(description="Project starts when opened")] = None,
+    scene_width: Annotated[int, Field(description="Width of the drawing area")] = None,
+    scene_height: Annotated[int, Field(description="Height of the drawing area")] = None,
+    zoom: Annotated[int, Field(description="Zoom of the drawing area")] = None,
+    show_layers: Annotated[bool, Field(description="Show layers on the drawing area")] = None,
+    snap_to_grid: Annotated[bool, Field(description="Snap to grid on the drawing area")] = None,
+    show_grid: Annotated[bool, Field(description="Show the grid on the drawing area")] = None,
+    grid_size: Annotated[int, Field(description="Grid size for the drawing area for nodes")] = None,
+    drawing_grid_size: Annotated[int, Field(description="Grid size for the drawing area for drawings")] = None,
+    show_interface_labels: Annotated[bool, Field(description="Show interface labels on the drawing area")] = None,
+) -> list[dict[str, Any]]:
+    """Update a project's properties (name, auto_close, auto_open, etc.)."""
+    params = {"project_id": project_id}
+    local_vars = {
+        "name": name, "auto_close": auto_close, "auto_open": auto_open, "auto_start": auto_start,
+        "scene_width": scene_width, "scene_height": scene_height, "zoom": zoom,
+        "show_layers": show_layers, "snap_to_grid": snap_to_grid, "show_grid": show_grid,
+        "grid_size": grid_size, "drawing_grid_size": drawing_grid_size, "show_interface_labels": show_interface_labels,
+    }
+    for key, val in local_vars.items():
+        if val is not None:
+            params[key] = val
+    return await asyncio.to_thread(_run_handler_sync, update_project_handler, params)
+
+
+@mcp.tool()
+async def duplicate_project(
+    project_id: Annotated[str, Field(description="UUID of the project to duplicate")],
+    name: Annotated[str, Field(description="New project name")],
+    reset_mac_addresses: Annotated[bool, Field(description="Reset MAC addresses for this project")] = False,
+) -> list[dict[str, Any]]:
+    """Duplicate a project."""
+    params = {"project_id": project_id, "name": name}
+    if reset_mac_addresses:
+        params["reset_mac_addresses"] = reset_mac_addresses
+    return await asyncio.to_thread(_run_handler_sync, duplicate_project_handler, params)
+
+
+@mcp.tool()
+async def get_project_readme(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Get the content of a project's README.md file — the project documentation (Markdown format)."""
+    return await asyncio.to_thread(_run_handler_sync, get_project_readme_handler, {"project_id": project_id})
+
+
+@mcp.tool()
+async def update_project_readme(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    content: Annotated[str, Field(description="Content to write to README.md (Markdown format)")],
+) -> list[dict[str, Any]]:
+    """Update or create a project's README.md file — the project documentation (Markdown format)."""
+    return await asyncio.to_thread(_run_handler_sync, update_project_readme_handler, {"project_id": project_id, "content": content})
 
 
 # ── Node tools ────────────────────────────────────────────────────────
