@@ -553,24 +553,33 @@ class TestNodeRoutes:
             compute: Compute,
             node: Node
     ) -> None:
-    
-        response = MagicMock()
-        response.body = b"world"
-        response.status = status.HTTP_200_OK
-        compute.http_query = AsyncioMagicMock(return_value=response)
-    
+
+        # Mock the streaming response
+        async def mock_iter_chunked(chunk_size):
+            yield b"world"
+
+        mock_stream = AsyncioMagicMock()
+        mock_stream.iter_chunked = mock_iter_chunked
+        mock_stream.close = MagicMock()
+
+        mock_response = AsyncioMagicMock()
+        mock_response.status = status.HTTP_200_OK
+        mock_response.content = mock_stream
+
+        compute.http_query = AsyncioMagicMock(return_value=mock_response)
+
         response = await client.get(app.url_path_for("get_file", project_id=project.id, node_id=node.id, file_path="hello"))
         assert response.status_code == status.HTTP_200_OK
         assert response.content == b'world'
-    
+
         compute.http_query.assert_called_with(
             "GET",
             "/projects/{project_id}/files/project-files/vpcs/{node_id}/hello".format(
                 project_id=project.id,
                 node_id=node.id),
             timeout=None,
-            raw=True)
-    
+            stream=True)
+
         response = await client.get(app.url_path_for(
             "get_file",
             project_id=project.id,
@@ -595,8 +604,15 @@ class TestNodeRoutes:
             node_id=node.id,
             file_path="hello"), content=b"hello")
         assert response.status_code == status.HTTP_201_CREATED
-    
-        compute.http_query.assert_called_with("POST", "/projects/{project_id}/files/project-files/vpcs/{node_id}/hello".format(project_id=project.id, node_id=node.id), data=b'hello', timeout=None, raw=True)
+
+        # Verify http_query was called with stream parameter
+        compute.http_query.assert_called_once()
+        call_args = compute.http_query.call_args
+        assert call_args[0][0] == "POST"
+        assert call_args[0][1] == "/projects/{project_id}/files/project-files/vpcs/{node_id}/hello".format(project_id=project.id, node_id=node.id)
+        assert call_args[1]["timeout"] is None
+        # data should be an async generator from request.stream()
+        assert hasattr(call_args[1]["data"], "__aiter__")
     
         response = await client.get("/projects/{project_id}/nodes/{node_id}/files/../hello".format(project_id=project.id, node_id=node.id))
         assert response.status_code == status.HTTP_404_NOT_FOUND

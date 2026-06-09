@@ -341,9 +341,11 @@ class Compute:
             raise ControllerNotFoundError(f"{image} not found on compute")
         return response
 
-    async def http_query(self, method, path, data=None, dont_connect=False, **kwargs):
+    async def http_query(self, method, path, data=None, dont_connect=False, stream=False, params=None, **kwargs):
         """
         :param dont_connect: If true do not reconnect if not connected
+        :param stream: If True, return raw aiohttp response for streaming
+        :param params: Optional dict of query parameters to append to the URL
         """
 
         if not self._connected and not dont_connect:
@@ -352,7 +354,7 @@ class Compute:
             await self.connect()
         if not self._connected and not dont_connect:
             raise ComputeError(f"Cannot connect to compute '{self._name}' with request {method} {path}")
-        response = await self._run_http_query(method, path, data=data, **kwargs)
+        response = await self._run_http_query(method, path, data=data, stream=stream, params=params, **kwargs)
         return response
 
     async def _try_reconnect(self):
@@ -515,7 +517,7 @@ class Compute:
         """ Returns URL for specific path at Compute"""
         return self._getUrl(path)
 
-    async def _run_http_query(self, method, path, data=None, timeout=120, raw=False):
+    async def _run_http_query(self, method, path, data=None, timeout=120, raw=False, stream=False, params=None):
         async with asynctimeout(delay=timeout):
             url = self._getUrl(path)
             headers = {"content-type": "application/json"}
@@ -531,6 +533,10 @@ class Compute:
                 elif isinstance(data, aiohttp.streams.StreamReader) or isinstance(data, bytes):
                     chunked = True
                     headers["content-type"] = "application/octet-stream"
+                # Stream from an async iterable (e.g. Starlette request.stream())
+                elif hasattr(data, "__aiter__"):
+                    chunked = True
+                    headers["content-type"] = "application/octet-stream"
                 # If the data is an open file we will iterate on it
                 elif isinstance(data, io.BufferedIOBase):
                     chunked = True
@@ -540,7 +546,7 @@ class Compute:
         try:
             log.debug(f"Attempting request to compute: {method} {url} {headers}")
             response = await self._session().request(
-                method, url, headers=headers, data=data, auth=self._auth, chunked=chunked, timeout=timeout
+                method, url, headers=headers, data=data, auth=self._auth, params=params, chunked=chunked, timeout=timeout
             )
         except asyncio.TimeoutError:
             raise ComputeError(f"Timeout error for {method} call to {url} after {timeout}s")
@@ -554,6 +560,18 @@ class Compute:
         ) as e:
             #  aiohttp 2.3.1 raises socket.gaierror when cannot find host
             raise ComputeError(str(e))
+
+        if stream:
+            if response.status >= 300:
+                body = await response.read()
+                msg = body.decode() if body else ""
+                if response.status == 404:
+                    raise ControllerNotFoundError(f"{method} {path} not found")
+                elif response.status == 403:
+                    raise ControllerForbiddenError(msg)
+                raise ControllerError(f"HTTP {response.status}: {msg}")
+            return response
+
         body = await response.read()
         if body and not raw:
             body = body.decode()
