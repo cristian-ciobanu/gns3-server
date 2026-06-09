@@ -669,6 +669,12 @@ class DockerVM(BaseNode):
 
             await self.manager.query("POST", f"containers/{self._cid}/start")
             await asyncio.sleep(0.5)  # give the Docker container some time to start
+            # Fix host-side directory ownership after Docker (re)creates
+            # volume mount points as root (rootful Docker only).
+            # This allows the GNS3 process to write files into node directories
+            # while the container is running. Permissions are recorded and
+            # restored inside the container by init.sh on next startup.
+            # await self._fix_permissions()
             self._namespace = await self._get_namespace()
 
             await self._start_ubridge(require_privileged_access=True)
