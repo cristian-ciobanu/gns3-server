@@ -457,7 +457,14 @@ class Project:
 
         # Non-recursive: list only the current directory level
         files = []
-        for entry in os.scandir(target_path):
+        try:
+            scandir_iter = os.scandir(target_path)
+        except PermissionError:
+            return files
+        except OSError as e:
+            log.error(f"Error listing node directory '{target_path}': {e}")
+            return files
+        for entry in scandir_iter:
             name = entry.name
             rel_path = name if not subpath else os.path.join(subpath, name)
             try:
