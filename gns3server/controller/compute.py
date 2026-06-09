@@ -32,7 +32,7 @@ else:
     from async_timeout import timeout as asynctimeout
 
 from ..utils import parse_version
-from ..utils.asyncio import locking
+from ..utils.asyncio import locking, async_iterable_to_stream
 from ..controller.controller_error import (
     ControllerError,
     ControllerBadRequestError,
@@ -537,6 +537,7 @@ class Compute:
                 elif hasattr(data, "__aiter__"):
                     chunked = True
                     headers["content-type"] = "application/octet-stream"
+                    data = await async_iterable_to_stream(data)
                 # If the data is an open file we will iterate on it
                 elif isinstance(data, io.BufferedIOBase):
                     chunked = True
