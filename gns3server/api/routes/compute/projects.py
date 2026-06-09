@@ -194,17 +194,17 @@ async def write_compute_project_file(
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        try:
-            with open(path, "wb+") as f:
-                async for chunk in request.stream():
-                    f.write(chunk)
-        except (UnicodeEncodeError, OSError) as e:
-            pass  # FIXME
+        with open(path, "wb+") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
 
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except PermissionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    except OSError as e:
+        log.error(f"Error writing file '{path}': {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.delete("/projects/{project_id}/files/{file_path:path}", status_code=status.HTTP_204_NO_CONTENT)
