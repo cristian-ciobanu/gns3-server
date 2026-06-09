@@ -188,7 +188,7 @@ async def write_compute_project_file(
 
     # Raise error if user try to escape
     if not is_safe_path(path, project.path):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Path is outside the project directory")
 
     path = os.path.join(project.path, path)
     try:
@@ -201,7 +201,7 @@ async def write_compute_project_file(
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission denied writing to '{path}'")
     except OSError as e:
         log.error(f"Error writing file '{path}': {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -217,7 +217,7 @@ async def delete_compute_project_file(
     path = os.path.normpath(file_path)
 
     if not is_safe_path(path, project.path):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Path is outside the project directory")
 
     path = os.path.join(project.path, path)
     if not os.path.exists(path):
@@ -231,6 +231,6 @@ async def delete_compute_project_file(
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission denied deleting '{path}'")
     except OSError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
