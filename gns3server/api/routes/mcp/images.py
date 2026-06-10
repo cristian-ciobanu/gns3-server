@@ -65,11 +65,13 @@ def delete_image_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def prune_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    result = conn.http_call("delete", f"{conn.base_url}/images/prune").json()
-    return {"message": "Unused images pruned", "result": result}
+    # Returns 204 No Content on success (empty body, no .json())
+    conn.http_call("delete", f"{conn.base_url}/images/prune")
+    return {"message": "Unused images pruned"}
 
 
 def install_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    result = conn.http_call("post", f"{conn.base_url}/images/install").json()
-    return {"message": "Image installation requested", "result": result}
+    # Returns 204 No Content on success (empty body, no .json())
+    conn.http_call("post", f"{conn.base_url}/images/install")
+    return {"message": "Image installation completed"}
