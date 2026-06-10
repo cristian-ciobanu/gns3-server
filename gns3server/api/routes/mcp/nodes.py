@@ -54,7 +54,7 @@ def get_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
-    nodes = conn.get_nodes(project_id=project_id)
+    nodes = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes").json()
     return {"nodes": nodes, "count": len(nodes)}
 
 
@@ -64,7 +64,7 @@ def get_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[s
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    return conn.get_node(project_id=project_id, node_id=node_id)
+    return conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
 
 def start_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -155,7 +155,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    node = conn.get_node(project_id=project_id, node_id=node_id)
+    node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
     console_type = node.get("console_type", "unknown")
     ws_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={gns3_ctx['jwt_token']}"
@@ -181,12 +181,13 @@ def list_node_files_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    files = conn.list_node_files(
-        project_id=project_id,
-        node_id=node_id,
-        path=params.get("path", ""),
-        recursive=params.get("recursive", False),
-    )
+    url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/files"
+    query = {}
+    if params.get("path"):
+        query["path"] = params["path"]
+    if params.get("recursive"):
+        query["recursive"] = "true"
+    files = conn.http_call("get", url, params=query if query else None).json()
     return {"files": files, "count": len(files)}
 
 
@@ -201,7 +202,8 @@ def get_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> d
     limit = params.get("limit", 200)
 
     conn = _get_connector(gns3_ctx)
-    raw = conn.get_node_file(project_id=project_id, node_id=node_id, file_path=file_path)
+    url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/files/{file_path}"
+    raw = conn.http_call("get", url).text
 
     total_bytes = len(raw.encode("utf-8"))
     truncated = False
@@ -240,7 +242,8 @@ def write_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
     if not project_id or not node_id or not file_path or content is None:
         return {"error": "project_id, node_id, file_path and content are required"}
     conn = _get_connector(gns3_ctx)
-    conn.write_node_file(project_id=project_id, node_id=node_id, file_path=file_path, content=content)
+    url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/files/{file_path}"
+    conn.http_call("post", url, data=content, headers={"Content-Type": "text/plain"})
     return {"message": f"File {file_path} written to node {node_id}", "file_path": file_path, "node_id": node_id}
 
 
@@ -251,7 +254,9 @@ def delete_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -
     if not project_id or not node_id or not file_path:
         return {"error": "project_id, node_id and file_path are required"}
     conn = _get_connector(gns3_ctx)
-    conn.delete_node_file(project_id=project_id, node_id=node_id, file_path=file_path)
+    url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/files/{file_path}"
+    conn.http_call("delete", url)
+    return {"message": f"File {file_path} deleted from node {node_id}", "file_path": file_path, "node_id": node_id}
     return {"message": f"File {file_path} deleted from node {node_id}", "file_path": file_path, "node_id": node_id}
 
 

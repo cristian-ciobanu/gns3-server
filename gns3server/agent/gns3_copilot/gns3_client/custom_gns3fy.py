@@ -782,81 +782,6 @@ class Gns3Connector:
         _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
         self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
 
-    def list_node_files(
-        self, project_id: str, node_id: str,
-        path: str = "", recursive: bool = False
-    ) -> list[dict[str, Any]]:
-        """
-        List files in a node directory with metadata.
-
-        **Required Attributes:**
-
-        - `project_id`
-        - `node_id`
-        - `path` Subdirectory path within node directory (optional)
-        - `recursive` Whether to recursively list all files (optional)
-
-        **Returns:**
-
-        List of file objects with name, path, size, modified time, type, etc.
-        """
-        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files"
-        _params = {}
-        if path:
-            _params["path"] = path
-        if recursive:
-            _params["recursive"] = "true"
-        _response_data = self.http_call("get", _url, params=_params if _params else None)
-        return cast(list[dict[str, Any]], _response_data.json())
-
-    def get_node_file(self, project_id: str, node_id: str, file_path: str) -> str:
-        """
-        Get the content of a file in a node directory.
-
-        **Required Attributes:**
-
-        - `project_id`
-        - `node_id`
-        - `file_path`
-
-        **Returns**
-
-        File content as text string
-        """
-        encoded_path = quote(file_path, safe="/")
-        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
-        _response = self.http_call("get", _url)
-        return _response.text
-
-    def write_node_file(self, project_id: str, node_id: str, file_path: str, content: str) -> None:
-        """
-        Write content to a file in a node directory. Creates the file if it doesn't exist.
-
-        **Required Attributes:**
-
-        - `project_id`
-        - `node_id`
-        - `file_path`
-        - `content`
-        """
-        encoded_path = quote(file_path, safe="/")
-        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
-        self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
-
-    def delete_node_file(self, project_id: str, node_id: str, file_path: str) -> None:
-        """
-        Delete a file from the node directory.
-
-        **Required Attributes:**
-
-        - `project_id`
-        - `node_id`
-        - `file_path`
-        """
-        encoded_path = quote(file_path, safe="/")
-        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
-        self.http_call("delete", _url)
-
     def get_computes(self) -> list[dict[str, Any]]:
         """
         Returns a list of computes.
@@ -1250,6 +1175,96 @@ class Link:
         _response = _conn.http_call("get", _url)
 
         return cast(list[dict[str, Any]], _response.json())
+
+    def reset(self) -> None:
+        """
+        Reset the link, clearing its state (counters, filters, etc.).
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/links/{self.link_id}/reset"
+        _response = _conn.http_call("post", _url)
+        self._update(_response.json())
+
+    def start_capture(
+        self,
+        data_link_type: str = "DLT_EN10MB",
+        capture_file_name: str | None = None,
+        wireshark: bool = False,
+    ) -> None:
+        """
+        Start packet capture on the link.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+
+        **Optional Attributes:**
+
+        - `data_link_type` Data link type (default: DLT_EN10MB)
+        - `capture_file_name` Name of the capture file (optional)
+        - `wireshark` Open Wireshark automatically (default: False)
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+        if not self.link_id:
+            raise ValueError("Need to submit link_id")
+
+        _url = (
+            f"{_conn.base_url}/projects/{_project_id}/links/"
+            f"{self.link_id}/capture/start"
+        )
+        _data: dict[str, Any] = {
+            "data_link_type": data_link_type,
+            "wireshark": wireshark,
+        }
+        if capture_file_name:
+            _data["capture_file_name"] = capture_file_name
+        _response = _conn.http_call("post", _url, json_data=_data)
+        self._update(_response.json())
+
+    def stop_capture(self) -> None:
+        """
+        Stop packet capture on the link.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+
+        _url = (
+            f"{_conn.base_url}/projects/{_project_id}/links/"
+            f"{self.link_id}/capture/stop"
+        )
+        _conn.http_call("post", _url)
 
 
 @dataclass(config=config)
@@ -1762,6 +1777,64 @@ class Node:
         _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files/{path}"
 
         return cast(str, _conn.http_call("get", _url).text)
+
+    @verify_connector_and_id
+    def list_files(self, path: str = "", recursive: bool = False) -> list[dict[str, Any]]:
+        """
+        List files in the node directory with metadata (name, size, type, modified time).
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `node_id`
+
+        **Optional Attributes:**
+
+        - `path`: Subdirectory path within node directory (default: "")
+        - `recursive`: Recursively list all files (default: False)
+
+        **Returns:**
+
+        List of file objects with metadata.
+        """
+        _conn = self.connector
+        assert _conn is not None
+        _project_id = self.project_id
+        assert _project_id is not None
+        _node_id = self.node_id
+        assert _node_id is not None
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files"
+        _params: dict[str, str] = {}
+        if path:
+            _params["path"] = path
+        if recursive:
+            _params["recursive"] = "true"
+        _response = _conn.http_call("get", _url, params=_params if _params else None)
+        return cast(list[dict[str, Any]], _response.json())
+
+    @verify_connector_and_id
+    def delete_file(self, path: str) -> None:
+        """
+        Delete a file from the node directory.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `node_id`
+        - `path`: Node's relative path of the file to delete
+        """
+        _conn = self.connector
+        assert _conn is not None
+        _project_id = self.project_id
+        assert _project_id is not None
+        _node_id = self.node_id
+        assert _node_id is not None
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files/{path}"
+        _conn.http_call("delete", _url)
 
     @verify_connector_and_id
     def write_file(self, path: str, data: Any) -> None:

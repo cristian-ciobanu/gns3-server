@@ -62,6 +62,8 @@ from .nodes import (
 from .links import (
     get_links_handler, get_link_handler, create_link_handler,
     delete_link_handler, update_link_handler,
+    reset_link_handler, start_capture_handler, stop_capture_handler,
+    download_capture_file_handler,
 )
 from .templates import (
     list_templates_handler, get_template_handler, create_template_handler,
@@ -655,6 +657,58 @@ async def delete_node_file(
     """Delete a file from a node directory. Cannot be undone."""
     return await asyncio.to_thread(_run_handler_sync, delete_node_file_handler, {
         "project_id": project_id, "node_id": node_id, "file_path": file_path,
+    })
+
+
+# ── Link capture / reset tools ────────────────────────────────────────
+
+
+@mcp.tool()
+async def reset_link(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """Reset a link, clearing its state (counters, filters, etc.)."""
+    return await asyncio.to_thread(_run_handler_sync, reset_link_handler, {
+        "project_id": project_id, "link_id": link_id,
+    })
+
+
+@mcp.tool()
+async def start_capture(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+    data_link_type: Annotated[str, Field(description="Data link type (default: DLT_EN10MB)")] = "DLT_EN10MB",
+    capture_file_name: Annotated[str | None, Field(description="Capture file name (optional)")] = None,
+    wireshark: Annotated[bool, Field(description="Open Wireshark automatically (default: false)")] = False,
+) -> list[dict[str, Any]]:
+    """Start packet capture on a link. The capture file can later be downloaded with download_capture_file."""
+    return await asyncio.to_thread(_run_handler_sync, start_capture_handler, {
+        "project_id": project_id, "link_id": link_id,
+        "data_link_type": data_link_type, "capture_file_name": capture_file_name,
+        "wireshark": wireshark,
+    })
+
+
+@mcp.tool()
+async def stop_capture(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """Stop packet capture on a link. After stopping, the capture file can be downloaded."""
+    return await asyncio.to_thread(_run_handler_sync, stop_capture_handler, {
+        "project_id": project_id, "link_id": link_id,
+    })
+
+
+@mcp.tool()
+async def download_capture_file(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """Get the download URL and instructions for a PCAP capture file. Use curl to download."""
+    return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, {
+        "project_id": project_id, "link_id": link_id,
     })
 
 
