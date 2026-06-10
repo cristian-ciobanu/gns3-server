@@ -950,10 +950,11 @@ async def drawing_update(
     x: Annotated[int | None, Field(description="New X coordinate")] = None,
     y: Annotated[int | None, Field(description="New Y coordinate")] = None,
     z: Annotated[int | None, Field(description="New Z layer")] = None,
+    rotation: Annotated[int | None, Field(description="Rotation angle in degrees, -359 to 359")] = None,
 ) -> list[dict[str, Any]]:
-    """Update a drawing's properties (svg, position, lock state, etc.)."""
+    """Update a drawing's properties (svg, position, lock state, rotation, etc.)."""
     params = {"project_id": project_id, "drawing_id": drawing_id}
-    local_vars = {"svg": svg, "locked": locked, "x": x, "y": y, "z": z}
+    local_vars = {"svg": svg, "locked": locked, "x": x, "y": y, "z": z, "rotation": rotation}
     for key, val in local_vars.items():
         if val is not None:
             params[key] = val
