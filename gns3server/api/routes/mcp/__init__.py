@@ -236,13 +236,13 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def list_projects() -> list[dict[str, Any]]:
+async def project_list() -> list[dict[str, Any]]:
     """List all GNS3 projects accessible to the current user."""
     return await asyncio.to_thread(_run_handler_sync, list_projects_handler, {})
 
 
 @mcp.tool()
-async def get_project(
+async def project_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Get detailed information about a specific project."""
@@ -250,7 +250,7 @@ async def get_project(
 
 
 @mcp.tool()
-async def create_project(
+async def project_create(
     name: Annotated[str, Field(description="Project name")],
     description: Annotated[str, Field(description="Optional project description")] = "",
 ) -> list[dict[str, Any]]:
@@ -262,7 +262,7 @@ async def create_project(
 
 
 @mcp.tool()
-async def delete_project(
+async def project_delete(
     project_id: Annotated[str, Field(description="UUID of the project to delete")],
 ) -> list[dict[str, Any]]:
     """Delete a GNS3 project permanently."""
@@ -270,21 +270,21 @@ async def delete_project(
 
 
 @mcp.tool()
-async def open_project(
+async def project_open(
     project_id: Annotated[str, Field(description="UUID of the project to open")],
 ) -> list[dict[str, Any]]:
     """Open a closed GNS3 project."""
     return await asyncio.to_thread(_run_handler_sync, open_project_handler, {"project_id": project_id})
 
 @mcp.tool()
-async def close_project(
+async def project_close(
     project_id: Annotated[str, Field(description="UUID of the project to close")],
 ) -> list[dict[str, Any]]:
     """Close an open GNS3 project."""
     return await asyncio.to_thread(_run_handler_sync, close_project_handler, {"project_id": project_id})
 
 @mcp.tool()
-async def get_project_stats(
+async def project_stats(
     project_id: Annotated[str, Field(description="UUID of the project to get statistics for")],
 ) -> list[dict[str, Any]]:
     """Get statistics (nodes, links, snapshots, drawings) for a project."""
@@ -292,7 +292,7 @@ async def get_project_stats(
 
 
 @mcp.tool()
-async def update_project(
+async def project_update(
     project_id: Annotated[str, Field(description="UUID of the project to update")],
     name: Annotated[str, Field(description="New project name")] = None,
     auto_close: Annotated[bool, Field(description="Close project when last client leaves")] = None,
@@ -323,7 +323,7 @@ async def update_project(
 
 
 @mcp.tool()
-async def duplicate_project(
+async def project_duplicate(
     project_id: Annotated[str, Field(description="UUID of the project to duplicate")],
     name: Annotated[str, Field(description="New project name")],
     reset_mac_addresses: Annotated[bool, Field(description="Reset MAC addresses for this project")] = False,
@@ -336,7 +336,7 @@ async def duplicate_project(
 
 
 @mcp.tool()
-async def get_project_readme(
+async def project_readme_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Get the content of a project's README.md file — the project documentation (Markdown format)."""
@@ -344,7 +344,7 @@ async def get_project_readme(
 
 
 @mcp.tool()
-async def update_project_readme(
+async def project_readme_update(
     project_id: Annotated[str, Field(description="UUID of the project")],
     content: Annotated[str, Field(description="Content to write to README.md (Markdown format)")],
 ) -> list[dict[str, Any]]:
@@ -355,13 +355,13 @@ async def update_project_readme(
 # ── Node tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def get_nodes(project_id: str) -> list[dict[str, Any]]:
+async def node_list(project_id: str) -> list[dict[str, Any]]:
     """List all nodes in a project."""
     return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
 
 
 @mcp.tool()
-async def get_node(
+async def node_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
 ) -> list[dict[str, Any]]:
@@ -369,7 +369,7 @@ async def get_node(
     return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
 
 @mcp.tool()
-async def start_node(
+async def node_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to start")],
 ) -> list[dict[str, Any]]:
@@ -377,7 +377,7 @@ async def start_node(
     return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
 
 @mcp.tool()
-async def stop_node(
+async def node_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to stop")],
 ) -> list[dict[str, Any]]:
@@ -385,7 +385,7 @@ async def stop_node(
     return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
 
 @mcp.tool()
-async def reload_node(
+async def node_reload(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to reload")],
 ) -> list[dict[str, Any]]:
@@ -393,7 +393,7 @@ async def reload_node(
     return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
 
 @mcp.tool()
-async def suspend_node(
+async def node_suspend(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to suspend")],
 ) -> list[dict[str, Any]]:
@@ -402,7 +402,7 @@ async def suspend_node(
 
 
 @mcp.tool()
-async def create_node(
+async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     template_id: Annotated[str, Field(description="UUID of the template to create the node from")],
     x: Annotated[int, Field(description="X coordinate on the project canvas")] = 0,
@@ -417,7 +417,7 @@ async def create_node(
 
 
 @mcp.tool()
-async def delete_node(
+async def node_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to delete")],
 ) -> list[dict[str, Any]]:
@@ -426,7 +426,7 @@ async def delete_node(
 
 
 @mcp.tool()
-async def update_node(
+async def node_update(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to update")],
     **kwargs: Any,
@@ -437,7 +437,7 @@ async def update_node(
 
 
 @mcp.tool()
-async def get_node_console_info(
+async def node_console(
     project_id: Annotated[str, Field(description="UUID of the project containing the node")],
     node_id: Annotated[str, Field(description="UUID of the node to get console info for")],
 ) -> list[dict[str, Any]]:
@@ -469,13 +469,13 @@ async def get_node_console_info(
 # ── Link tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def get_links(project_id: str) -> list[dict[str, Any]]:
+async def link_list(project_id: str) -> list[dict[str, Any]]:
     """List all links in a project."""
     return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
 
 
 @mcp.tool()
-async def get_link(
+async def link_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
@@ -484,7 +484,7 @@ async def get_link(
 
 
 @mcp.tool()
-async def create_link(
+async def link_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
@@ -508,7 +508,7 @@ async def create_link(
 
 
 @mcp.tool()
-async def delete_link(
+async def link_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link to delete")],
 ) -> list[dict[str, Any]]:
@@ -517,7 +517,7 @@ async def delete_link(
 
 
 @mcp.tool()
-async def update_link(
+async def link_update(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link to update")],
     **kwargs: Any,
@@ -546,13 +546,13 @@ async def update_link(
 # ── Template tools ────────────────────────────────────────────────────
 
 @mcp.tool()
-async def list_templates() -> list[dict[str, Any]]:
+async def template_list() -> list[dict[str, Any]]:
     """List all available templates on the server."""
     return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {})
 
 
 @mcp.tool()
-async def get_template(
+async def template_get(
     template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
     name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
 ) -> list[dict[str, Any]]:
@@ -563,7 +563,7 @@ async def get_template(
 
 
 @mcp.tool()
-async def create_template(
+async def template_create(
     name: Annotated[str, Field(description="Template name")],
     template_type: Annotated[str, Field(description="Template type (e.g. qemu, docker, dynamips)")],
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
@@ -575,7 +575,7 @@ async def create_template(
 
 
 @mcp.tool()
-async def update_template(
+async def template_update(
     template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
     name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
     **kwargs: Any,
@@ -586,7 +586,7 @@ async def update_template(
 
 
 @mcp.tool()
-async def delete_template(
+async def template_delete(
     template_id: Annotated[str | None, Field(description="Template UUID (optional if name is provided)")] = None,
     name: Annotated[str | None, Field(description="Template name (optional if template_id is provided)")] = None,
 ) -> list[dict[str, Any]]:
@@ -599,13 +599,13 @@ async def delete_template(
 # ── Compute tools ─────────────────────────────────────────────────────
 
 @mcp.tool()
-async def list_computes() -> list[dict[str, Any]]:
+async def compute_list() -> list[dict[str, Any]]:
     """List all compute nodes available to the server."""
     return await asyncio.to_thread(_run_handler_sync, list_computes_handler, {})
 
 
 @mcp.tool()
-async def get_compute(
+async def compute_get(
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
 ) -> list[dict[str, Any]]:
     """Get detailed information about a compute node."""
@@ -613,7 +613,7 @@ async def get_compute(
 
 
 @mcp.tool()
-async def get_compute_images(
+async def compute_images(
     emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
 ) -> list[dict[str, Any]]:
@@ -627,7 +627,7 @@ async def get_compute_images(
 
 
 @mcp.tool()
-async def list_node_files(
+async def node_file_list(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
     path: Annotated[str, Field(description="Subdirectory path within node directory (optional)")] = "",
@@ -644,7 +644,7 @@ async def list_node_files(
 
 
 @mcp.tool()
-async def get_node_file(
+async def node_file_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
     file_path: Annotated[str, Field(description="Path to the file within the node directory")],
@@ -667,7 +667,7 @@ async def get_node_file(
 
 
 @mcp.tool()
-async def write_node_file(
+async def node_file_write(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
     file_path: Annotated[str, Field(description="Path to the file within the node directory")],
@@ -680,7 +680,7 @@ async def write_node_file(
 
 
 @mcp.tool()
-async def delete_node_file(
+async def node_file_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
     file_path: Annotated[str, Field(description="Path to the file within the node directory")],
@@ -695,7 +695,7 @@ async def delete_node_file(
 
 
 @mcp.tool()
-async def start_all_nodes(
+async def node_start_all(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Start all nodes in a project."""
@@ -705,7 +705,7 @@ async def start_all_nodes(
 
 
 @mcp.tool()
-async def stop_all_nodes(
+async def node_stop_all(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Stop all nodes in a project."""
@@ -715,7 +715,7 @@ async def stop_all_nodes(
 
 
 @mcp.tool()
-async def suspend_all_nodes(
+async def node_suspend_all(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Suspend all nodes in a project."""
@@ -725,7 +725,7 @@ async def suspend_all_nodes(
 
 
 @mcp.tool()
-async def reload_all_nodes(
+async def node_reload_all(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Reload (restart) all nodes in a project."""
@@ -735,7 +735,7 @@ async def reload_all_nodes(
 
 
 @mcp.tool()
-async def duplicate_node(
+async def node_duplicate(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to duplicate")],
     x: Annotated[int, Field(description="X coordinate for the new node")] = 0,
@@ -749,7 +749,7 @@ async def duplicate_node(
 
 
 @mcp.tool()
-async def isolate_node(
+async def node_isolate(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to isolate")],
 ) -> list[dict[str, Any]]:
@@ -760,7 +760,7 @@ async def isolate_node(
 
 
 @mcp.tool()
-async def unisolate_node(
+async def node_unisolate(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to unisolate")],
 ) -> list[dict[str, Any]]:
@@ -771,7 +771,7 @@ async def unisolate_node(
 
 
 @mcp.tool()
-async def get_node_links(
+async def node_links(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
 ) -> list[dict[str, Any]]:
@@ -785,7 +785,7 @@ async def get_node_links(
 
 
 @mcp.tool()
-async def reset_link(
+async def link_reset(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
@@ -796,7 +796,7 @@ async def reset_link(
 
 
 @mcp.tool()
-async def start_capture(
+async def link_capture_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
     data_link_type: Annotated[str, Field(description="Data link type (default: DLT_EN10MB)")] = "DLT_EN10MB",
@@ -812,7 +812,7 @@ async def start_capture(
 
 
 @mcp.tool()
-async def stop_capture(
+async def link_capture_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
@@ -823,7 +823,7 @@ async def stop_capture(
 
 
 @mcp.tool()
-async def download_capture_file(
+async def link_capture_download(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
@@ -837,7 +837,7 @@ async def download_capture_file(
 
 
 @mcp.tool()
-async def get_snapshots(
+async def snapshot_list(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """List all snapshots of a project."""
@@ -847,7 +847,7 @@ async def get_snapshots(
 
 
 @mcp.tool()
-async def create_snapshot(
+async def snapshot_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     name: Annotated[str, Field(description="Name for the new snapshot")],
 ) -> list[dict[str, Any]]:
@@ -858,7 +858,7 @@ async def create_snapshot(
 
 
 @mcp.tool()
-async def delete_snapshot(
+async def snapshot_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
     snapshot_id: Annotated[str, Field(description="UUID of the snapshot to delete")],
 ) -> list[dict[str, Any]]:
@@ -869,7 +869,7 @@ async def delete_snapshot(
 
 
 @mcp.tool()
-async def restore_snapshot(
+async def snapshot_restore(
     project_id: Annotated[str, Field(description="UUID of the project")],
     snapshot_id: Annotated[str, Field(description="UUID of the snapshot to restore")],
 ) -> list[dict[str, Any]]:
@@ -883,7 +883,7 @@ async def restore_snapshot(
 
 
 @mcp.tool()
-async def get_drawings(
+async def drawing_list(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """List all drawings (labels, shapes, images) on a project canvas."""
@@ -893,7 +893,7 @@ async def get_drawings(
 
 
 @mcp.tool()
-async def create_drawing(
+async def drawing_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     svg: Annotated[str, Field(description="SVG content for the drawing")],
     x: Annotated[int, Field(description="X coordinate (default: 0)")] = 0,
@@ -910,7 +910,7 @@ async def create_drawing(
 
 
 @mcp.tool()
-async def get_drawing(
+async def drawing_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     drawing_id: Annotated[str, Field(description="UUID of the drawing")],
 ) -> list[dict[str, Any]]:
@@ -921,7 +921,7 @@ async def get_drawing(
 
 
 @mcp.tool()
-async def update_drawing(
+async def drawing_update(
     project_id: Annotated[str, Field(description="UUID of the project")],
     drawing_id: Annotated[str, Field(description="UUID of the drawing")],
     svg: Annotated[str | None, Field(description="New SVG content")] = None,
@@ -940,7 +940,7 @@ async def update_drawing(
 
 
 @mcp.tool()
-async def delete_drawing(
+async def drawing_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
     drawing_id: Annotated[str, Field(description="UUID of the drawing to delete")],
 ) -> list[dict[str, Any]]:
@@ -954,7 +954,7 @@ async def delete_drawing(
 
 
 @mcp.tool()
-async def lock_project(
+async def project_lock(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Lock all drawings and nodes in a project to prevent accidental changes."""
@@ -964,7 +964,7 @@ async def lock_project(
 
 
 @mcp.tool()
-async def unlock_project(
+async def project_unlock(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Unlock a project to allow editing of drawings and nodes."""
@@ -974,7 +974,7 @@ async def unlock_project(
 
 
 @mcp.tool()
-async def get_locked_project(
+async def project_locked(
     project_id: Annotated[str, Field(description="UUID of the project")],
 ) -> list[dict[str, Any]]:
     """Check whether a project is locked (preventing edits to drawings and nodes)."""
@@ -984,7 +984,7 @@ async def get_locked_project(
 
 
 @mcp.tool()
-async def load_project(
+async def project_load(
     path: Annotated[str, Field(description="Filesystem path to the .gns3 project file")],
 ) -> list[dict[str, Any]]:
     """Load a project from a file path on the server's filesystem."""
@@ -997,13 +997,13 @@ async def load_project(
 
 
 @mcp.tool()
-async def get_version() -> list[dict[str, Any]]:
+async def server_version() -> list[dict[str, Any]]:
     """Get GNS3 server version information."""
     return await asyncio.to_thread(_run_handler_sync, get_version_handler, {})
 
 
 @mcp.tool()
-async def get_statistics() -> list[dict[str, Any]]:
+async def server_statistics() -> list[dict[str, Any]]:
     """Get GNS3 server statistics including computes, projects, nodes, and links."""
     return await asyncio.to_thread(_run_handler_sync, get_statistics_handler, {})
 
@@ -1012,13 +1012,13 @@ async def get_statistics() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_symbols() -> list[dict[str, Any]]:
+async def symbol_list() -> list[dict[str, Any]]:
     """List all available symbols on the server."""
     return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
 
 
 @mcp.tool()
-async def get_symbol(
+async def symbol_get(
     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
 ) -> list[dict[str, Any]]:
     """Get details about a specific symbol."""
@@ -1028,7 +1028,7 @@ async def get_symbol(
 
 
 @mcp.tool()
-async def get_symbol_dimensions(
+async def symbol_dimensions(
     symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
 ) -> list[dict[str, Any]]:
     """Get the dimensions (width, height) of a symbol."""
@@ -1038,13 +1038,13 @@ async def get_symbol_dimensions(
 
 
 @mcp.tool()
-async def get_default_symbols() -> list[dict[str, Any]]:
+async def symbol_defaults() -> list[dict[str, Any]]:
     """Get the default symbol mapping for each node type."""
     return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
 
 
 @mcp.tool()
-async def upload_symbol(
+async def symbol_upload(
     symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
 ) -> list[dict[str, Any]]:
     """Upload or update a custom symbol on the server."""
@@ -1054,7 +1054,7 @@ async def upload_symbol(
 
 
 @mcp.tool()
-async def delete_symbol(
+async def symbol_delete(
     symbol_id: Annotated[str, Field(description="Symbol ID to delete")],
 ) -> list[dict[str, Any]]:
     """Delete a custom symbol from the server."""
@@ -1067,13 +1067,13 @@ async def delete_symbol(
 
 
 @mcp.tool()
-async def get_appliances() -> list[dict[str, Any]]:
+async def appliance_list() -> list[dict[str, Any]]:
     """List all available appliances (template library)."""
     return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {})
 
 
 @mcp.tool()
-async def get_appliance(
+async def appliance_get(
     appliance_id: Annotated[str, Field(description="UUID of the appliance")],
 ) -> list[dict[str, Any]]:
     """Get detailed information about a specific appliance."""
@@ -1083,7 +1083,7 @@ async def get_appliance(
 
 
 @mcp.tool()
-async def install_appliance(
+async def appliance_install(
     appliance_id: Annotated[str, Field(description="UUID of the appliance to install")],
 ) -> list[dict[str, Any]]:
     """Install (download and set up) an appliance from the template library."""
@@ -1096,13 +1096,13 @@ async def install_appliance(
 
 
 @mcp.tool()
-async def get_images() -> list[dict[str, Any]]:
+async def image_list() -> list[dict[str, Any]]:
     """List all images available on the server across all emulators."""
     return await asyncio.to_thread(_run_handler_sync, get_images_handler, {})
 
 
 @mcp.tool()
-async def get_image(
+async def image_get(
     image_id: Annotated[str, Field(description="ID or filename of the image")],
 ) -> list[dict[str, Any]]:
     """Get detailed information about a specific image."""
@@ -1112,7 +1112,7 @@ async def get_image(
 
 
 @mcp.tool()
-async def delete_image(
+async def image_delete(
     image_id: Annotated[str, Field(description="ID or filename of the image to delete")],
 ) -> list[dict[str, Any]]:
     """Delete an image from the server. Cannot be undone."""
@@ -1122,13 +1122,13 @@ async def delete_image(
 
 
 @mcp.tool()
-async def prune_images() -> list[dict[str, Any]]:
+async def image_prune() -> list[dict[str, Any]]:
     """Remove all unused images from the server to free up disk space."""
     return await asyncio.to_thread(_run_handler_sync, prune_images_handler, {})
 
 
 @mcp.tool()
-async def install_images() -> list[dict[str, Any]]:
+async def image_install() -> list[dict[str, Any]]:
     """Request the server to install pending images (download from registry)."""
     return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
 
