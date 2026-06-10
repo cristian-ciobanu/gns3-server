@@ -72,6 +72,14 @@ from .templates import (
 from .computes import (
     list_computes_handler, get_compute_handler, get_compute_images_handler,
 )
+from .snapshots import (
+    get_snapshots_handler, create_snapshot_handler,
+    delete_snapshot_handler, restore_snapshot_handler,
+)
+from .drawings import (
+    get_drawings_handler, create_drawing_handler,
+    get_drawing_handler, update_drawing_handler, delete_drawing_handler,
+)
 
 log = logging.getLogger(__name__)
 
@@ -709,6 +717,123 @@ async def download_capture_file(
     """Get the download URL and instructions for a PCAP capture file. Use curl to download."""
     return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, {
         "project_id": project_id, "link_id": link_id,
+    })
+
+
+# ── Snapshot tools ─────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_snapshots(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """List all snapshots of a project."""
+    return await asyncio.to_thread(_run_handler_sync, get_snapshots_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def create_snapshot(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    name: Annotated[str, Field(description="Name for the new snapshot")],
+) -> list[dict[str, Any]]:
+    """Create a new snapshot of a project."""
+    return await asyncio.to_thread(_run_handler_sync, create_snapshot_handler, {
+        "project_id": project_id, "name": name,
+    })
+
+
+@mcp.tool()
+async def delete_snapshot(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    snapshot_id: Annotated[str, Field(description="UUID of the snapshot to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a snapshot from a project. Cannot be undone."""
+    return await asyncio.to_thread(_run_handler_sync, delete_snapshot_handler, {
+        "project_id": project_id, "snapshot_id": snapshot_id,
+    })
+
+
+@mcp.tool()
+async def restore_snapshot(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    snapshot_id: Annotated[str, Field(description="UUID of the snapshot to restore")],
+) -> list[dict[str, Any]]:
+    """Restore a project to a previous snapshot state. The project may be closed and reopened."""
+    return await asyncio.to_thread(_run_handler_sync, restore_snapshot_handler, {
+        "project_id": project_id, "snapshot_id": snapshot_id,
+    })
+
+
+# ── Drawing tools ──────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_drawings(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """List all drawings (labels, shapes, images) on a project canvas."""
+    return await asyncio.to_thread(_run_handler_sync, get_drawings_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def create_drawing(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    svg: Annotated[str, Field(description="SVG content for the drawing")],
+    x: Annotated[int, Field(description="X coordinate (default: 0)")] = 0,
+    y: Annotated[int, Field(description="Y coordinate (default: 0)")] = 0,
+    z: Annotated[int, Field(description="Z layer (default: 0)")] = 0,
+    locked: Annotated[bool, Field(description="Lock the drawing (default: false)")] = False,
+    rotation: Annotated[int, Field(description="Rotation angle in degrees, -359 to 359 (default: 0)")] = 0,
+) -> list[dict[str, Any]]:
+    """Create a new drawing (label, shape, or image) on a project canvas."""
+    return await asyncio.to_thread(_run_handler_sync, create_drawing_handler, {
+        "project_id": project_id, "svg": svg, "x": x, "y": y, "z": z,
+        "locked": locked, "rotation": rotation,
+    })
+
+
+@mcp.tool()
+async def get_drawing(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    drawing_id: Annotated[str, Field(description="UUID of the drawing")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific drawing."""
+    return await asyncio.to_thread(_run_handler_sync, get_drawing_handler, {
+        "project_id": project_id, "drawing_id": drawing_id,
+    })
+
+
+@mcp.tool()
+async def update_drawing(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    drawing_id: Annotated[str, Field(description="UUID of the drawing")],
+    svg: Annotated[str | None, Field(description="New SVG content")] = None,
+    locked: Annotated[bool | None, Field(description="Lock or unlock the drawing")] = None,
+    x: Annotated[int | None, Field(description="New X coordinate")] = None,
+    y: Annotated[int | None, Field(description="New Y coordinate")] = None,
+    z: Annotated[int | None, Field(description="New Z layer")] = None,
+) -> list[dict[str, Any]]:
+    """Update a drawing's properties (svg, position, lock state, etc.)."""
+    params = {"project_id": project_id, "drawing_id": drawing_id}
+    local_vars = {"svg": svg, "locked": locked, "x": x, "y": y, "z": z}
+    for key, val in local_vars.items():
+        if val is not None:
+            params[key] = val
+    return await asyncio.to_thread(_run_handler_sync, update_drawing_handler, params)
+
+
+@mcp.tool()
+async def delete_drawing(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    drawing_id: Annotated[str, Field(description="UUID of the drawing to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a drawing from a project canvas. Cannot be undone."""
+    return await asyncio.to_thread(_run_handler_sync, delete_drawing_handler, {
+        "project_id": project_id, "drawing_id": drawing_id,
     })
 
 
