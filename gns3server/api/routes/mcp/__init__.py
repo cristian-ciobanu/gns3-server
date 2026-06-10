@@ -569,11 +569,20 @@ async def template_create(
     name: Annotated[str, Field(description="Template name")],
     template_type: Annotated[str, Field(description="Template type (e.g. qemu, docker, dynamips)")],
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+    image: Annotated[str | None, Field(description="Docker image name or Dynamips IOS image path (required for docker/dynamips)")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a new template."""
-    return await asyncio.to_thread(_run_handler_sync, create_template_handler, {
-        "name": name, "template_type": template_type, "compute_id": compute_id,
-    })
+    """Create a new template.
+
+    Template-type-specific required parameters:
+      docker:  image is required (e.g. "ubuntu:latest")
+      dynamips: image is required (path to .image file)
+      iou:      needs 'path' (IOL image path) — set via template_update after creation
+      qemu:     needs 'hda_disk_image' or 'qemu_path' — set via template_update after creation
+    """
+    params = {"name": name, "template_type": template_type, "compute_id": compute_id}
+    if image:
+        params["image"] = image
+    return await asyncio.to_thread(_run_handler_sync, create_template_handler, params)
 
 
 @mcp.tool()

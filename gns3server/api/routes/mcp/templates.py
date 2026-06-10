@@ -83,6 +83,10 @@ def create_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
         "template_type": template_type,
         "compute_id": params.get("compute_id", "local"),
     }
+    # Pass through optional template-type-specific fields (image, qemu_path, etc.)
+    for key in ("image",):
+        if key in params:
+            data[key] = params[key]
     return conn.http_call("post", f"{conn.base_url}/templates", json_data=data).json()
 
 
