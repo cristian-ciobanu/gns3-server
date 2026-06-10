@@ -257,12 +257,9 @@ async def project_get(
 @mcp.tool()
 async def project_create(
     name: Annotated[str, Field(description="Project name")],
-    description: Annotated[str, Field(description="Optional project description")] = "",
 ) -> list[dict[str, Any]]:
     """Create a new GNS3 project."""
     params = {"name": name}
-    if description:
-        params["description"] = description
     return await asyncio.to_thread(_run_handler_sync, create_project_handler, params)
 
 
