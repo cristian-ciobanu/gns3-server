@@ -70,6 +70,8 @@ class GNS3TopologyTool(BaseTool):
         tool_input: Any = None,
         run_manager: Any = None,
         project_id: str | None = None,
+        jwt_token: str | None = None,
+        url: str | None = None,
     ) -> dict:
         """
         Synchronous method to retrieve the topology of a specific GNS3 project.
@@ -80,6 +82,8 @@ class GNS3TopologyTool(BaseTool):
             run_manager: Callback manager for tool run.
             project_id: The UUID of the specific GNS3 project to retrieve
                         topology from.
+            jwt_token: JWT token for authentication (used by MCP handlers).
+            url: GNS3 server URL (used by MCP handlers).
 
         Returns:
             dict: A dictionary containing the project ID, name, status, nodes,
@@ -102,8 +106,10 @@ class GNS3TopologyTool(BaseTool):
                 }
 
             # Initialize Gns3Connector using factory function
+            # jwt_token/url can be passed explicitly (e.g. from MCP handlers)
+            # or auto-detected (e.g. from gns3-copilot agent)
             logger.debug("Connecting to GNS3 server...")
-            server = get_gns3_connector()
+            server = get_gns3_connector(jwt_token=jwt_token, url=url)
 
             if server is None:
                 logger.error("Failed to create GNS3 connector")

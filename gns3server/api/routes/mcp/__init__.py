@@ -70,6 +70,10 @@ from .images import (
     delete_image_handler, prune_images_handler,
     install_images_handler,
 )
+from .device_config import (
+    device_config_send_handler, device_command_run_handler,
+    vpcs_config_set_handler,
+)
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
     stop_node_handler, reload_node_handler, suspend_node_handler,
@@ -1131,6 +1135,71 @@ async def image_prune() -> list[dict[str, Any]]:
 async def image_install() -> list[dict[str, Any]]:
     """Request the server to install pending images (download from registry)."""
     return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
+
+
+# ── Device config tools ───────────────────────────────────────────────
+# These tools connect to network device consoles via telnet/SSH using
+# Nornir + Netmiko. Devices must be started and have a device_type tag.
+#
+# Workflow:
+#   1. node_list(project_id) → identify device names
+#   2. node_start_all(project_id) → ensure devices are running
+#   3. device_config_send(project_id, device_configs=[...]) → push config
+#   4. device_command_run(project_id, device_commands=[...]) → verify
+
+
+@mcp.tool()
+async def device_config_send(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    device_configs: Annotated[list, Field(
+        description="List of device configs. Each entry: {\"device_name\": \"R1\", \"config_commands\": [\"int lo0\", \"ip add 1.1.1.1 255.255.255.255\"]}"
+    )],
+) -> list[dict[str, Any]]:
+    """Send configuration commands to network devices via console (telnet/SSH).
+
+    Devices must be started first (use node_start or node_start_all).
+    Device type is auto-detected from the 'device_type:<type>' tag on each node.
+    Common device types: cisco_ios_telnet, cisco_xr_telnet, huawei_telnet, gns3_huawei_telnet_ce
+    """
+    return await asyncio.to_thread(_run_handler_sync, device_config_send_handler, {
+        "project_id": project_id, "device_configs": device_configs,
+    })
+
+
+@mcp.tool()
+async def device_command_run(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    device_commands: Annotated[list, Field(
+        description="List of device show commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
+    )],
+) -> list[dict[str, Any]]:
+    """Run read-only diagnostic (show) commands on network devices via console.
+
+    Use this to inspect device status, view configurations, or verify changes.
+    Devices must be started first.
+    """
+    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, {
+        "project_id": project_id, "device_commands": device_commands,
+    })
+
+
+@mcp.tool()
+async def vpcs_config_set(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    device_configs: Annotated[list, Field(
+        description="List of VPCS configs. Each entry: {\"device_name\": \"PC1\", \"commands\": [\"ip 10.0.0.1/24 10.0.0.254\", \"save\"]}"
+    )],
+) -> list[dict[str, Any]]:
+    """Configure VPCS devices (set IP addresses, gateway, etc.).
+
+    VPCS-specific configuration commands:
+      - ip <address>/<mask> <gateway>   Set IP and gateway
+      - save                            Save config to startup.vpc
+      - ping <target>                   Test connectivity
+    """
+    return await asyncio.to_thread(_run_handler_sync, vpcs_config_set_handler, {
+        "project_id": project_id, "device_configs": device_configs,
+    })
 
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
