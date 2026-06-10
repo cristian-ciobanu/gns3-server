@@ -1101,9 +1101,14 @@ async def symbol_upload(
 
 @mcp.tool()
 async def symbol_delete(
-    symbol_id: Annotated[str, Field(description="Symbol ID to delete")],
+    symbol_id: Annotated[str, Field(description="Symbol ID to delete (e.g. ':/symbols/my_custom_symbol.svg'). Use symbol_list to get existing IDs.")],
 ) -> list[dict[str, Any]]:
-    """Delete a custom symbol from the server."""
+    """Delete a custom symbol from the server.
+
+    NOTE: Only custom (user-uploaded) symbols can be deleted.
+    Built-in symbols (starting with ':/symbols/') will be rejected with 403.
+    Use symbol_list to see which symbols are available and their IDs.
+    """
     return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
         "symbol_id": symbol_id,
     })
