@@ -1287,3 +1287,7 @@ def register_starlette_routes(app):
     sse_app = _make_auth_wrapper(mcp.sse_app(mount_path=""))
     app.mount("/v3/mcp/transport", sse_app, name="mcp-sse")
     log.info("MCP SSE server mounted at /v3/mcp/transport")
+
+    # Log registered MCP tools for verification
+    tool_names = list(mcp._tool_manager._tools.keys())
+    log.info("MCP tools registered (%d): %s", len(tool_names), ", ".join(sorted(tool_names)))
