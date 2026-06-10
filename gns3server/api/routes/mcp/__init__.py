@@ -605,7 +605,10 @@ async def template_delete(
 
 @mcp.tool()
 async def compute_list() -> list[dict[str, Any]]:
-    """List all compute nodes available to the server."""
+    """List all remotely registered compute nodes (returns only database entries, does NOT include the built-in local compute).
+
+    For the local compute info, use server_statistics instead.
+    """
     return await asyncio.to_thread(_run_handler_sync, list_computes_handler, {})
 
 
@@ -613,7 +616,11 @@ async def compute_list() -> list[dict[str, Any]]:
 async def compute_get(
     compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a compute node. Use compute_list first to get the UUID."""
+    """Get detailed information about a registered remote compute node.
+
+    NOTE: Only works for computes registered in the database (returned by compute_list).
+    For the built-in local compute info, use server_statistics instead.
+    """
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
 
@@ -622,7 +629,11 @@ async def compute_images(
     emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
     compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
 ) -> list[dict[str, Any]]:
-    """List available images for an emulator on a compute node."""
+    """List available images for an emulator on a registered compute node.
+
+    NOTE: Only works for computes registered in the database.
+    For the local compute, the default compute_id is typically found via server_statistics.
+    """
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,
     })
