@@ -1174,7 +1174,12 @@ async def image_delete(
 
 @mcp.tool()
 async def image_prune() -> list[dict[str, Any]]:
-    """Remove all unused images from the server to free up disk space."""
+    """Remove images not referenced by any template.
+
+    NOTE: Only images that are not used by any template will be removed.
+    If all images are still referenced by templates, no images are deleted.
+    Use image_list to see which images exist and check if they are in use.
+    """
     return await asyncio.to_thread(_run_handler_sync, prune_images_handler, {})
 
 
