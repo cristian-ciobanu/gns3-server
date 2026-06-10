@@ -610,16 +610,16 @@ async def compute_list() -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def compute_get(
-    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+    compute_id: Annotated[str, Field(description="Compute UUID from compute_list output")],
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a compute node."""
+    """Get detailed information about a compute node. Use compute_list first to get the UUID."""
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
 
 @mcp.tool()
 async def compute_images(
     emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
-    compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+    compute_id: Annotated[str, Field(description="Compute UUID from compute_list output")],
 ) -> list[dict[str, Any]]:
     """List available images for an emulator on a compute node."""
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
