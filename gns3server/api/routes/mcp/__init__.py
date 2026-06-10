@@ -1187,8 +1187,8 @@ async def device_config_send(
 @mcp.tool()
 async def device_command_run(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    device_commands: Annotated[list, Field(
-        description="List of device show commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
+    device_configs: Annotated[list, Field(
+        description="List of device commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
     )],
 ) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices via console.
@@ -1197,7 +1197,7 @@ async def device_command_run(
     Devices must be started first.
     """
     return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, {
-        "project_id": project_id, "device_commands": device_commands,
+        "project_id": project_id, "device_configs": device_configs,
     })
 
 

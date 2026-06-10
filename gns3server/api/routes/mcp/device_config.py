@@ -62,16 +62,16 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
 def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices."""
     project_id = params.get("project_id")
-    device_commands = params.get("device_commands")
-    if not project_id or not device_commands:
-        return [{"error": "project_id and device_commands are required"}]
+    device_configs = params.get("device_configs")
+    if not project_id or not device_configs:
+        return [{"error": "project_id and device_configs (list of {device_name, show_commands}) are required"}]
 
     from gns3server.agent.gns3_copilot.tools_v2.display_tools_nornir import ExecuteMultipleDeviceCommands
 
     tool = ExecuteMultipleDeviceCommands()
     input_data = json.dumps({
         "project_id": project_id,
-        "device_commands": device_commands,
+        "device_configs": device_configs,
     })
     return tool._run(
         input_data,
