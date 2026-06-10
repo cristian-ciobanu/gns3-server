@@ -51,6 +51,7 @@ from .projects import (
     get_project_stats_handler, update_project_handler, duplicate_project_handler,
     get_project_readme_handler, update_project_readme_handler,
     lock_project_handler, unlock_project_handler,
+    load_project_handler, get_locked_project_handler,
 )
 from .server import (
     get_version_handler, get_statistics_handler,
@@ -58,6 +59,7 @@ from .server import (
 from .symbols import (
     get_symbols_handler, get_symbol_handler,
     get_symbol_dimensions_handler, get_default_symbols_handler,
+    upload_symbol_handler, delete_symbol_handler,
 )
 from .appliances import (
     get_appliances_handler, get_appliance_handler,
@@ -971,6 +973,26 @@ async def unlock_project(
     })
 
 
+@mcp.tool()
+async def get_locked_project(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Check whether a project is locked (preventing edits to drawings and nodes)."""
+    return await asyncio.to_thread(_run_handler_sync, get_locked_project_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def load_project(
+    path: Annotated[str, Field(description="Filesystem path to the .gns3 project file")],
+) -> list[dict[str, Any]]:
+    """Load a project from a file path on the server's filesystem."""
+    return await asyncio.to_thread(_run_handler_sync, load_project_handler, {
+        "path": path,
+    })
+
+
 # ── Server info tools ─────────────────────────────────────────────────
 
 
@@ -1019,6 +1041,26 @@ async def get_symbol_dimensions(
 async def get_default_symbols() -> list[dict[str, Any]]:
     """Get the default symbol mapping for each node type."""
     return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
+
+
+@mcp.tool()
+async def upload_symbol(
+    symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
+) -> list[dict[str, Any]]:
+    """Upload or update a custom symbol on the server."""
+    return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
+        "symbol_id": symbol_id,
+    })
+
+
+@mcp.tool()
+async def delete_symbol(
+    symbol_id: Annotated[str, Field(description="Symbol ID to delete")],
+) -> list[dict[str, Any]]:
+    """Delete a custom symbol from the server."""
+    return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
+        "symbol_id": symbol_id,
+    })
 
 
 # ── Appliance tools ───────────────────────────────────────────────────

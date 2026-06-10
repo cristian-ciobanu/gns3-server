@@ -66,3 +66,21 @@ def get_default_symbols_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]
     conn = _get_connector(gns3_ctx)
     symbols = conn.http_call("get", f"{conn.base_url}/symbols/default_symbols").json()
     return {"default_symbols": symbols}
+
+
+def upload_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    symbol_id = params.get("symbol_id")
+    if not symbol_id:
+        return {"error": "symbol_id is required"}
+    conn = _get_connector(gns3_ctx)
+    result = conn.http_call("post", f"{conn.base_url}/symbols/{symbol_id}").json()
+    return {"message": f"Symbol {symbol_id} uploaded", "symbol": result}
+
+
+def delete_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    symbol_id = params.get("symbol_id")
+    if not symbol_id:
+        return {"error": "symbol_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("delete", f"{conn.base_url}/symbols/{symbol_id}")
+    return {"message": f"Symbol {symbol_id} deleted", "symbol_id": symbol_id}

@@ -176,6 +176,24 @@ def unlock_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
     return {"message": f"Project {project_id} unlocked", "project_id": project_id}
 
 
+def load_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    path = params.get("path")
+    if not path:
+        return {"error": "path is required"}
+    conn = _get_connector(gns3_ctx)
+    result = conn.http_call("post", f"{conn.base_url}/projects/load", json_data={"path": path}).json()
+    return {"message": f"Project loaded from {path}", "project": result}
+
+
+def get_locked_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    locked = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/locked").json()
+    return {"project_id": project_id, "locked": locked}
+
+
 # ── Tool definitions (consumed by mcp/__init__.py) ─────────────────────────
 
 PROJECT_TOOLS = [
