@@ -55,6 +55,14 @@ from .projects import (
 from .server import (
     get_version_handler, get_statistics_handler,
 )
+from .symbols import (
+    get_symbols_handler, get_symbol_handler,
+    get_symbol_dimensions_handler, get_default_symbols_handler,
+)
+from .appliances import (
+    get_appliances_handler, get_appliance_handler,
+    install_appliance_handler,
+)
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
     stop_node_handler, reload_node_handler, suspend_node_handler,
@@ -971,6 +979,70 @@ async def get_version() -> list[dict[str, Any]]:
 async def get_statistics() -> list[dict[str, Any]]:
     """Get GNS3 server statistics including computes, projects, nodes, and links."""
     return await asyncio.to_thread(_run_handler_sync, get_statistics_handler, {})
+
+
+# ── Symbol tools ──────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_symbols() -> list[dict[str, Any]]:
+    """List all available symbols on the server."""
+    return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
+
+
+@mcp.tool()
+async def get_symbol(
+    symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
+) -> list[dict[str, Any]]:
+    """Get details about a specific symbol."""
+    return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
+        "symbol_id": symbol_id,
+    })
+
+
+@mcp.tool()
+async def get_symbol_dimensions(
+    symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
+) -> list[dict[str, Any]]:
+    """Get the dimensions (width, height) of a symbol."""
+    return await asyncio.to_thread(_run_handler_sync, get_symbol_dimensions_handler, {
+        "symbol_id": symbol_id,
+    })
+
+
+@mcp.tool()
+async def get_default_symbols() -> list[dict[str, Any]]:
+    """Get the default symbol mapping for each node type."""
+    return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
+
+
+# ── Appliance tools ───────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_appliances() -> list[dict[str, Any]]:
+    """List all available appliances (template library)."""
+    return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {})
+
+
+@mcp.tool()
+async def get_appliance(
+    appliance_id: Annotated[str, Field(description="UUID of the appliance")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific appliance."""
+    return await asyncio.to_thread(_run_handler_sync, get_appliance_handler, {
+        "appliance_id": appliance_id,
+    })
+
+
+@mcp.tool()
+async def install_appliance(
+    appliance_id: Annotated[str, Field(description="UUID of the appliance to install")],
+) -> list[dict[str, Any]]:
+    """Install (download and set up) an appliance from the template library."""
+    return await asyncio.to_thread(_run_handler_sync, install_appliance_handler, {
+        "appliance_id": appliance_id,
+    })
 
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
