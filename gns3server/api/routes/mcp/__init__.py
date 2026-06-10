@@ -802,7 +802,15 @@ async def link_reset(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
-    """Reset a link by deleting and recreating it. All filters, suspend state, and packet counters are cleared. The link will briefly go down then come back up."""
+    """Reset a link by tearing down the underlying UDP connection and recreating it.
+
+    Use cases:
+    - Clear accumulated packet errors/drops from the link's UDP connection
+    - Force filter state (delay, packet loss, etc.) to restart fresh
+    - Recover a stuck or abnormal link state
+
+    Filters are preserved but their internal application state resets.
+    """
     return await asyncio.to_thread(_run_handler_sync, reset_link_handler, {
         "project_id": project_id, "link_id": link_id,
     })
