@@ -925,9 +925,15 @@ async def drawing_create(
 ) -> list[dict[str, Any]]:
     """Create a new drawing (label, shape, or image) on a project canvas.
 
+    GNS3 SVG rendering notes:
+    - <rect> MUST have a solid fill color (e.g. fill=\"#FF0000\") to render.
+      fill=\"none\" or fill=\"transparent\" will be invisible in the GUI.
+    - <ellipse> works correctly with or without fill.
+    - <line> and <text> work normally.
+
     SVG examples:
       Text label:  <svg><text x=\"10\" y=\"20\" font-size=\"14\">R1</text></svg>
-      Rectangle:   <svg><rect x=\"10\" y=\"10\" width=\"80\" height=\"50\" fill=\"blue\" stroke=\"black\"/></svg>
+      Rectangle:   <svg><rect x=\"10\" y=\"10\" width=\"80\" height=\"50\" fill=\"#4A90D9\" stroke=\"black\"/></svg>
       Ellipse:     <svg><ellipse cx=\"50\" cy=\"50\" rx=\"40\" ry=\"20\" fill=\"red\" stroke=\"black\"/></svg>
       Line:        <svg><line x1=\"0\" y1=\"0\" x2=\"100\" y2=\"100\" stroke=\"black\" stroke-width=\"2\"/></svg>
       Dashed line: <svg><line x1=\"0\" y1=\"0\" x2=\"100\" y2=\"100\" stroke=\"black\" stroke-dasharray=\"5,5\"/></svg>
