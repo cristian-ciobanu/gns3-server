@@ -50,8 +50,14 @@ def get_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict
     symbol_id = params.get("symbol_id")
     if not symbol_id:
         return {"error": "symbol_id is required"}
-    conn = _get_connector(gns3_ctx)
-    return conn.http_call("get", f"{conn.base_url}/symbols/{symbol_id}").json()
+    download_url = f"{gns3_ctx['server_url']}/v3/symbols/{symbol_id}/raw"
+    auth_token = gns3_ctx['jwt_token']
+    return {
+        "symbol_id": symbol_id,
+        "download_url": download_url,
+        "curl_command": f"curl -L -o '{symbol_id.replace(':', '').replace('/', '_')}.svg' -H 'Authorization: Bearer {auth_token}' '{download_url}'",
+        "note": "Symbol files are SVG images. Use curl to download.",
+    }
 
 
 def get_symbol_dimensions_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -70,11 +76,13 @@ def get_default_symbols_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]
 
 def upload_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     symbol_id = params.get("symbol_id")
-    if not symbol_id:
-        return {"error": "symbol_id is required"}
+    content = params.get("content")
+    if not symbol_id or content is None:
+        return {"error": "symbol_id and content (SVG data) are required"}
     conn = _get_connector(gns3_ctx)
-    result = conn.http_call("post", f"{conn.base_url}/symbols/{symbol_id}").json()
-    return {"message": f"Symbol {symbol_id} uploaded", "symbol": result}
+    url = f"{conn.base_url}/symbols/{symbol_id}/raw"
+    conn.http_call("post", url, data=content, headers={"Content-Type": "image/svg+xml"})
+    return {"message": f"Symbol {symbol_id} uploaded", "symbol_id": symbol_id}
 
 
 def delete_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:

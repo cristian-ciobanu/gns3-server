@@ -1037,7 +1037,7 @@ async def symbol_list() -> list[dict[str, Any]]:
 async def symbol_get(
     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
 ) -> list[dict[str, Any]]:
-    """Get details about a specific symbol."""
+    """Get a download URL for a symbol file (SVG). Use curl to download."""
     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
         "symbol_id": symbol_id,
     })
@@ -1062,10 +1062,11 @@ async def symbol_defaults() -> list[dict[str, Any]]:
 @mcp.tool()
 async def symbol_upload(
     symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
+    content: Annotated[str, Field(description="SVG content of the symbol")],
 ) -> list[dict[str, Any]]:
-    """Upload or update a custom symbol on the server."""
+    """Upload or update a custom symbol on the server. Provide the SVG content as a string."""
     return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
-        "symbol_id": symbol_id,
+        "symbol_id": symbol_id, "content": content,
     })
 
 
