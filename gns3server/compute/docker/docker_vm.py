@@ -669,6 +669,12 @@ class DockerVM(BaseNode):
 
             await self.manager.query("POST", f"containers/{self._cid}/start")
             await asyncio.sleep(0.5)  # give the Docker container some time to start
+            # Fix host-side directory ownership after Docker (re)creates
+            # volume mount points as root (rootful Docker only).
+            # This allows the GNS3 process to write files into node directories
+            # while the container is running. Permissions are recorded and
+            # restored inside the container by init.sh on next startup.
+            # await self._fix_permissions()
             self._namespace = await self._get_namespace()
 
             await self._start_ubridge(require_privileged_access=True)
@@ -772,11 +778,19 @@ class DockerVM(BaseNode):
                     ' && /gns3/bin/busybox chown {uid}:{gid} -R "{path}"'.format(
                         uid=os.getuid(), gid=os.getgid(), path=volume
                     ),
+                    stderr=asyncio.subprocess.PIPE,
                 )
             except OSError as e:
                 raise DockerError(f"Could not fix permissions for {volume}: {e}")
             await process.wait()
-            self._permissions_fixed = True
+            if process.returncode != 0:
+                stderr = (await process.stderr.read()).decode(errors="replace").strip()
+                log.error(
+                    "Failed to fix permissions on '%s' for container '%s': %s",
+                    volume, self._name, stderr or f"exit code {process.returncode}"
+                )
+            else:
+                self._permissions_fixed = True
 
     async def _start_vnc_process(self, restart=False):
         """

@@ -35,6 +35,9 @@ urllib3>=2.7.0
 fastmcp>=3.4.0
 
 # ==============================================================================
+# File type detection
+python-magic>=0.4.27
+
 # AI Copilot Optional Dependencies
 # ==============================================================================
 # AI Copilot features are now optional. Install with:

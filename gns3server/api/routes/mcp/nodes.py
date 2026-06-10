@@ -28,6 +28,12 @@ import logging
 
 log = logging.getLogger(__name__)
 
+# ── Constants ──────────────────────────────────────────────────────────────
+
+# Maximum bytes to return from get_node_file (safety net).
+# Larger files are truncated with a truncated=True flag.
+MAX_NODE_FILE_BYTES = 50 * 1024  # 50 KiB
+
 
 # ── Helper ─────────────────────────────────────────────────────────────────
 
@@ -164,6 +170,89 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if console_type in ("vnc",):
         result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
     return result
+
+
+# ── Node file handlers ────────────────────────────────────────────────────
+
+
+def list_node_files_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    files = conn.list_node_files(
+        project_id=project_id,
+        node_id=node_id,
+        path=params.get("path", ""),
+        recursive=params.get("recursive", False),
+    )
+    return {"files": files, "count": len(files)}
+
+
+def get_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    file_path = params.get("file_path")
+    if not project_id or not node_id or not file_path:
+        return {"error": "project_id, node_id and file_path are required"}
+
+    offset = params.get("offset", 0)
+    limit = params.get("limit", 200)
+
+    conn = _get_connector(gns3_ctx)
+    raw = conn.get_node_file(project_id=project_id, node_id=node_id, file_path=file_path)
+
+    total_bytes = len(raw.encode("utf-8"))
+    truncated = False
+    if total_bytes > MAX_NODE_FILE_BYTES:
+        raw = raw[:MAX_NODE_FILE_BYTES]
+        truncated = True
+
+    lines = raw.splitlines(keepends=False)
+    total_lines = len(lines)
+
+    # Apply offset/limit
+    selected = lines[offset: offset + limit] if offset < total_lines else []
+    has_more = (offset + limit) < total_lines or truncated
+
+    return {
+        "file_path": file_path,
+        "content": "\n".join(selected),
+        "metadata": {
+            "total_lines": total_lines,
+            "total_bytes": total_bytes,
+            "offset": offset,
+            "limit": limit,
+            "returned_lines": len(selected),
+            "returned_bytes": len("\n".join(selected).encode("utf-8")),
+            "truncated": truncated or has_more,
+            "has_more": has_more,
+        },
+    }
+
+
+def write_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    file_path = params.get("file_path")
+    content = params.get("content")
+    if not project_id or not node_id or not file_path or content is None:
+        return {"error": "project_id, node_id, file_path and content are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.write_node_file(project_id=project_id, node_id=node_id, file_path=file_path, content=content)
+    return {"message": f"File {file_path} written to node {node_id}", "file_path": file_path, "node_id": node_id}
+
+
+def delete_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    file_path = params.get("file_path")
+    if not project_id or not node_id or not file_path:
+        return {"error": "project_id, node_id and file_path are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.delete_node_file(project_id=project_id, node_id=node_id, file_path=file_path)
+    return {"message": f"File {file_path} deleted from node {node_id}", "file_path": file_path, "node_id": node_id}
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────
@@ -304,5 +393,72 @@ NODE_TOOLS = [
             "required": ["project_id", "node_id"],
         },
         "handler": get_node_console_info_handler,
+    },
+    {
+        "name": "list_node_files",
+        "description": "List files in a node directory with metadata (name, size, type, modified time). "
+                       "Use recursive=true for a full recursive listing. "
+                       "Check file sizes before reading large files with get_node_file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+                "path": {"type": "string", "description": "Subdirectory path within node directory (optional)"},
+                "recursive": {"type": "boolean", "description": "Recursively list all files (optional, default: false)"},
+            },
+            "required": ["project_id", "node_id"],
+        },
+        "handler": list_node_files_handler,
+    },
+    {
+        "name": "get_node_file",
+        "description": "Read a text file from a node directory. Returns file content line-by-line with offset/limit support. "
+                       "Best practice: start with offset=0, limit=200 to preview, then increase offset to read more. "
+                       "Large files (>50KB) are auto-truncated; check the metadata.truncated flag. "
+                       "For binary files, check file type via list_node_files first.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+                "file_path": {"type": "string", "description": "Path to the file within the node directory"},
+                "offset": {"type": "integer", "description": "Line offset to start reading from (optional, default: 0)"},
+                "limit": {"type": "integer", "description": "Maximum number of lines to return (optional, default: 200)"},
+            },
+            "required": ["project_id", "node_id", "file_path"],
+        },
+        "handler": get_node_file_handler,
+    },
+    {
+        "name": "write_node_file",
+        "description": "Write content to a file in a node directory. Creates the file if it doesn't exist. "
+                       "Overwrites existing content. Useful for updating configuration files on nodes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+                "file_path": {"type": "string", "description": "Path to the file within the node directory"},
+                "content": {"type": "string", "description": "Content to write to the file"},
+            },
+            "required": ["project_id", "node_id", "file_path", "content"],
+        },
+        "handler": write_node_file_handler,
+    },
+    {
+        "name": "delete_node_file",
+        "description": "Delete a file from a node directory. Cannot be undone. "
+                       "Use list_node_files to confirm the file path before deleting.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "node_id": {"type": "string", "description": "Node UUID"},
+                "file_path": {"type": "string", "description": "Path to the file within the node directory"},
+            },
+            "required": ["project_id", "node_id", "file_path"],
+        },
+        "handler": delete_node_file_handler,
     },
 ]

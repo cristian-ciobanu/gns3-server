@@ -19,13 +19,14 @@ API routes for projects.
 """
 
 import os
+import shutil
 import urllib.parse
 
 import logging
 
 log = logging.getLogger()
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from typing import List
@@ -129,59 +130,6 @@ async def delete_compute_project(project: Project = Depends(dep_project)) -> Non
     await project.delete()
     ProjectManager.instance().remove_project(project.id)
 
-# @Route.get(
-#     r"/projects/{project_id}/notifications",
-#     description="Receive notifications about the project",
-#     parameters={
-#         "project_id": "Project UUID",
-#     },
-#     status_codes={
-#         200: "End of stream",
-#         404: "The project doesn't exist"
-#     })
-# async def notification(request, response):
-#
-#     pm = ProjectManager.instance()
-#     project = pm.get_project(request.match_info["project_id"])
-#
-#     response.content_type = "application/json"
-#     response.set_status(200)
-#     response.enable_chunked_encoding()
-#
-#     response.start(request)
-#     queue = project.get_listen_queue()
-#     ProjectHandler._notifications_listening.setdefault(project.id, 0)
-#     ProjectHandler._notifications_listening[project.id] += 1
-#     await response.write("{}\n".format(json.dumps(ProjectHandler._getPingMessage())).encode("utf-8"))
-#     while True:
-#         try:
-#             (action, msg) = await asyncio.wait_for(queue.get(), 5)
-#             if hasattr(msg, "asdict"):
-#                 msg = json.dumps({"action": action, "event": msg.asdict()}, sort_keys=True)
-#             else:
-#                 msg = json.dumps({"action": action, "event": msg}, sort_keys=True)
-#             log.debug("Send notification: %s", msg)
-#             await response.write(("{}\n".format(msg)).encode("utf-8"))
-#         except asyncio.TimeoutError:
-#             await response.write("{}\n".format(json.dumps(ProjectHandler._getPingMessage())).encode("utf-8"))
-#     project.stop_listen_queue(queue)
-#     if project.id in ProjectHandler._notifications_listening:
-#         ProjectHandler._notifications_listening[project.id] -= 1
-
-# def _getPingMessage(cls):
-#     """
-#     Ping messages are regularly sent to the client to
-#     keep the connection open. We send with it some information about server load.
-#
-#     :returns: hash
-#     """
-#     stats = {}
-#     # Non blocking call in order to get cpu usage. First call will return 0
-#     stats["cpu_usage_percent"] = CpuPercent.get(interval=None)
-#     stats["memory_usage_percent"] = psutil.virtual_memory().percent
-#     stats["disk_usage_percent"] = psutil.disk_usage(get_default_project_directory()).percent
-#     return {"action": "ping", "event": stats}
-
 
 @router.get("/projects/{project_id}/files", response_model=List[schemas.ProjectFile])
 async def get_compute_project_files(project: Project = Depends(dep_project)) -> List[schemas.ProjectFile]:
@@ -196,14 +144,16 @@ async def get_compute_project_files(project: Project = Depends(dep_project)) -> 
 async def get_compute_node_files(
     node_type: str,
     node_id: str,
-    project: Project = Depends(dep_project)
+    project: Project = Depends(dep_project),
+    path: str = Query("", description="Subdirectory path within node directory"),
+    recursive: bool = Query(False, description="Recursively list all files")
 ) -> List[schemas.NodeFile]:
     """
     Return files belonging to a specific node with detailed metadata.
     """
 
     node_path = f"project-files/{node_type}/{node_id}"
-    return await project.list_node_files(node_path)
+    return await project.list_node_files(node_path, subpath=path, recursive=recursive)
 
 
 @router.get("/projects/{project_id}/files/{file_path:path}")
@@ -238,20 +188,49 @@ async def write_compute_project_file(
 
     # Raise error if user try to escape
     if not is_safe_path(path, project.path):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Path is outside the project directory")
 
     path = os.path.join(project.path, path)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        try:
-            with open(path, "wb+") as f:
-                async for chunk in request.stream():
-                    f.write(chunk)
-        except (UnicodeEncodeError, OSError) as e:
-            pass  # FIXME
+        with open(path, "wb+") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
 
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission denied writing to '{path}'")
+    except OSError as e:
+        log.error(f"Error writing file '{path}': {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.delete("/projects/{project_id}/files/{file_path:path}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_compute_project_file(
+        file_path: str,
+        project: Project = Depends(dep_project)
+) -> None:
+
+    file_path = urllib.parse.unquote(file_path)
+    path = os.path.normpath(file_path)
+
+    if not is_safe_path(path, project.path):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Path is outside the project directory")
+
+    path = os.path.join(project.path, path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission denied deleting '{path}'")
+    except OSError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

@@ -1735,9 +1735,10 @@ async def test_fix_permission(vm):
     vm._volumes = ["/etc"]
     vm._get_container_state = AsyncioMagicMock(return_value="running")
     process = MagicMock()
+    process.returncode = 0
     with asyncio_patch("asyncio.subprocess.create_subprocess_exec", return_value=process) as mock_exec:
         await vm._fix_permissions()
-    mock_exec.assert_called_with('docker', 'exec', 'e90e34656842', '/gns3/bin/busybox', 'sh', '-c', '(/gns3/bin/busybox find "/etc" -depth -print0 | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c \'%a:%u:%g:%n\' > "/etc/.gns3_perms") && /gns3/bin/busybox chmod -R u+rX "/etc" && /gns3/bin/busybox chown {}:{} -R "/etc"'.format(os.getuid(), os.getgid()))
+    mock_exec.assert_called_with('docker', 'exec', 'e90e34656842', '/gns3/bin/busybox', 'sh', '-c', '(/gns3/bin/busybox find "/etc" -depth -print0 | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c \'%a:%u:%g:%n\' > "/etc/.gns3_perms") && /gns3/bin/busybox chmod -R u+rX "/etc" && /gns3/bin/busybox chown {}:{} -R "/etc"'.format(os.getuid(), os.getgid()), stderr=asyncio.subprocess.PIPE)
     assert process.wait.called
 
 
@@ -1747,10 +1748,11 @@ async def test_fix_permission_not_running(vm):
     vm._volumes = ["/etc"]
     vm._get_container_state = AsyncioMagicMock(return_value="stopped")
     process = MagicMock()
+    process.returncode = 0
     with asyncio_patch("gns3server.compute.docker.Docker.query") as mock_start:
         with asyncio_patch("asyncio.subprocess.create_subprocess_exec", return_value=process) as mock_exec:
             await vm._fix_permissions()
-    mock_exec.assert_called_with('docker', 'exec', 'e90e34656842', '/gns3/bin/busybox', 'sh', '-c', '(/gns3/bin/busybox find "/etc" -depth -print0 | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c \'%a:%u:%g:%n\' > "/etc/.gns3_perms") && /gns3/bin/busybox chmod -R u+rX "/etc" && /gns3/bin/busybox chown {}:{} -R "/etc"'.format(os.getuid(), os.getgid()))
+    mock_exec.assert_called_with('docker', 'exec', 'e90e34656842', '/gns3/bin/busybox', 'sh', '-c', '(/gns3/bin/busybox find "/etc" -depth -print0 | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c \'%a:%u:%g:%n\' > "/etc/.gns3_perms") && /gns3/bin/busybox chmod -R u+rX "/etc" && /gns3/bin/busybox chown {}:{} -R "/etc"'.format(os.getuid(), os.getgid()), stderr=asyncio.subprocess.PIPE)
     assert mock_start.called
     assert process.wait.called
 

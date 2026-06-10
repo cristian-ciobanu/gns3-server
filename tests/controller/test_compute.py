@@ -87,7 +87,7 @@ async def test_compute_httpQuery(compute):
         response.status = 200
         await compute.post("/projects", {"a": "b"})
         await compute.close()
-        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", data=b'{"a": "b"}', headers={'content-type': 'application/json'}, auth=None, chunked=None, timeout=120)
+        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", headers={'content-type': 'application/json'}, data=b'{"a": "b"}', auth=None, params=None, chunked=None, timeout=120)
         assert compute._auth is None
 
 
@@ -102,7 +102,7 @@ async def test_compute_httpQueryAuth(compute):
         compute.password = SecretStr("toor")
         await compute.post("/projects", {"a": "b"})
         await compute.close()
-        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", data=b'{"a": "b"}', headers={'content-type': 'application/json'}, auth=compute._auth, chunked=None, timeout=120)
+        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", headers={'content-type': 'application/json'}, data=b'{"a": "b"}', auth=compute._auth, params=None, chunked=None, timeout=120)
         assert compute._auth.login == "root"
         assert compute._auth.password == "toor"
 
@@ -162,7 +162,7 @@ async def test_compute_httpQueryNotConnectedInvalidVersion(compute):
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         with pytest.raises(ControllerError):
             await compute.post("/projects", {"a": "b"})
-        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, chunked=None, timeout=120)
+        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=120)
         await compute.close()
 
 
@@ -176,7 +176,7 @@ async def test_compute_httpQueryNotConnectedNonGNS3Server(compute):
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         with pytest.raises(ControllerError):
             await compute.post("/projects", {"a": "b"})
-        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, chunked=None, timeout=120)
+        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=120)
         await compute.close()
 
 
@@ -190,7 +190,7 @@ async def test_compute_httpQueryNotConnectedNonGNS3Server2(compute):
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         with pytest.raises(ControllerError):
             await compute.post("/projects", {"a": "b"})
-        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, chunked=None, timeout=120)
+        mock.assert_any_call("GET", "https://example.com:84/v3/compute/capabilities", headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=120)
 
 
 @pytest.mark.asyncio
@@ -228,7 +228,7 @@ async def test_compute_httpQuery_project(compute):
             project = Project(name="Test")
             mock_notification.assert_called()
         await compute.post("/projects", project)
-        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", data=json.dumps(project.asdict()), headers={'content-type': 'application/json'}, auth=None, chunked=None, timeout=120)
+        mock.assert_called_with("POST", "https://example.com:84/v3/compute/projects", headers={'content-type': 'application/json'}, data=json.dumps(project.asdict()), auth=None, params=None, chunked=None, timeout=120)
         await compute.close()
 
 # FIXME: https://github.com/aio-libs/aiohttp/issues/2525
@@ -372,7 +372,7 @@ async def test_forward_get(compute):
     response.status = 200
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         await compute.forward("GET", "qemu", "images")
-        mock.assert_called_with("GET", "https://example.com:84/v3/compute/qemu/images", auth=None, data=None, headers={'content-type': 'application/json'}, chunked=None, timeout=None)
+        mock.assert_called_with("GET", "https://example.com:84/v3/compute/qemu/images", headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=None)
         await compute.close()
 
 
@@ -395,7 +395,7 @@ async def test_forward_post(compute):
     response.status = 200
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         await compute.forward("POST", "qemu", "img", data={"id": 42})
-        mock.assert_called_with("POST", "https://example.com:84/v3/compute/qemu/img", auth=None, data=b'{"id": 42}', headers={'content-type': 'application/json'}, chunked=None, timeout=None)
+        mock.assert_called_with("POST", "https://example.com:84/v3/compute/qemu/img", headers={'content-type': 'application/json'}, data=b'{"id": 42}', auth=None, params=None, chunked=None, timeout=None)
         await compute.close()
 
 
@@ -408,7 +408,7 @@ async def test_list_files(project, compute):
     response.status = 200
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         assert await compute.list_files(project) == res
-        mock.assert_any_call("GET", "https://example.com:84/v3/compute/projects/{}/files".format(project.id), auth=None, chunked=None, data=None, headers={'content-type': 'application/json'}, timeout=None)
+        mock.assert_any_call("GET", "https://example.com:84/v3/compute/projects/{}/files".format(project.id), headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=None)
         await compute.close()
 
 
@@ -430,7 +430,7 @@ async def test_interfaces(compute):
     response.status = 200
     with asyncio_patch("aiohttp.ClientSession.request", return_value=response) as mock:
         assert await compute.interfaces() == res
-        mock.assert_any_call("GET", "https://example.com:84/v3/compute/network/interfaces", auth=None, chunked=None, data=None, headers={'content-type': 'application/json'}, timeout=120)
+        mock.assert_any_call("GET", "https://example.com:84/v3/compute/network/interfaces", headers={'content-type': 'application/json'}, data=None, auth=None, params=None, chunked=None, timeout=120)
         await compute.close()
 
 
