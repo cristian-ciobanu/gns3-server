@@ -802,7 +802,7 @@ async def link_reset(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
-    """Reset a link, clearing its state (counters, filters, etc.)."""
+    """Reset a link by deleting and recreating it. All filters, suspend state, and packet counters are cleared. The link will briefly go down then come back up."""
     return await asyncio.to_thread(_run_handler_sync, reset_link_handler, {
         "project_id": project_id, "link_id": link_id,
     })
