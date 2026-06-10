@@ -50,6 +50,10 @@ from .projects import (
     delete_project_handler, open_project_handler, close_project_handler,
     get_project_stats_handler, update_project_handler, duplicate_project_handler,
     get_project_readme_handler, update_project_readme_handler,
+    lock_project_handler, unlock_project_handler,
+)
+from .server import (
+    get_version_handler, get_statistics_handler,
 )
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
@@ -58,6 +62,10 @@ from .nodes import (
     get_node_console_info_handler,
     list_node_files_handler, get_node_file_handler,
     write_node_file_handler, delete_node_file_handler,
+    start_all_nodes_handler, stop_all_nodes_handler,
+    suspend_all_nodes_handler, reload_all_nodes_handler,
+    duplicate_node_handler, isolate_node_handler,
+    unisolate_node_handler, get_node_links_handler,
 )
 from .links import (
     get_links_handler, get_link_handler, create_link_handler,
@@ -668,6 +676,96 @@ async def delete_node_file(
     })
 
 
+# ── Node bulk / advanced tools ─────────────────────────────────────────
+
+
+@mcp.tool()
+async def start_all_nodes(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Start all nodes in a project."""
+    return await asyncio.to_thread(_run_handler_sync, start_all_nodes_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def stop_all_nodes(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Stop all nodes in a project."""
+    return await asyncio.to_thread(_run_handler_sync, stop_all_nodes_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def suspend_all_nodes(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Suspend all nodes in a project."""
+    return await asyncio.to_thread(_run_handler_sync, suspend_all_nodes_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def reload_all_nodes(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Reload (restart) all nodes in a project."""
+    return await asyncio.to_thread(_run_handler_sync, reload_all_nodes_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def duplicate_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to duplicate")],
+    x: Annotated[int, Field(description="X coordinate for the new node")] = 0,
+    y: Annotated[int, Field(description="Y coordinate for the new node")] = 0,
+    z: Annotated[int, Field(description="Z layer for the new node")] = 0,
+) -> list[dict[str, Any]]:
+    """Duplicate a node in a project, creating a copy at a new position."""
+    return await asyncio.to_thread(_run_handler_sync, duplicate_node_handler, {
+        "project_id": project_id, "node_id": node_id, "x": x, "y": y, "z": z,
+    })
+
+
+@mcp.tool()
+async def isolate_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to isolate")],
+) -> list[dict[str, Any]]:
+    """Isolate a node by suspending all its attached links (network isolation)."""
+    return await asyncio.to_thread(_run_handler_sync, isolate_node_handler, {
+        "project_id": project_id, "node_id": node_id,
+    })
+
+
+@mcp.tool()
+async def unisolate_node(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node to unisolate")],
+) -> list[dict[str, Any]]:
+    """Un-isolate a node by resuming all its suspended links."""
+    return await asyncio.to_thread(_run_handler_sync, unisolate_node_handler, {
+        "project_id": project_id, "node_id": node_id,
+    })
+
+
+@mcp.tool()
+async def get_node_links(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+) -> list[dict[str, Any]]:
+    """List all links connected to a specific node."""
+    return await asyncio.to_thread(_run_handler_sync, get_node_links_handler, {
+        "project_id": project_id, "node_id": node_id,
+    })
+
+
 # ── Link capture / reset tools ────────────────────────────────────────
 
 
@@ -835,6 +933,44 @@ async def delete_drawing(
     return await asyncio.to_thread(_run_handler_sync, delete_drawing_handler, {
         "project_id": project_id, "drawing_id": drawing_id,
     })
+
+
+# ── Project lock tools ────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def lock_project(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Lock all drawings and nodes in a project to prevent accidental changes."""
+    return await asyncio.to_thread(_run_handler_sync, lock_project_handler, {
+        "project_id": project_id,
+    })
+
+
+@mcp.tool()
+async def unlock_project(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+) -> list[dict[str, Any]]:
+    """Unlock a project to allow editing of drawings and nodes."""
+    return await asyncio.to_thread(_run_handler_sync, unlock_project_handler, {
+        "project_id": project_id,
+    })
+
+
+# ── Server info tools ─────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_version() -> list[dict[str, Any]]:
+    """Get GNS3 server version information."""
+    return await asyncio.to_thread(_run_handler_sync, get_version_handler, {})
+
+
+@mcp.tool()
+async def get_statistics() -> list[dict[str, Any]]:
+    """Get GNS3 server statistics including computes, projects, nodes, and links."""
+    return await asyncio.to_thread(_run_handler_sync, get_statistics_handler, {})
 
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────

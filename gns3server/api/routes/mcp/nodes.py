@@ -257,7 +257,86 @@ def delete_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -
     url = f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/files/{file_path}"
     conn.http_call("delete", url)
     return {"message": f"File {file_path} deleted from node {node_id}", "file_path": file_path, "node_id": node_id}
-    return {"message": f"File {file_path} deleted from node {node_id}", "file_path": file_path, "node_id": node_id}
+
+
+# ── Node bulk / advanced handlers ────────────────────────────────────
+
+
+def start_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/start")
+    return {"message": "All nodes started", "project_id": project_id}
+
+
+def stop_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/stop")
+    return {"message": "All nodes stopped", "project_id": project_id}
+
+
+def suspend_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/suspend")
+    return {"message": "All nodes suspended", "project_id": project_id}
+
+
+def reload_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/reload")
+    return {"message": "All nodes reloaded", "project_id": project_id}
+
+
+def duplicate_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    data = {k: v for k, v in params.items() if k not in ("project_id", "node_id") and v is not None}
+    result = conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/duplicate", json_data=data).json()
+    return {"message": f"Node {node_id} duplicated", "node": result}
+
+
+def isolate_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/isolate")
+    return {"message": f"Node {node_id} isolated (all links suspended)", "node_id": node_id}
+
+
+def unisolate_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/unisolate")
+    return {"message": f"Node {node_id} unisolated (links resumed)", "node_id": node_id}
+
+
+def get_node_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    node_id = params.get("node_id")
+    if not project_id or not node_id:
+        return {"error": "project_id and node_id are required"}
+    conn = _get_connector(gns3_ctx)
+    links = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/links").json()
+    return {"links": links, "count": len(links)}
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────

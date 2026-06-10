@@ -158,6 +158,24 @@ def update_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     return {"message": "README.txt updated", "project_id": project_id}
 
 
+def lock_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/lock")
+    return {"message": f"Project {project_id} locked", "project_id": project_id}
+
+
+def unlock_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/unlock")
+    return {"message": f"Project {project_id} unlocked", "project_id": project_id}
+
+
 # ── Tool definitions (consumed by mcp/__init__.py) ─────────────────────────
 
 PROJECT_TOOLS = [
