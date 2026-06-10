@@ -63,6 +63,11 @@ from .appliances import (
     get_appliances_handler, get_appliance_handler,
     install_appliance_handler,
 )
+from .images import (
+    get_images_handler, get_image_handler,
+    delete_image_handler, prune_images_handler,
+    install_images_handler,
+)
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
     stop_node_handler, reload_node_handler, suspend_node_handler,
@@ -1043,6 +1048,47 @@ async def install_appliance(
     return await asyncio.to_thread(_run_handler_sync, install_appliance_handler, {
         "appliance_id": appliance_id,
     })
+
+
+# ── Image tools ───────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_images() -> list[dict[str, Any]]:
+    """List all images available on the server across all emulators."""
+    return await asyncio.to_thread(_run_handler_sync, get_images_handler, {})
+
+
+@mcp.tool()
+async def get_image(
+    image_id: Annotated[str, Field(description="ID or filename of the image")],
+) -> list[dict[str, Any]]:
+    """Get detailed information about a specific image."""
+    return await asyncio.to_thread(_run_handler_sync, get_image_handler, {
+        "image_id": image_id,
+    })
+
+
+@mcp.tool()
+async def delete_image(
+    image_id: Annotated[str, Field(description="ID or filename of the image to delete")],
+) -> list[dict[str, Any]]:
+    """Delete an image from the server. Cannot be undone."""
+    return await asyncio.to_thread(_run_handler_sync, delete_image_handler, {
+        "image_id": image_id,
+    })
+
+
+@mcp.tool()
+async def prune_images() -> list[dict[str, Any]]:
+    """Remove all unused images from the server to free up disk space."""
+    return await asyncio.to_thread(_run_handler_sync, prune_images_handler, {})
+
+
+@mcp.tool()
+async def install_images() -> list[dict[str, Any]]:
+    """Request the server to install pending images (download from registry)."""
+    return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
 
 
 # ── Auth‑wrapped SSE app ──────────────────────────────────────────────
