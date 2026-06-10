@@ -923,7 +923,15 @@ async def drawing_create(
     locked: Annotated[bool, Field(description="Lock the drawing (default: false)")] = False,
     rotation: Annotated[int, Field(description="Rotation angle in degrees, -359 to 359 (default: 0)")] = 0,
 ) -> list[dict[str, Any]]:
-    """Create a new drawing (label, shape, or image) on a project canvas."""
+    """Create a new drawing (label, shape, or image) on a project canvas.
+
+    SVG examples:
+      Text label:  <svg><text x=\"10\" y=\"20\" font-size=\"14\">R1</text></svg>
+      Rectangle:   <svg><rect x=\"10\" y=\"10\" width=\"80\" height=\"50\" fill=\"blue\" stroke=\"black\"/></svg>
+      Ellipse:     <svg><ellipse cx=\"50\" cy=\"50\" rx=\"40\" ry=\"20\" fill=\"red\" stroke=\"black\"/></svg>
+      Line:        <svg><line x1=\"0\" y1=\"0\" x2=\"100\" y2=\"100\" stroke=\"black\" stroke-width=\"2\"/></svg>
+      Dashed line: <svg><line x1=\"0\" y1=\"0\" x2=\"100\" y2=\"100\" stroke=\"black\" stroke-dasharray=\"5,5\"/></svg>
+    """
     return await asyncio.to_thread(_run_handler_sync, create_drawing_handler, {
         "project_id": project_id, "svg": svg, "x": x, "y": y, "z": z,
         "locked": locked, "rotation": rotation,
