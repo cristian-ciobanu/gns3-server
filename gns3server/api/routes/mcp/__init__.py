@@ -56,6 +56,8 @@ from .nodes import (
     stop_node_handler, reload_node_handler, suspend_node_handler,
     create_node_handler, delete_node_handler, update_node_handler,
     get_node_console_info_handler,
+    list_node_files_handler, get_node_file_handler,
+    write_node_file_handler, delete_node_file_handler,
 )
 from .links import (
     get_links_handler, get_link_handler, create_link_handler,
@@ -585,6 +587,74 @@ async def get_compute_images(
     """List available images for an emulator on a compute node."""
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,
+    })
+
+
+# ── Node file tools ────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def list_node_files(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+    path: Annotated[str, Field(description="Subdirectory path within node directory (optional)")] = "",
+    recursive: Annotated[bool, Field(description="Recursively list all files (optional, default: false)")] = False,
+) -> list[dict[str, Any]]:
+    """List files in a node directory with metadata (name, size, type, modified time).
+
+    Use this first to check file sizes before reading files with get_node_file.
+    Large config files should be read in chunks using offset/limit.
+    """
+    return await asyncio.to_thread(_run_handler_sync, list_node_files_handler, {
+        "project_id": project_id, "node_id": node_id, "path": path, "recursive": recursive,
+    })
+
+
+@mcp.tool()
+async def get_node_file(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+    file_path: Annotated[str, Field(description="Path to the file within the node directory")],
+    offset: Annotated[int, Field(description="Line offset to start reading from (optional, default: 0)")] = 0,
+    limit: Annotated[int, Field(description="Maximum number of lines to return (optional, default: 200)")] = 200,
+) -> list[dict[str, Any]]:
+    """Read a text file from a node directory line-by-line with offset/limit support.
+
+    Best practice:
+      1. First call list_node_files to see the file size before deciding to read.
+      2. Start with offset=0, limit=200 to preview the file.
+      3. If metadata.has_more is true, read more by increasing offset.
+      Large files (>50KB) are auto-truncated; check the metadata.truncated flag.
+      For binary files, check the file type via list_node_files first.
+    """
+    return await asyncio.to_thread(_run_handler_sync, get_node_file_handler, {
+        "project_id": project_id, "node_id": node_id, "file_path": file_path,
+        "offset": offset, "limit": limit,
+    })
+
+
+@mcp.tool()
+async def write_node_file(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+    file_path: Annotated[str, Field(description="Path to the file within the node directory")],
+    content: Annotated[str, Field(description="Content to write to the file")],
+) -> list[dict[str, Any]]:
+    """Write content to a file in a node directory. Creates the file if it doesn't exist. Overwrites existing content."""
+    return await asyncio.to_thread(_run_handler_sync, write_node_file_handler, {
+        "project_id": project_id, "node_id": node_id, "file_path": file_path, "content": content,
+    })
+
+
+@mcp.tool()
+async def delete_node_file(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    node_id: Annotated[str, Field(description="UUID of the node")],
+    file_path: Annotated[str, Field(description="Path to the file within the node directory")],
+) -> list[dict[str, Any]]:
+    """Delete a file from a node directory. Cannot be undone."""
+    return await asyncio.to_thread(_run_handler_sync, delete_node_file_handler, {
+        "project_id": project_id, "node_id": node_id, "file_path": file_path,
     })
 
 

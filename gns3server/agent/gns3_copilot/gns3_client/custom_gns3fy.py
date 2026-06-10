@@ -782,6 +782,81 @@ class Gns3Connector:
         _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
         self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
 
+    def list_node_files(
+        self, project_id: str, node_id: str,
+        path: str = "", recursive: bool = False
+    ) -> list[dict[str, Any]]:
+        """
+        List files in a node directory with metadata.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `node_id`
+        - `path` Subdirectory path within node directory (optional)
+        - `recursive` Whether to recursively list all files (optional)
+
+        **Returns:**
+
+        List of file objects with name, path, size, modified time, type, etc.
+        """
+        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files"
+        _params = {}
+        if path:
+            _params["path"] = path
+        if recursive:
+            _params["recursive"] = "true"
+        _response_data = self.http_call("get", _url, params=_params if _params else None)
+        return cast(list[dict[str, Any]], _response_data.json())
+
+    def get_node_file(self, project_id: str, node_id: str, file_path: str) -> str:
+        """
+        Get the content of a file in a node directory.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `node_id`
+        - `file_path`
+
+        **Returns**
+
+        File content as text string
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
+        _response = self.http_call("get", _url)
+        return _response.text
+
+    def write_node_file(self, project_id: str, node_id: str, file_path: str, content: str) -> None:
+        """
+        Write content to a file in a node directory. Creates the file if it doesn't exist.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `node_id`
+        - `file_path`
+        - `content`
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
+        self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
+
+    def delete_node_file(self, project_id: str, node_id: str, file_path: str) -> None:
+        """
+        Delete a file from the node directory.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `node_id`
+        - `file_path`
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/nodes/{node_id}/files/{encoded_path}"
+        self.http_call("delete", _url)
+
     def get_computes(self) -> list[dict[str, Any]]:
         """
         Returns a list of computes.
