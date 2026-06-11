@@ -1185,7 +1185,12 @@ async def image_prune() -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def image_install() -> list[dict[str, Any]]:
-    """Request the server to install pending images (download from registry)."""
+    """Scan uploaded images and auto-create templates by matching image checksums against known appliance definitions.
+
+    This is NOT for downloading images. Images must be uploaded first (via the GNS3 Web UI).
+    If an uploaded image matches a known appliance, a template is automatically created.
+    Images already referenced by existing templates are skipped.
+    """
     return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
 
 
