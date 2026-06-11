@@ -15,12 +15,16 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import logging
+import bcrypt
 
 from fastapi import Request, Query, Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Optional
+from sqlalchemy import select
 
 from gns3server import schemas
+import gns3server.db.models as models
+from gns3server.db.repositories.api_keys import ApiKeysRepository
 from gns3server.db.repositories.users import UsersRepository
 from gns3server.db.repositories.rbac import RbacRepository
 from gns3server.services import auth_service
@@ -33,6 +37,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v3/access/users/login", auto_err
 async def get_user_from_token(
         bearer_token: str = Depends(oauth2_scheme),
         user_repo: UsersRepository = Depends(get_repository(UsersRepository)),
+        api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
         token: Optional[str] = Query(None, include_in_schema=False)
 ) -> schemas.User:
 
@@ -47,6 +52,29 @@ async def get_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # API Key authentication
+    if token.startswith("gns3_"):
+        query = select(models.ApiKey).where(models.ApiKey.revoked == False)
+        result = await api_keys_repo._db_session.execute(query)
+        for db_key in result.scalars().all():
+            if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
+                await api_keys_repo.update_last_used(db_key.api_key_id)
+                user = await user_repo.get_user(db_key.user_id)
+                if user:
+                    if not user.is_active:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Not an active user",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                    return user
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # JWT authentication
     token_data = auth_service.get_token_data(token)
     user = await user_repo.get_user_by_username(token_data.username)
     if user is None:
