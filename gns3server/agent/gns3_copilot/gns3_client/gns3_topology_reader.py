@@ -30,6 +30,10 @@ This module provides a LangChain BaseTool to retrieve the topology of a
 specific GNS3 project by project ID. Returns nodes, links, and project
 metadata.
 
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+GNS3TopologyTool._run() is called by MCP device config handlers.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import copy

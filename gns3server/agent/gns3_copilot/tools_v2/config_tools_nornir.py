@@ -26,6 +26,11 @@
 
 This module provides a tool to execute configuration commands on multiple
  devices in a GNS3 topology using Nornir.
+
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+ExecuteMultipleDeviceConfigCommands._run() is called by the MCP device_config_send handler.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import json

@@ -26,6 +26,11 @@
 """
 This module provides a tool to execute commands on VPCS devices
 in a GNS3 topology using Nornir with Netmiko.
+
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+VPCSCommands._run() is called by the MCP vpcs_config_set handler.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import json

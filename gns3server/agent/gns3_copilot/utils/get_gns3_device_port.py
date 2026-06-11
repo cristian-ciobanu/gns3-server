@@ -25,6 +25,11 @@
 """
 
 Public module for getting device port information from GNS3 topology
+
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+get_device_ports_from_topology() is called by MCP device config handlers.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import logging

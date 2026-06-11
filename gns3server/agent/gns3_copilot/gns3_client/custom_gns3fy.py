@@ -29,6 +29,10 @@ Adapted gns3fy module for GNS3-Copilot
 This module is based on the upstream gns3fy project
 (https://github.com/davidban77/gns3fy).
 
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+The Gns3Connector class is used by MCP handlers to make HTTP calls.
+Modifications to this file must be tested with BOTH gns3-copilot AND MCP.
+
 Modifications made for GNS3-Copilot:
 - Adjusted pydantic usages and dataclass configuration to reduce dependency
   conflicts with langchain (pydantic version/api differences)
