@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column('key_prefix', sa.String(8), nullable=False),
         sa.Column('last_used_at', sa.DateTime(), nullable=True),
         sa.Column('created_at', sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.func.current_timestamp(), nullable=False),
         sa.Column('revoked', sa.Boolean(), default=False, nullable=False),
         sa.ForeignKeyConstraint(['user_id'], ['users.user_id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('api_key_id'),
