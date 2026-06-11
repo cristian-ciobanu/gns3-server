@@ -119,8 +119,10 @@ from .drawings import (
 
 log = logging.getLogger(__name__)
 
-# Database engine reference — set during register_starlette_routes
-_db_engine = None
+# FastAPI app reference — used to lazily access app.state._db_engine for API key validation.
+# The db engine is initialized during the lifespan startup, which runs AFTER
+# register_starlette_routes() is called, so we cannot capture it at registration time.
+_app = None
 
 
 # ── Server ready state ────────────────────────────────────────────────
@@ -203,22 +205,24 @@ async def _resolve_token(token: str) -> str | None:
         pass
 
     # Try API key
-    if token.startswith("gns3_") and _db_engine is not None:
-        try:
-            async with AsyncSession(_db_engine, expire_on_commit=False) as db_session:
-                repo = ApiKeysRepository(db_session)
-                query = select(models.ApiKey).where(models.ApiKey.revoked == False)
-                result = await db_session.execute(query)
-                for db_key in result.scalars().all():
-                    if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
-                        await repo.update_last_used(db_key.api_key_id)
-                        user_repo = UsersRepository(db_session)
-                        user = await user_repo.get_user(db_key.user_id)
-                        if user:
-                            svc = AuthService()
-                            return svc.create_access_token(user.username, expires_in=5)
-        except Exception:
-            pass
+    if token.startswith("gns3_") and _app is not None:
+        db_engine = getattr(_app.state, "_db_engine", None)
+        if db_engine is not None:
+            try:
+                async with AsyncSession(db_engine, expire_on_commit=False) as db_session:
+                    repo = ApiKeysRepository(db_session)
+                    query = select(models.ApiKey).where(models.ApiKey.revoked == False)
+                    result = await db_session.execute(query)
+                    for db_key in result.scalars().all():
+                        if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
+                            await repo.update_last_used(db_key.api_key_id)
+                            user_repo = UsersRepository(db_session)
+                            user = await user_repo.get_user(db_key.user_id)
+                            if user:
+                                svc = AuthService()
+                                return svc.create_access_token(user.username, expires_in=5)
+            except Exception:
+                pass
 
     return None
 
@@ -1378,8 +1382,8 @@ async def mcp_root():
 
 def register_starlette_routes(app):
     """Mount MCP transports on the FastAPI app."""
-    global _db_engine
-    _db_engine = getattr(app.state, "_db_engine", None)
+    global _app
+    _app = app
     sse_app = _make_auth_wrapper(mcp.sse_app(mount_path=""))
     app.mount("/v3/mcp/transport", sse_app, name="mcp-sse")
     log.info("MCP SSE server mounted at /v3/mcp/transport")
