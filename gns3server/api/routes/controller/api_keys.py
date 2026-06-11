@@ -107,7 +107,7 @@ async def list_api_keys(
     "/{api_key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def revoke_api_key(
+async def delete_api_key(
     api_key_id: UUID,
     current_user: schemas.User = Depends(get_current_active_user),
     api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
