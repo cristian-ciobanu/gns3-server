@@ -77,16 +77,6 @@ class ApiKeysRepository(BaseRepository):
         await self._db_session.execute(query)
         await self._db_session.commit()
 
-    async def revoke_api_key(self, api_key_id: UUID) -> bool:
-        query = (
-            update(models.ApiKey)
-            .where(models.ApiKey.api_key_id == api_key_id)
-            .values(revoked=True)
-        )
-        result = await self._db_session.execute(query)
-        await self._db_session.commit()
-        return result.rowcount > 0
-
     async def delete_api_key(self, api_key_id: UUID) -> bool:
         query = delete(models.ApiKey).where(models.ApiKey.api_key_id == api_key_id)
         result = await self._db_session.execute(query)
