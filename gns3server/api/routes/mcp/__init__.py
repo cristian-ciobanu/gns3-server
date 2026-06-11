@@ -32,6 +32,7 @@ import asyncio
 import logging
 import socket
 import uuid
+import bcrypt
 from typing import Any, Annotated
 from urllib.parse import parse_qs
 
@@ -43,9 +44,16 @@ from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from gns3server.config import Config
+from gns3server.services.authentication import AuthService
+import gns3server.db.models as models
 from gns3server.services import auth_service
 from gns3server.utils.request_utils import extract_client_info
+from gns3server.db.repositories.api_keys import ApiKeysRepository
+from gns3server.db.repositories.users import UsersRepository
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -110,6 +118,9 @@ from .drawings import (
 )
 
 log = logging.getLogger(__name__)
+
+# Database engine reference — set during register_starlette_routes
+_db_engine = None
 
 
 # ── Server ready state ────────────────────────────────────────────────
@@ -176,13 +187,40 @@ _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 # ── Token validation ──────────────────────────────────────────────────
 
-async def _validate_token(token: str) -> bool:
-    """Return True if token is a valid GNS3 JWT."""
+async def _resolve_token(token: str) -> str | None:
+    """Validate a token (JWT or API key) and return the effective JWT to use.
+
+    For JWT tokens, returns the token as-is.
+    For API keys, validates against the database and returns a fresh short-lived JWT.
+
+    Returns None if the token is invalid.
+    """
+    # Try JWT first
     try:
         auth_service.get_username_from_token(token)
-        return True
+        return token
     except Exception:
-        return False
+        pass
+
+    # Try API key
+    if token.startswith("gns3_") and _db_engine is not None:
+        try:
+            async with AsyncSession(_db_engine, expire_on_commit=False) as db_session:
+                repo = ApiKeysRepository(db_session)
+                query = select(models.ApiKey).where(models.ApiKey.revoked == False)
+                result = await db_session.execute(query)
+                for db_key in result.scalars().all():
+                    if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
+                        await repo.update_last_used(db_key.api_key_id)
+                        user_repo = UsersRepository(db_session)
+                        user = await user_repo.get_user(db_key.user_id)
+                        if user:
+                            svc = AuthService()
+                            return svc.create_access_token(user.username, expires_in=5)
+        except Exception:
+            pass
+
+    return None
 
 
 # ── Server URL helper ─────────────────────────────────────────────────
@@ -1305,11 +1343,16 @@ def _make_auth_wrapper(inner_app):
                 tokens = params.get("token", [])
                 if tokens:
                     token = tokens[0]
-            if not token or not await _validate_token(token):
+            if not token:
                 response = Response("Missing or invalid token", status_code=401)
                 await response(scope, receive, send)
                 return
-            _jwt_token_var.set(token)
+            resolved = await _resolve_token(token)
+            if not resolved:
+                response = Response("Missing or invalid token", status_code=401)
+                await response(scope, receive, send)
+                return
+            _jwt_token_var.set(resolved)
         await inner_app(scope, receive, send)
 
     return auth_wrapper
@@ -1335,6 +1378,8 @@ async def mcp_root():
 
 def register_starlette_routes(app):
     """Mount MCP transports on the FastAPI app."""
+    global _db_engine
+    _db_engine = getattr(app.state, "_db_engine", None)
     sse_app = _make_auth_wrapper(mcp.sse_app(mount_path=""))
     app.mount("/v3/mcp/transport", sse_app, name="mcp-sse")
     log.info("MCP SSE server mounted at /v3/mcp/transport")

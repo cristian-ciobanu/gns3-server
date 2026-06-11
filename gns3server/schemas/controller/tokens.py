@@ -28,3 +28,9 @@ class TokenData(BaseModel):
 
     username: Optional[str] = None
     token_version: int = 0
+
+
+class ApiKeyCreate(BaseModel):
+    """Schema for creating a new API key."""
+
+    name: str
