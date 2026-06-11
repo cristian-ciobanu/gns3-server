@@ -119,9 +119,9 @@ async def revoke_api_key(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API key not found")
 
-    # Only the key owner can revoke it
+    # Only the key owner can delete it
     if key.user_id != current_user.user_id:
         from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Cannot revoke another user's API key")
+        raise HTTPException(status_code=403, detail="Cannot delete another user's API key")
 
-    await api_keys_repo.revoke_api_key(api_key_id)
+    await api_keys_repo.delete_api_key(api_key_id)
