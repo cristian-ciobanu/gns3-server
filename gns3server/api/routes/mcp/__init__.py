@@ -53,7 +53,6 @@ import gns3server.db.models as models
 from gns3server.services import auth_service
 from gns3server.utils.request_utils import extract_client_info
 from gns3server.db.repositories.api_keys import ApiKeysRepository
-from gns3server.db.repositories.users import UsersRepository
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -204,7 +203,7 @@ async def _resolve_token(token: str) -> str | None:
     except Exception:
         pass
 
-    # Try API key
+    # Try API key — pass through directly; REST API auth already supports gns3_ keys
     if token.startswith("gns3_") and _app is not None:
         db_engine = getattr(_app.state, "_db_engine", None)
         if db_engine is not None:
@@ -216,11 +215,9 @@ async def _resolve_token(token: str) -> str | None:
                     for db_key in result.scalars().all():
                         if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
                             await repo.update_last_used(db_key.api_key_id)
-                            user_repo = UsersRepository(db_session)
-                            user = await user_repo.get_user(db_key.user_id)
-                            if user:
-                                svc = AuthService()
-                                return svc.create_access_token(user.username, expires_in=5)
+                            # Return the raw API key — it will be passed as Bearer token
+                            # and validated by the REST API auth layer
+                            return token
             except Exception:
                 pass
 
