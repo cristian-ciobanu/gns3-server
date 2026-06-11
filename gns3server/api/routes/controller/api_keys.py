@@ -22,12 +22,10 @@ import secrets
 import bcrypt
 from uuid import uuid4, UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 
 from gns3server import schemas
-from gns3server.schemas.controller.tokens import TokenData
 from gns3server.db.repositories.api_keys import ApiKeysRepository
-from gns3server.db.repositories.users import UsersRepository
 from .dependencies.database import get_repository
 from .dependencies.authentication import get_current_active_user
 
@@ -38,26 +36,18 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/access/api-keys", tags=["API Keys"])
 
 API_KEY_PREFIX = "gns3_"
-API_KEY_BYTES = 32  # 256-bit key, results in 64 hex chars
+API_KEY_BYTES = 32
 
 
 def _generate_api_key() -> tuple[str, str, str]:
-    """Generate a new API key.
-
-    Returns:
-        Tuple of (full_key, key_hash, key_prefix)
-    """
     random_bytes = secrets.token_hex(API_KEY_BYTES)
     raw_key = API_KEY_PREFIX + random_bytes
     key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
-    key_prefix = raw_key[: len(API_KEY_PREFIX) + 8]  # gns3_ + first 8 hex chars
+    key_prefix = raw_key[: len(API_KEY_PREFIX) + 8]
     return raw_key, key_hash, key_prefix
 
 
-@router.post(
-    "",
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     api_key_data: schemas.ApiKeyCreate,
     current_user: schemas.User = Depends(get_current_active_user),
@@ -103,25 +93,54 @@ async def list_api_keys(
     ]
 
 
-@router.delete(
-    "/{api_key_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
+@router.post("/{api_key_id}/revoke", status_code=status.HTTP_200_OK)
+async def revoke_api_key(
+    api_key_id: UUID,
+    current_user: schemas.User = Depends(get_current_active_user),
+    api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
+) -> dict:
+    """Revoke an API key. It will immediately stop working, but can be restored."""
+
+    key = await api_keys_repo.get_api_key(api_key_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if key.user_id != current_user.user_id:
+        raise HTTPException(status_code=403, detail="Cannot modify another user's API key")
+
+    await api_keys_repo.revoke_api_key(api_key_id)
+    return {"message": f"API key '{key.name}' revoked"}
+
+
+@router.post("/{api_key_id}/restore", status_code=status.HTTP_200_OK)
+async def restore_api_key(
+    api_key_id: UUID,
+    current_user: schemas.User = Depends(get_current_active_user),
+    api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
+) -> dict:
+    """Restore a previously revoked API key."""
+
+    key = await api_keys_repo.get_api_key(api_key_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if key.user_id != current_user.user_id:
+        raise HTTPException(status_code=403, detail="Cannot modify another user's API key")
+
+    await api_keys_repo.restore_api_key(api_key_id)
+    return {"message": f"API key '{key.name}' restored"}
+
+
+@router.delete("/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_api_key(
     api_key_id: UUID,
     current_user: schemas.User = Depends(get_current_active_user),
     api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
 ) -> None:
-    """Revoke an API key (soft delete — sets revoked=True)."""
+    """Permanently delete an API key. Cannot be undone."""
 
     key = await api_keys_repo.get_api_key(api_key_id)
     if not key:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API key not found")
-
-    # Only the key owner can delete it
     if key.user_id != current_user.user_id:
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Cannot delete another user's API key")
 
     await api_keys_repo.delete_api_key(api_key_id)
