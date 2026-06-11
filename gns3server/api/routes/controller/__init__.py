@@ -60,6 +60,7 @@ from . import roles
 from . import acl
 from . import pools
 from . import privileges
+from . import api_keys
 
 from .dependencies.authentication import get_current_active_user
 
@@ -191,4 +192,10 @@ router.include_router(
     prefix="/copilot/projects/{project_id}/chat",
     dependencies=[Depends(get_current_active_user)],
     tags=["GNS3 Copilot"]
+)
+
+router.include_router(
+    api_keys.router,
+    dependencies=[Depends(get_current_active_user)],
+    tags=["API Keys"]
 )

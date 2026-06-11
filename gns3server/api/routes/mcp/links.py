@@ -48,7 +48,7 @@ def get_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
-    links = conn.get_links(project_id=project_id)
+    links = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/links").json()
     return {"links": links, "count": len(links)}
 
 
@@ -58,7 +58,7 @@ def get_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[s
     if not project_id or not link_id:
         return {"error": "project_id and link_id are required"}
     conn = _get_connector(gns3_ctx)
-    return conn.get_link(project_id=project_id, link_id=link_id)
+    return conn.http_call("get", f"{conn.base_url}/projects/{project_id}/links/{link_id}").json()
 
 
 def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +103,64 @@ def update_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}"
     return conn.http_call("put", url, json_data=update_data).json()
+
+
+# ── Link capture / reset handlers ──────────────────────────────────────
+
+
+def reset_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    link_id = params.get("link_id")
+    if not project_id or not link_id:
+        return {"error": "project_id and link_id are required"}
+    conn = _get_connector(gns3_ctx)
+    url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/reset"
+    result = conn.http_call("post", url).json()
+    return {"message": f"Link {link_id} reset", "link": result}
+
+
+def start_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    link_id = params.get("link_id")
+    if not project_id or not link_id:
+        return {"error": "project_id and link_id are required"}
+    conn = _get_connector(gns3_ctx)
+    data = {
+        "data_link_type": params.get("data_link_type", "DLT_EN10MB"),
+        "wireshark": params.get("wireshark", False),
+    }
+    if params.get("capture_file_name"):
+        data["capture_file_name"] = params["capture_file_name"]
+    url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/capture/start"
+    result = conn.http_call("post", url, json_data=data).json()
+    return {"message": f"Capture started on link {link_id}", "link": result}
+
+
+def stop_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    link_id = params.get("link_id")
+    if not project_id or not link_id:
+        return {"error": "project_id and link_id are required"}
+    conn = _get_connector(gns3_ctx)
+    url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/capture/stop"
+    conn.http_call("post", url)
+    return {"message": f"Capture stopped on link {link_id}", "link_id": link_id}
+
+
+def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    link_id = params.get("link_id")
+    if not project_id or not link_id:
+        return {"error": "project_id and link_id are required"}
+    download_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{link_id}/capture/file"
+    auth_token = gns3_ctx['jwt_token']
+    return {
+        "link_id": link_id,
+        "download_url": download_url,
+        "curl_command": f"curl -L -o capture.pcap -H 'Authorization: Bearer {auth_token}' '{download_url}'",
+        "note": "Use the curl command to download the PCAP capture file. "
+                "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
+    }
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────
@@ -192,5 +250,62 @@ LINK_TOOLS = [
             "required": ["project_id", "link_id"],
         },
         "handler": update_link_handler,
+    },
+    {
+        "name": "reset_link",
+        "description": "Reset a link, clearing its state (counters, filters, etc.)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "link_id": {"type": "string", "description": "Link UUID"},
+            },
+            "required": ["project_id", "link_id"],
+        },
+        "handler": reset_link_handler,
+    },
+    {
+        "name": "start_capture",
+        "description": "Start packet capture on a link. The capture file can later be downloaded with download_capture_file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "link_id": {"type": "string", "description": "Link UUID"},
+                "data_link_type": {"type": "string", "description": "Data link type (optional, default: DLT_EN10MB)"},
+                "capture_file_name": {"type": "string", "description": "Capture file name (optional)"},
+                "wireshark": {"type": "boolean", "description": "Open Wireshark automatically (optional, default: false)"},
+            },
+            "required": ["project_id", "link_id"],
+        },
+        "handler": start_capture_handler,
+    },
+    {
+        "name": "stop_capture",
+        "description": "Stop packet capture on a link. After stopping, the capture file can be downloaded.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "link_id": {"type": "string", "description": "Link UUID"},
+            },
+            "required": ["project_id", "link_id"],
+        },
+        "handler": stop_capture_handler,
+    },
+    {
+        "name": "download_capture_file",
+        "description": "Get the download URL and instructions for a PCAP capture file from a link. "
+                       "Use the returned curl command to download the file. "
+                       "The PCAP file can be analyzed with Wireshark or tcpdump.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "link_id": {"type": "string", "description": "Link UUID"},
+            },
+            "required": ["project_id", "link_id"],
+        },
+        "handler": download_capture_file_handler,
     },
 ]

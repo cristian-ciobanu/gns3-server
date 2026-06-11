@@ -25,6 +25,11 @@
 """
 
 Public module for getting device port information from GNS3 topology
+
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+get_device_ports_from_topology() is called by MCP device config handlers.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import logging
@@ -36,6 +41,8 @@ logger = logging.getLogger(__name__)
 def get_device_ports_from_topology(
     device_names: list[str],
     project_id: str | None = None,
+    jwt_token: str | None = None,
+    url: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """
     Get device connection information from GNS3 topology
@@ -43,6 +50,8 @@ def get_device_ports_from_topology(
     Args:
         device_names: List of device names to look up
         project_id: UUID of the specific GNS3 project to retrieve topology from
+        jwt_token: JWT token for authentication (used by MCP handlers).
+        url: GNS3 server URL (used by MCP handlers).
 
     Returns:
         Dictionary mapping device names to their connection data:
@@ -71,7 +80,7 @@ def get_device_ports_from_topology(
 
         # Get topology information
         topo = GNS3TopologyTool()
-        topology = topo._run(project_id=project_id)
+        topology = topo._run(project_id=project_id, jwt_token=jwt_token, url=url)
 
         # Dynamically build hosts_data from topology
         hosts_data: dict[str, dict[str, Any]] = {}

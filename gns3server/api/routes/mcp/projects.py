@@ -46,7 +46,7 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 def list_projects_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    projects = conn.get_projects()
+    projects = conn.http_call("get", f"{conn.base_url}/projects").json()
     return {"projects": projects, "count": len(projects)}
 
 
@@ -55,7 +55,7 @@ def get_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
-    project = conn.get_project(project_id=project_id)
+    project = conn.http_call("get", f"{conn.base_url}/projects/{project_id}").json()
     if project is None:
         return {"error": f"Project '{project_id}' not found"}
     return project
@@ -66,10 +66,7 @@ def create_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
     if not name:
         return {"error": "name is required"}
     conn = _get_connector(gns3_ctx)
-    project_data = {"name": name}
-    if "description" in params:
-        project_data["description"] = params["description"]
-    return conn.create_project(**project_data)
+    return conn.http_call("post", f"{conn.base_url}/projects", json_data={"name": name}).json()
 
 
 def delete_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -77,7 +74,7 @@ def delete_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
-    conn.delete_project(project_id=project_id)
+    conn.http_call("delete", f"{conn.base_url}/projects/{project_id}")
     return {"message": f"Project '{project_id}' deleted", "project_id": project_id}
 
 
@@ -115,7 +112,7 @@ def update_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     kwargs = {k: v for k, v in params.items() if k != "project_id" and v is not None}
-    return conn.update_project(project_id=project_id, **kwargs)
+    return conn.http_call("put", f"{conn.base_url}/projects/{project_id}", json_data=kwargs).json()
 
 
 def duplicate_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -127,7 +124,7 @@ def duplicate_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
         return {"error": "name is required"}
     conn = _get_connector(gns3_ctx)
     kwargs = {k: v for k, v in params.items() if k not in ("project_id",) and v is not None}
-    return conn.duplicate_project(project_id=project_id, **kwargs)
+    return conn.http_call("post", f"{conn.base_url}/projects/{project_id}/duplicate", json_data=kwargs).json()
 
 
 def get_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -136,7 +133,8 @@ def get_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     try:
-        content = conn.get_project_file(project_id=project_id, file_path="README.txt")
+        url = f"{conn.base_url}/projects/{project_id}/files/README.txt"
+        content = conn.http_call("get", url).text
         return {"project_id": project_id, "file": "README.txt", "content": content}
     except Exception as e:
         if "404" in str(e):
@@ -152,8 +150,45 @@ def update_project_readme_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if content is None:
         return {"error": "content is required"}
     conn = _get_connector(gns3_ctx)
-    conn.write_project_file(project_id=project_id, file_path="README.txt", content=content)
+    url = f"{conn.base_url}/projects/{project_id}/files/README.txt"
+    conn.http_call("post", url, data=content, headers={"Content-Type": "text/plain"})
     return {"message": "README.txt updated", "project_id": project_id}
+
+
+def lock_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/lock")
+    return {"message": f"Project {project_id} locked", "project_id": project_id}
+
+
+def unlock_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/unlock")
+    return {"message": f"Project {project_id} unlocked", "project_id": project_id}
+
+
+def load_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    path = params.get("path")
+    if not path:
+        return {"error": "path is required"}
+    conn = _get_connector(gns3_ctx)
+    result = conn.http_call("post", f"{conn.base_url}/projects/load", json_data={"path": path}).json()
+    return {"message": f"Project loaded from {path}", "project": result}
+
+
+def get_locked_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    conn = _get_connector(gns3_ctx)
+    locked = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/locked").json()
+    return {"project_id": project_id, "locked": locked}
 
 
 # ── Tool definitions (consumed by mcp/__init__.py) ─────────────────────────

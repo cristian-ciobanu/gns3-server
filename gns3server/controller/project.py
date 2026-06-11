@@ -1532,21 +1532,23 @@ class Project:
     @open_required
     async def start_all(self):
         """
-        Start all nodes
+        Start all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
         pool = Pool(concurrency=3)
         for node in self.nodes.values():
-            pool.append(node.start)
+            if not node.is_always_running():
+                pool.append(node.start)
         await pool.join()
 
     @open_required
     async def stop_all(self):
         """
-        Stop all nodes
+        Stop all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
         pool = Pool(concurrency=3)
         for node in self.nodes.values():
-            pool.append(node.stop)
+            if not node.is_always_running():
+                pool.append(node.stop)
         await pool.join()
 
     @open_required

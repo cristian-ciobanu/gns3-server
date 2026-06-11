@@ -37,23 +37,27 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 def list_computes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    computes = conn.get_computes()
+    computes = conn.http_call("get", f"{conn.base_url}/computes").json()
     return {"computes": computes, "count": len(computes)}
 
 
 def get_compute_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    compute_id = params.get("compute_id", "local")
+    compute_id = params.get("compute_id")
+    if not compute_id:
+        return {"error": "compute_id is required (use compute_list to get the UUID)"}
     conn = _get_connector(gns3_ctx)
-    return conn.get_compute(compute_id=compute_id)
+    return conn.http_call("get", f"{conn.base_url}/computes/{compute_id}").json()
 
 
 def get_compute_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     emulator = params.get("emulator")
-    compute_id = params.get("compute_id", "local")
+    compute_id = params.get("compute_id")
     if not emulator:
         return {"error": "emulator is required (e.g. qemu, iou, docker)"}
+    if not compute_id:
+        return {"error": "compute_id is required (use compute_list to get the UUID)"}
     conn = _get_connector(gns3_ctx)
-    images = conn.get_compute_images(emulator=emulator, compute_id=compute_id)
+    images = conn.http_call("get", f"{conn.base_url}/computes/{compute_id}/{emulator}/images").json()
     return {"images": images, "count": len(images)}
 
 

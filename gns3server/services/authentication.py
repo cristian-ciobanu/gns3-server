@@ -17,6 +17,7 @@
 from joserfc import jwt
 from joserfc.jwk import OctKey
 from joserfc.errors import JoseError
+import time
 from datetime import datetime, timedelta, timezone
 import bcrypt
 
@@ -79,6 +80,10 @@ class AuthService:
             payload = jwt.decode(token, key, algorithms=[algorithm])
             username: str = payload.claims.get("sub")
             if username is None:
+                raise credentials_exception
+            # Validate the exp claim — joserfc does not validate time-based claims by default
+            token_exp: int = payload.claims.get("exp", 0)
+            if token_exp and time.time() > token_exp:
                 raise credentials_exception
             token_version: int = payload.claims.get("ver", 0)
             token_data = TokenData(username=username, token_version=token_version)

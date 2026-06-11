@@ -45,7 +45,7 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 def list_templates_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    templates = conn.get_templates()
+    templates = conn.http_call("get", f"{conn.base_url}/templates").json()
     return {"templates": templates, "count": len(templates)}
 
 
@@ -57,10 +57,16 @@ def get_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
         return {"error": "template_id or name is required"}
 
     conn = _get_connector(gns3_ctx)
-    template = conn.get_template(name=name, template_id=template_id)
 
-    if template is None:
-        return {"error": "Template not found"}
+    if template_id:
+        template = conn.http_call("get", f"{conn.base_url}/templates/{template_id}").json()
+    else:
+        # Find template by name
+        all_templates = conn.http_call("get", f"{conn.base_url}/templates").json()
+        matches = [t for t in all_templates if t.get("name") == name]
+        if not matches:
+            return {"error": f"Template '{name}' not found"}
+        template = matches[0]
 
     return template
 
@@ -72,14 +78,16 @@ def create_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
         return {"error": "name and template_type are required"}
 
     conn = _get_connector(gns3_ctx)
-
-    # Handle nested kwargs structure from MCP clients
-    if "kwargs" in params and isinstance(params["kwargs"], dict):
-        create_params = params["kwargs"]
-    else:
-        create_params = params
-
-    return conn.create_template(**create_params)
+    data = {
+        "name": name,
+        "template_type": template_type,
+        "compute_id": params.get("compute_id", "local"),
+    }
+    # Pass through optional template-type-specific fields (image, qemu_path, etc.)
+    for key in ("image",):
+        if key in params:
+            data[key] = params[key]
+    return conn.http_call("post", f"{conn.base_url}/templates", json_data=data).json()
 
 
 def update_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -91,13 +99,20 @@ def update_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
 
     conn = _get_connector(gns3_ctx)
 
-    # Extract update parameters - handle nested kwargs structure from MCP clients
-    if "kwargs" in params and isinstance(params["kwargs"], dict):
-        update_params = params["kwargs"]
-    else:
-        update_params = {k: v for k, v in params.items() if k not in ("template_id", "name", "kwargs")}
+    # Resolve name to ID if needed
+    if not template_id and name:
+        all_templates = conn.http_call("get", f"{conn.base_url}/templates").json()
+        matches = [t for t in all_templates if t.get("name") == name]
+        if not matches:
+            return {"error": f"Template '{name}' not found"}
+        template_id = matches[0]["template_id"]
 
-    return conn.update_template(name=name, template_id=template_id, **update_params)
+    update_data = {k: v for k, v in params.items() if k not in ("template_id", "name", "kwargs")}
+    # Support nested kwargs from MCP clients
+    if "kwargs" in params and isinstance(params["kwargs"], dict):
+        update_data = params["kwargs"]
+
+    return conn.http_call("put", f"{conn.base_url}/templates/{template_id}", json_data=update_data).json()
 
 
 def delete_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -108,7 +123,15 @@ def delete_template_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
         return {"error": "template_id or name is required"}
 
     conn = _get_connector(gns3_ctx)
-    conn.delete_template(name=name, template_id=template_id)
+
+    if not template_id and name:
+        all_templates = conn.http_call("get", f"{conn.base_url}/templates").json()
+        matches = [t for t in all_templates if t.get("name") == name]
+        if not matches:
+            return {"error": f"Template '{name}' not found"}
+        template_id = matches[0]["template_id"]
+
+    conn.http_call("delete", f"{conn.base_url}/templates/{template_id}")
     return {"message": f"Template deleted"}
 
 

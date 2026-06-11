@@ -26,6 +26,11 @@
 
 This module provides a tool to execute configuration commands on multiple
  devices in a GNS3 topology using Nornir.
+
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+ExecuteMultipleDeviceConfigCommands._run() is called by the MCP device_config_send handler.
+The jwt_token/url parameters were added for MCP compatibility.
+Modifications must be tested with BOTH gns3-copilot AND MCP.
 """
 
 import json
@@ -169,6 +174,8 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
         self,
         tool_input: str,  # or Union[str, List[Any], Dict[str, Any]]
         run_manager: CallbackManagerForToolRun | None = None,
+        jwt_token: str | None = None,
+        url: str | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -177,6 +184,8 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
         Args:
             tool_input (str): A JSON string containing project_id and device
              configuration commands to execute.
+            jwt_token: JWT token for GNS3 API auth (MCP handlers).
+            url: GNS3 server URL (MCP handlers).
 
         Returns:
             List[Dict[str, Any]]: A list of dicts containing device names and
@@ -214,7 +223,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
         # Prepare device hosts data
         try:
             hosts_data = self._prepare_device_hosts_data(
-                device_configs_list, project_id
+                device_configs_list, project_id, jwt_token=jwt_token, url=url
             )
         except ValueError as e:
             logger.error("Failed to prepare device hosts data: %s", e)
@@ -547,6 +556,8 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
         self,
         device_config_list: list[dict[str, Any]],
         project_id: str | None = None,
+        jwt_token: str | None = None,
+        url: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Prepare device hosts data from topology information."""
         # Extract device names list
@@ -556,7 +567,9 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
         ]
 
         # Get device port information with project_id
-        hosts_data = get_device_ports_from_topology(device_names, project_id)
+        hosts_data = get_device_ports_from_topology(
+            device_names, project_id, jwt_token=jwt_token, url=url
+        )
 
         if not hosts_data:
             error_msg = (
