@@ -16,19 +16,19 @@ The MCP service exposes GNS3 project management operations as MCP tools that can
 
 ## Authentication
 
-The SSE endpoint requires a valid GNS3 JWT token. It supports two ways to pass the token:
+The SSE endpoint supports two types of credentials, passed the same way.
 
-1. **Authorization header** (recommended for Claude Code):
+1. **Authorization header** (recommended):
    ```
-   Authorization: Bearer <jwt>
-   ```
-
-2. **Query parameter** (required for Claude Desktop, since EventSource does not support custom headers):
-   ```
-   GET /v3/mcp/transport/sse?token=<jwt>
+   Authorization: Bearer <jwt_or_api_key>
    ```
 
-### Getting a Token
+2. **Query parameter** (for clients that don't support custom headers):
+   ```
+   GET /v3/mcp/transport/sse?token=<jwt_or_api_key>
+   ```
+
+### Option 1: JWT Token (24h expiry)
 
 ```bash
 curl -X POST http://localhost:3080/v3/access/users/authenticate \
@@ -36,85 +36,201 @@ curl -X POST http://localhost:3080/v3/access/users/authenticate \
   -d '{"username": "admin", "password": "admin"}'
 ```
 
-### Token Expiry
-
-Default JWT token lifetime is **1440 minutes (24 hours)**. This can be configured in `gns3_server.conf`:
-
+Default lifetime is **1440 minutes (24 hours)**. Configurable in `gns3_server.conf`:
 ```ini
 jwt_access_token_expire_minutes = 1440  ; 24 hours
 ```
 
+### Option 2: API Key (permanent, revocable) — Recommended for MCP
+
+API keys never expire and can be revoked individually. Create one via the REST API:
+
+```bash
+# Create an API key (requires a JWT to authenticate)
+curl -X POST http://localhost:3080/v3/access/api-keys \
+  -H "Authorization: Bearer <your_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "MCP Production"}'
+# Response: {"api_key": "gns3_a1b2c3d4...", "api_key_id": "...", ...}
+# ⚠️ The key is only shown once — save it immediately.
+```
+
+API key management endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v3/access/api-keys` | Create a new key (returns plaintext once) |
+| `GET /v3/access/api-keys` | List all your keys |
+| `POST /v3/access/api-keys/{id}/revoke` | Revoke a key (can be restored) |
+| `POST /v3/access/api-keys/{id}/restore` | Restore a revoked key |
+| `DELETE /v3/access/api-keys/{id}` | Permanently delete a key |
+
+Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably.
+
 ## Available Tools
 
-**30 tools** across 5 categories:
+**82 tools** across 12 categories:
 
-### Project (7)
+### Project (15)
 
-| Tool | Description | Required Parameters |
-|------|-------------|-------------------|
-| `list_projects` | List all projects | none |
-| `get_project` | Get project details | `project_id` |
-| `create_project` | Create a project | `name` |
-| `delete_project` | Delete a project | `project_id` |
-| `open_project` | Open a project | `project_id` |
-| `close_project` | Close a project | `project_id` |
-| `get_project_stats` | Get project statistics | `project_id` |
+| Tool | Description |
+|------|-------------|
+| `project_list` | List all projects |
+| `project_get` | Get project details |
+| `project_create` | Create a project |
+| `project_delete` | Delete a project |
+| `project_open` | Open a closed project |
+| `project_close` | Close an open project |
+| `project_stats` | Get project statistics |
+| `project_update` | Update project properties |
+| `project_duplicate` | Duplicate a project |
+| `project_readme_get` | Get project README content |
+| `project_readme_update` | Update project README |
+| `project_lock` | Lock project (prevent edits) |
+| `project_unlock` | Unlock project |
+| `project_load` | Load project from path |
+| `project_locked` | Check if project is locked |
 
-### Node (10)
+### Node (22)
 
-| Tool | Description | Required Parameters |
-|------|-------------|-------------------|
-| `get_nodes` | List all nodes in a project | `project_id` |
-| `get_node` | Get node details | `project_id`, `node_id` |
-| `start_node` | Start a node | `project_id`, `node_id` |
-| `stop_node` | Stop a node | `project_id`, `node_id` |
-| `reload_node` | Reload a node | `project_id`, `node_id` |
-| `suspend_node` | Suspend a node | `project_id`, `node_id` |
-| `create_node` | Create a node from template | `project_id`, `template_id` |
-| `delete_node` | Delete a node | `project_id`, `node_id` |
-| `update_node` | Update node properties | `project_id`, `node_id` |
-| `get_node_console_info` | Get WebSocket console URL | `project_id`, `node_id` |
+| Tool | Description |
+|------|-------------|
+| `node_list` | List all nodes in a project |
+| `node_get` | Get node details |
+| `node_create` | Create a node from template |
+| `node_delete` | Delete a node |
+| `node_update` | Update node properties |
+| `node_start` | Start a node |
+| `node_stop` | Stop a node |
+| `node_reload` | Reload a node |
+| `node_suspend` | Suspend a node |
+| `node_console` | Get WebSocket console URL |
+| `node_file_list` | List files in node directory |
+| `node_file_get` | Read a file (with offset/limit) |
+| `node_file_write` | Write a file |
+| `node_file_delete` | Delete a file |
+| `node_start_all` | Start all nodes |
+| `node_stop_all` | Stop all nodes |
+| `node_suspend_all` | Suspend all nodes |
+| `node_reload_all` | Reload all nodes |
+| `node_duplicate` | Duplicate a node |
+| `node_isolate` | Isolate a node (suspend links) |
+| `node_unisolate` | Un-isolate a node (resume links) |
+| `node_links` | List links connected to a node |
 
-### Link (5)
+### Link (9)
 
-| Tool | Description | Required Parameters |
-|------|-------------|-------------------|
-| `get_links` | List all links in a project | `project_id` |
-| `get_link` | Get link details | `project_id`, `link_id` |
-| `create_link` | Create a link between nodes | `project_id`, `nodes` |
-| `delete_link` | Delete a link | `project_id`, `link_id` |
-| `update_link` | Update link properties | `project_id`, `link_id` |
+| Tool | Description |
+|------|-------------|
+| `link_list` | List all links in a project |
+| `link_get` | Get link details |
+| `link_create` | Create a link between nodes |
+| `link_delete` | Delete a link |
+| `link_update` | Update link (suspend, filters) |
+| `link_reset` | Reset link (delete + recreate) |
+| `link_capture_start` | Start packet capture |
+| `link_capture_stop` | Stop packet capture |
+| `link_capture_download` | Get PCAP download URL |
 
 ### Template (5)
 
-| Tool | Description | Required Parameters |
-|------|-------------|-------------------|
-| `list_templates` | List all templates | none |
-| `get_template` | Get template details | `template_id` or `name` |
-| `create_template` | Create a template | `name`, `template_type` |
-| `update_template` | Update a template | `template_id` or `name` |
-| `delete_template` | Delete a template | `template_id` or `name` |
+| Tool | Description |
+|------|-------------|
+| `template_list` | List all templates |
+| `template_get` | Get template details |
+| `template_create` | Create a template (Docker needs `image`) |
+| `template_update` | Update a template |
+| `template_delete` | Delete a template |
 
 ### Compute (3)
 
-| Tool | Description | Required Parameters |
-|------|-------------|-------------------|
-| `list_computes` | List all compute nodes | none |
-| `get_compute` | Get compute details | `compute_id` |
-| `get_compute_images` | List available images | `emulator` |
+| Tool | Description |
+|------|-------------|
+| `compute_list` | List registered remote computes |
+| `compute_get` | Get compute details (requires UUID) |
+| `compute_images` | List emulator images on a compute |
+
+### Snapshot (4)
+
+| Tool | Description |
+|------|-------------|
+| `snapshot_list` | List snapshots |
+| `snapshot_create` | Create a snapshot |
+| `snapshot_delete` | Delete a snapshot |
+| `snapshot_restore` | Restore a snapshot |
+
+### Drawing (5)
+
+| Tool | Description |
+|------|-------------|
+| `drawing_list` | List drawings on canvas |
+| `drawing_get` | Get drawing details |
+| `drawing_create` | Create drawing (SVG label/shape/image) |
+| `drawing_update` | Update drawing (position, rotation, SVG) |
+| `drawing_delete` | Delete a drawing |
+
+### Symbol (6)
+
+| Tool | Description |
+|------|-------------|
+| `symbol_list` | List all symbols |
+| `symbol_get` | Get symbol download URL |
+| `symbol_dimensions` | Get symbol dimensions |
+| `symbol_defaults` | Get default symbol mapping |
+| `symbol_upload` | Upload a custom symbol (SVG content) |
+| `symbol_delete` | Delete a custom symbol (built-in: 403) |
+
+### Appliance (3)
+
+| Tool | Description |
+|------|-------------|
+| `appliance_list` | List appliances from template library |
+| `appliance_get` | Get appliance details |
+| `appliance_install` | Create template from appliance (images must exist locally) |
+
+### Image (5)
+
+| Tool | Description |
+|------|-------------|
+| `image_list` | List all images |
+| `image_get` | Get image details |
+| `image_delete` | Delete an image |
+| `image_prune` | Remove images not referenced by any template |
+| `image_install` | Auto-create templates from uploaded images by checksum |
+
+### Server (2)
+
+| Tool | Description |
+|------|-------------|
+| `server_version` | Get GNS3 server version |
+| `server_statistics` | Get server statistics (computes, projects, nodes) |
+
+### Device Config (3)
+
+| Tool | Description |
+|------|-------------|
+| `device_config_send` | Push config commands to devices via console (Nornir + Netmiko) |
+| `device_command_run` | Run read-only show commands on devices |
+| `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
+
+Requires nodes to be started first. Device type is auto-detected from the node's `device_type:<type>` tag.
 
 ## Configuration
 
 ### Claude Code (CLI)
 
 ```bash
-# Get a JWT token
+# Option A: Using API key (recommended — never expires)
+claude mcp add --transport sse My_GNS3_Server \
+  http://localhost:3080/v3/mcp/transport/sse \
+  -H "Authorization: Bearer gns3_a1b2c3d4..."
+
+# Option B: Using JWT token (expires after 24h)
 TOKEN=$(curl -s -X POST http://localhost:3080/v3/access/users/authenticate \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "admin"}' | python3 -c \
   "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# Add MCP server
 claude mcp add --transport sse My_GNS3_Server \
   http://localhost:3080/v3/mcp/transport/sse \
   -H "Authorization: Bearer $TOKEN"
@@ -128,7 +244,7 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "My_GNS3_Server": {
-      "url": "http://localhost:3080/v3/mcp/transport/sse?token=your_jwt_token"
+      "url": "http://localhost:3080/v3/mcp/transport/sse?token=your_jwt_or_api_key"
     }
   }
 }
