@@ -1137,7 +1137,13 @@ async def appliance_get(
 async def appliance_install(
     appliance_id: Annotated[str, Field(description="UUID of the appliance to install")],
 ) -> list[dict[str, Any]]:
-    """Install (download and set up) an appliance from the template library."""
+    """Create a template from a GNS3 appliance definition.
+
+    NOTE: This does NOT download images. Images must be placed in the
+    GNS3 images directory (e.g. ~/GNS3/images/) beforehand.
+    The appliance definition is read from local .gns3a files bundled with the server.
+    Use get_appliance first to see what images are required.
+    """
     return await asyncio.to_thread(_run_handler_sync, install_appliance_handler, {
         "appliance_id": appliance_id,
     })
