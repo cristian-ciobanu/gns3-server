@@ -405,16 +405,23 @@ class VPCSCommands(BaseTool):
         """
         Create a mapping of device names to their command lists.
 
+        Merges commands when the same device appears multiple times.
+
         Args:
             device_config_list: List of device configurations
 
         Returns:
             Dictionary mapping device names to command lists
         """
-        return {
-            config["device_name"]: config["commands"]
-            for config in device_config_list
-        }
+        cmd_map: dict[str, list[str]] = {}
+        for config in device_config_list:
+            name = config["device_name"]
+            cmds = config.get("commands", [])
+            if name in cmd_map:
+                cmd_map[name].extend(cmds)
+            else:
+                cmd_map[name] = list(cmds)
+        return cmd_map
 
     def _prepare_device_hosts_data(
         self,
