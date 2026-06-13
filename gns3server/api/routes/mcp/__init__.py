@@ -1309,9 +1309,10 @@ async def device_config_send(
     Device type is auto-detected from the 'device_type:<type>' tag on each node.
     Common device types: cisco_ios_telnet, cisco_xr_telnet, huawei_telnet, gns3_huawei_telnet_ce
     """
-    return await asyncio.to_thread(_run_handler_sync, device_config_send_handler, {
-        "project_id": project_id, "device_configs": device_configs,
-    })
+    params = {"project_id": project_id, "device_configs": device_configs}
+    if template is not None:
+        params["template"] = template
+    return await asyncio.to_thread(_run_handler_sync, device_config_send_handler, params)
 
 
 @mcp.tool()
@@ -1331,9 +1332,10 @@ async def device_command_run(
     Use this to inspect device status, view configurations, or verify changes.
     Devices must be started first.
     """
-    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, {
-        "project_id": project_id, "device_configs": device_configs,
-    })
+    params = {"project_id": project_id, "device_configs": device_configs}
+    if template is not None:
+        params["template"] = template
+    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, params)
 
 
 @mcp.tool()
