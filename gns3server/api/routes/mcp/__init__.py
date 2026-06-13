@@ -1171,9 +1171,11 @@ async def symbol_delete(
 
 
 @mcp.tool()
-async def appliance_list() -> list[dict[str, Any]]:
-    """List all available appliances (template library)."""
-    return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {})
+async def appliance_list(
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"name\",\"category\"]. Available: name, category, description, vendor_name, product_name, status, availability, images, versions, tags, symbol, usage, builtin")] = None,
+) -> list[dict[str, Any]]:
+    """List all available appliances (template library). Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {"fields": fields} if fields else {})
 
 
 @mcp.tool()

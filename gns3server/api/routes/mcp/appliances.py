@@ -40,9 +40,30 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
+VALID_APPLIANCE_FIELDS = {
+    "appliance_id", "name", "category", "description", "vendor_name",
+    "vendor_url", "product_name", "product_url", "documentation_url",
+    "status", "availability", "maintainer", "usage", "symbol",
+    "images", "versions", "tags", "builtin",
+    "first_port_name", "port_name_format", "port_segment_size",
+    "linked_clone", "docker", "iou", "dynamips", "qemu",
+}
+
+
 def get_appliances_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
     appliances = conn.http_call("get", f"{conn.base_url}/appliances").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list, e.g. [\"name\", \"category\"]"}
+        invalid = [f for f in fields if f not in VALID_APPLIANCE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_APPLIANCE_FIELDS),
+            }
+        appliances = [{k: a[k] for k in fields if k in a} for a in appliances]
     return {"appliances": appliances, "count": len(appliances)}
 
 
