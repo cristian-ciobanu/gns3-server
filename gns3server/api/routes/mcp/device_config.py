@@ -33,7 +33,35 @@ import json
 import logging
 from typing import Any
 
+from jinja2 import Template as JinjaTemplate, TemplateError as JinjaError
+
 log = logging.getLogger(__name__)
+
+
+def _render_template(template: str, device_configs: list[dict]) -> list[dict]:
+    """Render a Jinja2 template for each device's vars into config_commands.
+
+    Each device in device_configs can have:
+      - "vars": dict of template variables (rendered into config_commands)
+      - "config_commands": merged after rendering if already present
+    """
+    jinja = JinjaTemplate(template)
+    results = []
+    for dev in device_configs:
+        rendered = dev.copy()
+        vars_data = rendered.pop("vars", {})
+        if vars_data:
+            try:
+                output = jinja.render(**vars_data)
+                lines = [l for l in output.splitlines() if l.strip()]
+                existing = rendered.get("config_commands", [])
+                rendered["config_commands"] = existing + lines
+            except JinjaError as e:
+                error_msg = f"Template rendering failed for '{dev.get('device_name')}': {e}"
+                log.error(error_msg)
+                return [{"error": error_msg}]
+        results.append(rendered)
+    return results
 
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
@@ -42,8 +70,14 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     """Send configuration commands to network devices via console."""
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")
+    template = params.get("template")
     if not project_id or not device_configs:
         return [{"error": "project_id and device_configs are required"}]
+
+    if template:
+        device_configs = _render_template(template, device_configs)
+        if len(device_configs) == 1 and "error" in device_configs[0]:
+            return device_configs
 
     from gns3server.agent.gns3_copilot.tools_v2.config_tools_nornir import ExecuteMultipleDeviceConfigCommands
 

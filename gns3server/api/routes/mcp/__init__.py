@@ -1296,8 +1296,14 @@ async def device_config_send(
     device_configs: Annotated[list, Field(
         description="List of device configs. Each entry: {\"device_name\": \"R1\", \"config_commands\": [\"int lo0\", \"ip add 1.1.1.1 255.255.255.255\"]}"
     )],
+    template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars in each device to reduce token usage for batch config. Example: \"interface lo{{ n }}\\nip address {{ ip }} 255.255.255.255\"")] = None,
 ) -> list[dict[str, Any]]:
     """Send configuration commands to network devices via console (telnet/SSH).
+
+    Two modes:
+      1. Direct commands: each device has config_commands=[...]
+      2. Jinja2 template: provide template + vars per device — template is rendered for each
+         Example: device_configs=[{\"device_name\": \"R1\", \"vars\": {\"n\": 0, \"ip\": \"1.1.1.1\"}}]
 
     Devices must be started first (use node_start or node_start_all).
     Device type is auto-detected from the 'device_type:<type>' tag on each node.
