@@ -97,8 +97,14 @@ def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     """Run read-only diagnostic (show) commands on network devices."""
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")
+    template = params.get("template")
     if not project_id or not device_configs:
         return [{"error": "project_id and device_configs (list of {device_name, show_commands}) are required"}]
+
+    if template:
+        device_configs = _render_template(template, device_configs)
+        if len(device_configs) == 1 and "error" in device_configs[0]:
+            return device_configs
 
     from gns3server.agent.gns3_copilot.tools_v2.display_tools_nornir import ExecuteMultipleDeviceCommands
 

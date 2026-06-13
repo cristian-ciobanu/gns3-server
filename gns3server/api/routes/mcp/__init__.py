@@ -1320,8 +1320,13 @@ async def device_command_run(
     device_configs: Annotated[list, Field(
         description="List of device commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
     )],
+    template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars per device. Example: \"show ip route {{ protocol }}\"")] = None,
 ) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices via console.
+
+    Two modes:
+      1. Direct commands: each device has show_commands=[...]
+      2. Jinja2 template: provide template + vars per device
 
     Use this to inspect device status, view configurations, or verify changes.
     Devices must be started first.
