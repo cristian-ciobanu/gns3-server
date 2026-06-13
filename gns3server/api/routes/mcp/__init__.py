@@ -418,34 +418,58 @@ async def node_get(
 @mcp.tool()
 async def node_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to start")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — start multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Start a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Start one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, start_node_handler, params)
 
 @mcp.tool()
 async def node_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to stop")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — stop multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Stop a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Stop one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, params)
 
 @mcp.tool()
 async def node_reload(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to reload")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reload multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Reload (restart) a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Reload (restart) one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, params)
 
 @mcp.tool()
 async def node_suspend(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to suspend")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — suspend multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Suspend a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Suspend one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, params)
 
 
 @mcp.tool()
