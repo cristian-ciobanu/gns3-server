@@ -38,12 +38,15 @@ from jinja2 import Template as JinjaTemplate, TemplateError as JinjaError
 log = logging.getLogger(__name__)
 
 
-def _render_template(template: str, device_configs: list[dict]) -> list[dict]:
-    """Render a Jinja2 template for each device's vars into config_commands.
+def _render_template(template: str, device_configs: list[dict], commands_field: str = "config_commands") -> list[dict]:
+    """Render a Jinja2 template for each device's vars into the specified commands field.
 
     Each device in device_configs can have:
-      - "vars": dict of template variables (rendered into config_commands)
-      - "config_commands": merged after rendering if already present
+      - "vars": dict of template variables (rendered into commands_field)
+      - commands_field: existing commands merged after rendering if present
+
+    Args:
+        commands_field: field name for the rendered commands, e.g. "config_commands", "commands"
     """
     jinja = JinjaTemplate(template)
     results = []
@@ -54,8 +57,8 @@ def _render_template(template: str, device_configs: list[dict]) -> list[dict]:
             try:
                 output = jinja.render(**vars_data)
                 lines = [l for l in output.splitlines() if l.strip()]
-                existing = rendered.get("config_commands", [])
-                rendered["config_commands"] = existing + lines
+                existing = rendered.get(commands_field, [])
+                rendered[commands_field] = existing + lines
             except JinjaError as e:
                 error_msg = f"Template rendering failed for '{dev.get('device_name')}': {e}"
                 log.error(error_msg)
@@ -75,7 +78,7 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
         return [{"error": "project_id and device_configs are required"}]
 
     if template:
-        device_configs = _render_template(template, device_configs)
+        device_configs = _render_template(template, device_configs, commands_field="config_commands")
         if len(device_configs) == 1 and "error" in device_configs[0]:
             return device_configs
 
@@ -102,7 +105,7 @@ def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
         return [{"error": "project_id and device_configs (list of {device_name, show_commands}) are required"}]
 
     if template:
-        device_configs = _render_template(template, device_configs)
+        device_configs = _render_template(template, device_configs, commands_field="commands")
         if len(device_configs) == 1 and "error" in device_configs[0]:
             return device_configs
 
