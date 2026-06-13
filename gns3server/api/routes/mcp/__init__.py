@@ -297,8 +297,8 @@ async def project_get(
 async def project_create(
     name: Annotated[str, Field(description="Project name")],
 ) -> list[dict[str, Any]]:
-    """Create a new GNS3 project."""
-    params = {"name": name}
+    """Create a new GNS3 project. auto_close is set to False so the project stays open when clients disconnect."""
+    params = {"name": name, "auto_close": False}
     return await asyncio.to_thread(_run_handler_sync, create_project_handler, params)
 
 
