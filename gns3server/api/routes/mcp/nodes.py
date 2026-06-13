@@ -61,13 +61,41 @@ def get_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
     return {"nodes": nodes, "count": len(nodes)}
 
 
+VALID_NODE_FIELDS = {
+    # NodeBase
+    "compute_id", "name", "node_type", "node_id",
+    "console", "console_type", "console_auto_start",
+    "aux", "aux_type", "properties", "label", "symbol",
+    "x", "y", "z", "locked",
+    "port_name_format", "port_segment_size", "first_port_name",
+    "custom_adapters", "tags",
+    # Node
+    "template_id", "project_id", "node_directory", "status",
+    "command_line", "width", "height", "ports", "console_host",
+}
+
+
 def get_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     node_id = params.get("node_id")
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    return conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
+    node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
+
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list of field names, e.g. [\"name\", \"status\"]"}
+        invalid = [f for f in fields if f not in VALID_NODE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_NODE_FIELDS),
+            }
+        return {k: node[k] for k in fields if k in node}
+
+    return node
 
 
 def start_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:

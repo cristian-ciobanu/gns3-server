@@ -405,9 +405,12 @@ async def node_list(project_id: str) -> list[dict[str, Any]]:
 async def node_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"name\",\"status\"]. Available: name, status, node_type, console, console_type, console_host, node_id, project_id, compute_id, symbol, x, y, z, locked, ports, properties, command_line, node_directory, label, tags, template_id, width, height, aux, aux_type")] = None,
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a specific node."""
-    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Get detailed information about a specific node. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {
+        "project_id": project_id, "node_id": node_id, "fields": fields,
+    })
 
 @mcp.tool()
 async def node_start(
