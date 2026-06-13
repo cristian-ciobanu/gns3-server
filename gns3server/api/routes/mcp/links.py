@@ -23,10 +23,13 @@ via Gns3Connector (from custom_gns3fy).
 """
 
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
 log = logging.getLogger(__name__)
+
+BATCH_MAX_WORKERS = 10
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────
@@ -63,9 +66,42 @@ def get_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[s
 
 def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+
+    links = params.get("links")
+    # Batch mode: links=[{nodes, link_type?, filters?, suspend?}]
+    if links is not None:
+        if not isinstance(links, list) or not links:
+            return {"error": "links must be a non-empty array"}
+        results = []
+        conn = _get_connector(gns3_ctx)
+        def _create_one(link_data):
+            if not link_data.get("nodes"):
+                return {"status": "error", "error": "nodes is required for each link"}
+            try:
+                body = {"nodes": link_data["nodes"]}
+                if link_data.get("link_type"):
+                    body["link_type"] = link_data["link_type"]
+                if link_data.get("filters"):
+                    body["filters"] = link_data["filters"]
+                if link_data.get("suspend"):
+                    body["suspend"] = link_data["suspend"]
+                url = f"{conn.base_url}/projects/{project_id}/links"
+                resp = conn.http_call("post", url, json_data=body).json()
+                return {"status": "success", "link": resp}
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(links), BATCH_MAX_WORKERS)) as pool:
+            futures = {pool.submit(_create_one, l): l for l in links}
+            for future in as_completed(futures):
+                results.append(future.result())
+        return results
+
+    # Single mode
     nodes = params.get("nodes")
-    if not project_id or not nodes:
-        return {"error": "project_id and nodes are required"}
+    if not nodes:
+        return {"error": "nodes is required"}
     conn = _get_connector(gns3_ctx)
     data = {"nodes": nodes}
     if "link_type" in params:

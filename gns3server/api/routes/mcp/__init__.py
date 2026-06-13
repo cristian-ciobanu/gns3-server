@@ -445,12 +445,21 @@ async def node_suspend(
 @mcp.tool()
 async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    template_id: Annotated[str, Field(description="UUID of the template to create the node from")],
-    x: Annotated[int, Field(description="X coordinate on the project canvas")] = 0,
-    y: Annotated[int, Field(description="Y coordinate on the project canvas")] = 0,
+    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode)")] = None,
+    x: Annotated[int, Field(description="X coordinate")] = 0,
+    y: Annotated[int, Field(description="Y coordinate")] = 0,
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+    nodes: Annotated[list | None, Field(description="Batch mode: [{template_id, x?, y?, name?, compute_id?}] — creates multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a new node from a template in a project."""
+    """Create one or more nodes from templates.
+
+    Single mode: provide template_id, x, y (optional compute_id)
+    Batch mode:  provide nodes=[{template_id, x, y, name?, compute_id?}] — creates up to 10 in parallel
+    """
+    if nodes is not None:
+        return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
+            "project_id": project_id, "nodes": nodes,
+        })
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
         "x": x, "y": y, "compute_id": compute_id,
@@ -527,21 +536,20 @@ async def link_get(
 @mcp.tool()
 async def link_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
+    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}]")] = None,
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
-    filters: Annotated[dict, Field(description="Optional packet filters (must use array format): frequency_drop: [N], packet_loss: [rate], delay: [ms, jitter], corrupt: [rate], bpf: [expression]")] = None,
+    filters: Annotated[dict | None, Field(description="Optional packet filters")] = None,
+    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — creates multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a link between two nodes in a project.
+    """Create one or more links between nodes.
 
-    Filters must use array format:
-    - frequency_drop: [N] - Drop every Nth packet (N: -1 to 32767)
-    - packet_loss: [rate] - Packet loss percentage (rate: 0 to 100)
-    - delay: [ms, jitter] - Latency and jitter in milliseconds
-    - corrupt: [rate] - Packet corruption percentage (rate: 0 to 100)
-    - bpf: [expression] - Berkeley Packet Filter expression
-
-    Example: {"filters": {"delay": [100, 10], "packet_loss": [5]}}
+    Single mode: provide nodes, link_type (optional filters)
+    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 10 in parallel
     """
+    if links:
+        return await asyncio.to_thread(_run_handler_sync, create_link_handler, {
+            "project_id": project_id, "links": links,
+        })
     params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
     if filters:
         params["filters"] = filters

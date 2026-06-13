@@ -23,10 +23,13 @@ via Gns3Connector (from custom_gns3fy).
 """
 
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
 log = logging.getLogger(__name__)
+
+BATCH_MAX_WORKERS = 10
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
@@ -109,9 +112,41 @@ def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+
+    nodes = params.get("nodes")
+    # Batch mode: nodes=[{template_id, x, y, name?, compute_id?}]
+    if nodes is not None:
+        if not isinstance(nodes, list) or not nodes:
+            return {"error": "nodes must be a non-empty array"}
+        results = []
+        conn = _get_connector(gns3_ctx)
+        def _create_one(node_data):
+            tid = node_data.get("template_id")
+            if not tid:
+                return {"template_id": tid, "status": "error", "error": "template_id is required"}
+            try:
+                url = f"{conn.base_url}/projects/{project_id}/templates/{tid}"
+                body = {
+                    "x": node_data.get("x", 0),
+                    "y": node_data.get("y", 0),
+                    "compute_id": node_data.get("compute_id", "local"),
+                }
+                resp = conn.http_call("post", url, json_data=body).json()
+                return {"template_id": tid, "status": "success", "node": resp}
+            except Exception as e:
+                return {"template_id": tid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
+            futures = {pool.submit(_create_one, n): n for n in nodes}
+            for future in as_completed(futures):
+                results.append(future.result())
+        return results
+
+    # Single mode
     template_id = params.get("template_id")
-    if not project_id or not template_id:
-        return {"error": "project_id and template_id are required"}
+    if not template_id:
+        return {"error": "template_id is required"}
     conn = _get_connector(gns3_ctx)
     data = {
         "x": params.get("x", 0),
