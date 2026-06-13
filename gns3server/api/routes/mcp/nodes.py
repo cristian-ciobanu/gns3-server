@@ -58,6 +58,17 @@ def get_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     nodes = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list of field names, e.g. [\"name\", \"status\"]"}
+        invalid = [f for f in fields if f not in VALID_NODE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_NODE_FIELDS),
+            }
+        nodes = [{k: n[k] for k in fields if k in n} for n in nodes]
     return {"nodes": nodes, "count": len(nodes)}
 
 

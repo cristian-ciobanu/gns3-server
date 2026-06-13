@@ -396,9 +396,12 @@ async def project_readme_update(
 # ── Node tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def node_list(project_id: str) -> list[dict[str, Any]]:
-    """List all nodes in a project."""
-    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
+async def node_list(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields per node. e.g. [\"name\",\"status\"]. Available: name, status, node_type, console, console_type, console_host, node_id, project_id, compute_id, symbol, x, y, z, locked, ports, properties, command_line, node_directory, label, tags, template_id, width, height, aux, aux_type")] = None,
+) -> list[dict[str, Any]]:
+    """List all nodes in a project. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id, "fields": fields})
 
 
 @mcp.tool()
