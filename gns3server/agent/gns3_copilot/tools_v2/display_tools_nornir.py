@@ -486,18 +486,12 @@ class ExecuteMultipleDeviceCommands(BaseTool):
     def _configs_map(
         self, device_config_list: list[dict[str, Any]]
     ) -> dict[str, list[str]]:
-        """Create a mapping of device names to their diagnostic commands.
-
-        Merges commands when the same device appears multiple times in the list.
-        """
-        device_diagnostic_map: dict[str, list[str]] = {}
+        """Create a mapping of device names to their diagnostic commands."""
+        device_diagnostic_map = {}
         for device_config in device_config_list:
             device_name = device_config["device_name"]
-            commands = device_config.get("commands", [])
-            if device_name in device_diagnostic_map:
-                device_diagnostic_map[device_name].extend(commands)
-            else:
-                device_diagnostic_map[device_name] = list(commands)
+            diagnostic_commands = device_config["commands"]
+            device_diagnostic_map[device_name] = diagnostic_commands
 
         return device_diagnostic_map
 

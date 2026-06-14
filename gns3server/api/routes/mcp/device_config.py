@@ -41,6 +41,9 @@ log = logging.getLogger(__name__)
 def _render_template(template: str, device_configs: list[dict], commands_field: str = "config_commands") -> list[dict]:
     """Render a Jinja2 template for each device's vars into the specified commands field.
 
+    Entries with the same device_name are merged into a single entry
+    so they share one Nornir session and avoid output fragmentation.
+
     Each device in device_configs can have:
       - "vars": dict of template variables (rendered into commands_field)
       - commands_field: existing commands merged after rendering if present
@@ -49,22 +52,25 @@ def _render_template(template: str, device_configs: list[dict], commands_field: 
         commands_field: field name for the rendered commands, e.g. "config_commands", "commands"
     """
     jinja = JinjaTemplate(template)
-    results = []
+    merged: dict[str, dict] = {}
     for dev in device_configs:
-        rendered = dev.copy()
-        vars_data = rendered.pop("vars", {})
+        name = dev.get("device_name")
+        if not name:
+            continue
+        vars_data = dev.get("vars", {})
+        if name not in merged:
+            merged[name] = {"device_name": name, commands_field: list(dev.get(commands_field, []))}
+        entry = merged[name]
         if vars_data:
             try:
                 output = jinja.render(**vars_data)
                 lines = [l for l in output.splitlines() if l.strip()]
-                existing = rendered.get(commands_field, [])
-                rendered[commands_field] = existing + lines
+                entry[commands_field].extend(lines)
             except JinjaError as e:
-                error_msg = f"Template rendering failed for '{dev.get('device_name')}': {e}"
+                error_msg = f"Template rendering failed for '{name}': {e}"
                 log.error(error_msg)
                 return [{"error": error_msg}]
-        results.append(rendered)
-    return results
+    return list(merged.values())
 
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
