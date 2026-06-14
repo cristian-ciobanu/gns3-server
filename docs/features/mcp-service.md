@@ -122,12 +122,12 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `link_list` | List all links in a project |
+| `link_list` | List all links (`fields` to filter columns) |
 | `link_get` | Get link details |
 | `link_create` | Create link(s) — single via `nodes` or batch via `links` array |
-| `link_delete` | Delete a link |
+| `link_delete` | Delete link(s) — `link_id` or `link_ids` array |
 | `link_update` | Update link (suspend, filters) |
-| `link_reset` | Reset link (tear down UDP, preserves filters) |
+| `link_reset` | Reset link(s) — `link_id` or `link_ids` array |
 | `link_capture_start` | Start capture(s) — `link_id` or `link_ids` array |
 | `link_capture_stop` | Stop capture(s) — `link_id` or `link_ids` array |
 | `link_capture_download` | Get PCAP download URL(s) — `link_id` or `link_ids` array |
