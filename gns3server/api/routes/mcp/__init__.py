@@ -952,12 +952,16 @@ async def link_capture_stop(
 @mcp.tool()
 async def link_capture_download(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — get download URLs for multiple captures")] = None,
 ) -> list[dict[str, Any]]:
-    """Get the download URL and instructions for a PCAP capture file. The URL includes a short-lived JWT (10 min). Use curl to download."""
-    return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    """Get download URL(s) for PCAP capture file(s). The URL includes a short-lived JWT (10 min). Use curl to download."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, params)
 
 
 # ── Snapshot tools ─────────────────────────────────────────────────────
