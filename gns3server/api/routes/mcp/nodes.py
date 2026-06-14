@@ -27,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
+from gns3server.services import auth_service
+
 log = logging.getLogger(__name__)
 
 BATCH_MAX_WORKERS = 10
@@ -276,7 +278,12 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
     console_type = node.get("console_type", "unknown")
-    ws_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={gns3_ctx['jwt_token']}"
+    # Short-lived JWT for the WebSocket URL (10 min)
+    username = gns3_ctx.get("jwt_username")
+    ws_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    ws_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
+    if ws_token:
+        ws_url += f"?token={ws_token}"
 
     result = {
         "node_id": node_id,

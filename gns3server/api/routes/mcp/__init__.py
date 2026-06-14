@@ -53,6 +53,7 @@ import gns3server.db.models as models
 from gns3server.services import auth_service
 from gns3server.utils.request_utils import extract_client_info
 from gns3server.db.repositories.api_keys import ApiKeysRepository
+from gns3server.db.repositories.users import UsersRepository
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -187,6 +188,11 @@ async def wait_for_mcp_ready() -> bool:
 _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "mcp_jwt_token", default=None
 )
+# Username extracted during token validation — used by handlers to generate
+# short-lived JWTs for download/console URLs without exposing the raw key.
+_jwt_username_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mcp_jwt_username", default=None
+)
 
 
 # ── Token validation ──────────────────────────────────────────────────
@@ -201,12 +207,13 @@ async def _resolve_token(token: str) -> str | None:
     """
     # Try JWT first
     try:
-        auth_service.get_username_from_token(token)
+        username = auth_service.get_username_from_token(token)
+        _jwt_username_var.set(username)
         return token
     except Exception:
         pass
 
-    # Try API key — pass through directly; REST API auth already supports gns3_ keys
+    # Try API key
     if token.startswith("gns3_") and _app is not None:
         db_engine = getattr(_app.state, "_db_engine", None)
         if db_engine is not None:
@@ -218,8 +225,10 @@ async def _resolve_token(token: str) -> str | None:
                     for db_key in result.scalars().all():
                         if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
                             await repo.update_last_used(db_key.api_key_id)
-                            # Return the raw API key — it will be passed as Bearer token
-                            # and validated by the REST API auth layer
+                            user_repo = UsersRepository(db_session)
+                            user = await user_repo.get_user(db_key.user_id)
+                            if user:
+                                _jwt_username_var.set(user.username)
                             return token
             except Exception:
                 pass
@@ -277,6 +286,7 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
     ctx = {
         "server_url": _server_url(),
         "jwt_token": _jwt_token_var.get(),
+        "jwt_username": _jwt_username_var.get(),
     }
     result = handler(params, ctx)
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
@@ -528,6 +538,7 @@ async def node_console(
 
     Returns the WebSocket URL, console type (telnet/ssh/vnc), and other
     connection details needed to interact with a node's console via WebSocket.
+    The URL includes a short-lived JWT (10 min) — reconnect if it expires.
 
     Complete workflow:
       1. Call this tool with project_id and node_id to get the WebSocket URL
@@ -937,7 +948,7 @@ async def link_capture_download(
     project_id: Annotated[str, Field(description="UUID of the project")],
     link_id: Annotated[str, Field(description="UUID of the link")],
 ) -> list[dict[str, Any]]:
-    """Get the download URL and instructions for a PCAP capture file. Use curl to download."""
+    """Get the download URL and instructions for a PCAP capture file. The URL includes a short-lived JWT (10 min). Use curl to download."""
     return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, {
         "project_id": project_id, "link_id": link_id,
     })
@@ -1151,7 +1162,7 @@ async def symbol_list() -> list[dict[str, Any]]:
 async def symbol_get(
     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
 ) -> list[dict[str, Any]]:
-    """Get a download URL for a symbol file (SVG). Use curl to download."""
+    """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
         "symbol_id": symbol_id,
     })
