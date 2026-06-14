@@ -23,10 +23,15 @@ via Gns3Connector (from custom_gns3fy).
 """
 
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
+from gns3server.services import auth_service
+
 log = logging.getLogger(__name__)
+
+BATCH_MAX_WORKERS = 10
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
@@ -55,7 +60,32 @@ def get_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     nodes = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list of field names, e.g. [\"name\", \"status\"]"}
+        invalid = [f for f in fields if f not in VALID_NODE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_NODE_FIELDS),
+            }
+        nodes = [{k: n[k] for k in fields if k in n} for n in nodes]
     return {"nodes": nodes, "count": len(nodes)}
+
+
+VALID_NODE_FIELDS = {
+    # NodeBase
+    "compute_id", "name", "node_type", "node_id",
+    "console", "console_type", "console_auto_start",
+    "aux", "aux_type", "properties", "label", "symbol",
+    "x", "y", "z", "locked",
+    "port_name_format", "port_segment_size", "first_port_name",
+    "custom_adapters", "tags",
+    # Node
+    "template_id", "project_id", "node_directory", "status",
+    "command_line", "width", "height", "ports", "console_host",
+}
 
 
 def get_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -64,14 +94,48 @@ def get_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[s
     if not project_id or not node_id:
         return {"error": "project_id and node_id are required"}
     conn = _get_connector(gns3_ctx)
-    return conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
+    node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
+
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list of field names, e.g. [\"name\", \"status\"]"}
+        invalid = [f for f in fields if f not in VALID_NODE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_NODE_FIELDS),
+            }
+        return {k: node[k] for k in fields if k in node}
+
+    return node
+
+
+def _batch_lifecycle(project_id, node_ids, action, conn, action_label):
+    """Helper to run a lifecycle action on multiple nodes in parallel."""
+    def _act(nid):
+        try:
+            conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{nid}/{action}")
+            return {"node_id": nid, "status": "success", "message": f"Node {nid} {action_label}"}
+        except Exception as e:
+            return {"node_id": nid, "status": "error", "error": str(e)}
+    with ThreadPoolExecutor(max_workers=min(len(node_ids), BATCH_MAX_WORKERS)) as pool:
+        return list(pool.map(_act, node_ids))
 
 
 def start_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    node_ids = params.get("node_ids")
+    if node_ids:
+        if not isinstance(node_ids, list):
+            return {"error": "node_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_lifecycle(project_id, node_ids, "start", conn, "started")
     node_id = params.get("node_id")
-    if not project_id or not node_id:
-        return {"error": "project_id and node_id are required"}
+    if not node_id:
+        return {"error": "node_id or node_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/start", json_data={})
     return {"message": f"Node {node_id} started", "node_id": node_id}
@@ -79,9 +143,17 @@ def start_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict
 
 def stop_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    node_ids = params.get("node_ids")
+    if node_ids:
+        if not isinstance(node_ids, list):
+            return {"error": "node_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_lifecycle(project_id, node_ids, "stop", conn, "stopped")
     node_id = params.get("node_id")
-    if not project_id or not node_id:
-        return {"error": "project_id and node_id are required"}
+    if not node_id:
+        return {"error": "node_id or node_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/stop", json_data={})
     return {"message": f"Node {node_id} stopped", "node_id": node_id}
@@ -89,9 +161,17 @@ def stop_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
 
 def reload_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    node_ids = params.get("node_ids")
+    if node_ids:
+        if not isinstance(node_ids, list):
+            return {"error": "node_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_lifecycle(project_id, node_ids, "reload", conn, "reloaded")
     node_id = params.get("node_id")
-    if not project_id or not node_id:
-        return {"error": "project_id and node_id are required"}
+    if not node_id:
+        return {"error": "node_id or node_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/reload")
     return {"message": f"Node {node_id} reloaded", "node_id": node_id}
@@ -99,9 +179,17 @@ def reload_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    node_ids = params.get("node_ids")
+    if node_ids:
+        if not isinstance(node_ids, list):
+            return {"error": "node_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_lifecycle(project_id, node_ids, "suspend", conn, "suspended")
     node_id = params.get("node_id")
-    if not project_id or not node_id:
-        return {"error": "project_id and node_id are required"}
+    if not node_id:
+        return {"error": "node_id or node_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/suspend")
     return {"message": f"Node {node_id} suspended", "node_id": node_id}
@@ -109,9 +197,41 @@ def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+
+    nodes = params.get("nodes")
+    # Batch mode: nodes=[{template_id, x, y, name?, compute_id?}]
+    if nodes is not None:
+        if not isinstance(nodes, list) or not nodes:
+            return {"error": "nodes must be a non-empty array"}
+        results = []
+        conn = _get_connector(gns3_ctx)
+        def _create_one(node_data):
+            tid = node_data.get("template_id")
+            if not tid:
+                return {"template_id": tid, "status": "error", "error": "template_id is required"}
+            try:
+                url = f"{conn.base_url}/projects/{project_id}/templates/{tid}"
+                body = {
+                    "x": node_data.get("x", 0),
+                    "y": node_data.get("y", 0),
+                    "compute_id": node_data.get("compute_id", "local"),
+                }
+                resp = conn.http_call("post", url, json_data=body).json()
+                return {"template_id": tid, "status": "success", "node": resp}
+            except Exception as e:
+                return {"template_id": tid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
+            futures = {pool.submit(_create_one, n): n for n in nodes}
+            for future in as_completed(futures):
+                results.append(future.result())
+        return results
+
+    # Single mode
     template_id = params.get("template_id")
-    if not project_id or not template_id:
-        return {"error": "project_id and template_id are required"}
+    if not template_id:
+        return {"error": "template_id is required"}
     conn = _get_connector(gns3_ctx)
     data = {
         "x": params.get("x", 0),
@@ -124,9 +244,24 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def delete_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    node_ids = params.get("node_ids")
+    if node_ids:
+        if not isinstance(node_ids, list):
+            return {"error": "node_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        def _del(nid):
+            try:
+                conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/nodes/{nid}")
+                return {"node_id": nid, "status": "deleted"}
+            except Exception as e:
+                return {"node_id": nid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(node_ids), BATCH_MAX_WORKERS)) as pool:
+            return list(pool.map(_del, node_ids))
     node_id = params.get("node_id")
-    if not project_id or not node_id:
-        return {"error": "project_id and node_id are required"}
+    if not node_id:
+        return {"error": "node_id or node_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}")
     return {"message": f"Node {node_id} deleted", "node_id": node_id}
@@ -158,7 +293,14 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
     console_type = node.get("console_type", "unknown")
-    ws_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={gns3_ctx['jwt_token']}"
+    # Short-lived JWT for the WebSocket URL (10 min)
+    username = gns3_ctx.get("jwt_username")
+    ws_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    raw_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
+    if ws_token:
+        raw_url += f"?token={ws_token}"
+    # Convert http scheme to ws for direct websocat usage
+    ws_url = raw_url.replace("https://", "wss://").replace("http://", "ws://")
 
     result = {
         "node_id": node_id,

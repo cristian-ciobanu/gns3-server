@@ -23,10 +23,15 @@ via Gns3Connector (from custom_gns3fy).
 """
 
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
+from gns3server.services import auth_service
+
 log = logging.getLogger(__name__)
+
+BATCH_MAX_WORKERS = 10
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────
@@ -43,12 +48,31 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
+VALID_LINK_FIELDS = {
+    "link_id", "project_id", "link_type", "nodes", "suspend",
+    "link_style", "filters", "show_filters_icon",
+    "capturing", "capture_file_name", "capture_file_path",
+    "capture_compute_id", "wireshark",
+}
+
+
 def get_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     links = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/links").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list, e.g. [\"link_id\", \"nodes\"]"}
+        invalid = [f for f in fields if f not in VALID_LINK_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_LINK_FIELDS),
+            }
+        links = [{k: l[k] for k in fields if k in l} for l in links]
     return {"links": links, "count": len(links)}
 
 
@@ -63,9 +87,42 @@ def get_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[s
 
 def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+
+    links = params.get("links")
+    # Batch mode: links=[{nodes, link_type?, filters?, suspend?}]
+    if links is not None:
+        if not isinstance(links, list) or not links:
+            return {"error": "links must be a non-empty array"}
+        results = []
+        conn = _get_connector(gns3_ctx)
+        def _create_one(link_data):
+            if not link_data.get("nodes"):
+                return {"status": "error", "error": "nodes is required for each link"}
+            try:
+                body = {"nodes": link_data["nodes"]}
+                if link_data.get("link_type"):
+                    body["link_type"] = link_data["link_type"]
+                if link_data.get("filters"):
+                    body["filters"] = link_data["filters"]
+                if link_data.get("suspend"):
+                    body["suspend"] = link_data["suspend"]
+                url = f"{conn.base_url}/projects/{project_id}/links"
+                resp = conn.http_call("post", url, json_data=body).json()
+                return {"status": "success", "link": resp}
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(links), BATCH_MAX_WORKERS)) as pool:
+            futures = {pool.submit(_create_one, l): l for l in links}
+            for future in as_completed(futures):
+                results.append(future.result())
+        return results
+
+    # Single mode
     nodes = params.get("nodes")
-    if not project_id or not nodes:
-        return {"error": "project_id and nodes are required"}
+    if not nodes:
+        return {"error": "nodes is required"}
     conn = _get_connector(gns3_ctx)
     data = {"nodes": nodes}
     if "link_type" in params:
@@ -80,9 +137,24 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def delete_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        def _del(lid):
+            try:
+                conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/links/{lid}")
+                return {"link_id": lid, "status": "deleted"}
+            except Exception as e:
+                return {"link_id": lid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+            return list(pool.map(_del, link_ids))
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/links/{link_id}")
     return {"message": f"Link {link_id} deleted", "link_id": link_id}
@@ -110,20 +182,66 @@ def update_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def reset_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        def _rst(lid):
+            try:
+                url = f"{conn.base_url}/projects/{project_id}/links/{lid}/reset"
+                r = conn.http_call("post", url).json()
+                return {"link_id": lid, "status": "reset", "link": r}
+            except Exception as e:
+                return {"link_id": lid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+            return list(pool.map(_rst, link_ids))
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/reset"
     result = conn.http_call("post", url).json()
     return {"message": f"Link {link_id} reset", "link": result}
 
 
+def _batch_capture(project_id, link_ids, action, data_builder, conn):
+    """Helper for batch capture start/stop."""
+    def _act(lid):
+        try:
+            url = f"{conn.base_url}/projects/{project_id}/links/{lid}/capture/{action}"
+            kwargs = data_builder(lid) if data_builder else {}
+            conn.http_call("post", url, **kwargs)
+            return {"link_id": lid, "status": "success"}
+        except Exception as e:
+            return {"link_id": lid, "status": "error", "error": str(e)}
+    with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+        return list(pool.map(_act, link_ids))
+
+
 def start_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        dlt = params.get("data_link_type", "DLT_EN10MB")
+        ws = params.get("wireshark", False)
+        fname = params.get("capture_file_name")
+        def _build(lid):
+            data = {"data_link_type": dlt, "wireshark": ws}
+            if fname:
+                data["capture_file_name"] = fname
+            return {"json_data": data}
+        return _batch_capture(project_id, link_ids, "start", _build, conn)
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     data = {
         "data_link_type": params.get("data_link_type", "DLT_EN10MB"),
@@ -138,9 +256,17 @@ def start_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> d
 
 def stop_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_capture(project_id, link_ids, "stop", None, conn)
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/capture/stop"
     conn.http_call("post", url)
@@ -149,18 +275,38 @@ def stop_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    username = gns3_ctx.get("jwt_username")
+    download_token = auth_service.create_access_token(username, expires_in=10) if username else None
+
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        results = []
+        for lid in link_ids:
+            url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{lid}/capture/file"
+            entry = {"link_id": lid, "download_url": url}
+            if download_token:
+                cmd = f"curl -L -o capture_{lid}.pcap -H 'Authorization: Bearer {download_token}' '{url}'"
+                entry["curl_command"] = cmd
+            results.append(entry)
+        return {"downloads": results, "count": len(results), "note": "Files are in pcap format. Links include a 10-minute token."}
+
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     download_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{link_id}/capture/file"
-    auth_token = gns3_ctx['jwt_token']
-    return {
+    result = {
         "link_id": link_id,
         "download_url": download_url,
-        "curl_command": f"curl -L -o capture.pcap -H 'Authorization: Bearer {auth_token}' '{download_url}'",
-        "note": "Use the curl command to download the PCAP capture file. "
-                "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
+        "note": "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
     }
+    if download_token:
+        result["curl_command"] = f"curl -L -o capture.pcap -H 'Authorization: Bearer {download_token}' '{download_url}'"
+        result["note"] += " The download link includes a 10-minute token."
+    return result
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────

@@ -53,6 +53,7 @@ import gns3server.db.models as models
 from gns3server.services import auth_service
 from gns3server.utils.request_utils import extract_client_info
 from gns3server.db.repositories.api_keys import ApiKeysRepository
+from gns3server.db.repositories.users import UsersRepository
 from .projects import (
     list_projects_handler, get_project_handler, create_project_handler,
     delete_project_handler, open_project_handler, close_project_handler,
@@ -117,6 +118,9 @@ from .drawings import (
 )
 
 log = logging.getLogger(__name__)
+
+# Suppress noisy telnet connection logs from device config tools.
+logging.getLogger("telnetlib3").setLevel(logging.WARNING)
 
 # FastAPI app reference — used to lazily access app.state._db_engine for API key validation.
 # The db engine is initialized during the lifespan startup, which runs AFTER
@@ -184,6 +188,11 @@ async def wait_for_mcp_ready() -> bool:
 _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "mcp_jwt_token", default=None
 )
+# Username extracted during token validation — used by handlers to generate
+# short-lived JWTs for download/console URLs without exposing the raw key.
+_jwt_username_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mcp_jwt_username", default=None
+)
 
 
 # ── Token validation ──────────────────────────────────────────────────
@@ -198,12 +207,13 @@ async def _resolve_token(token: str) -> str | None:
     """
     # Try JWT first
     try:
-        auth_service.get_username_from_token(token)
+        username = auth_service.get_username_from_token(token)
+        _jwt_username_var.set(username)
         return token
     except Exception:
         pass
 
-    # Try API key — pass through directly; REST API auth already supports gns3_ keys
+    # Try API key
     if token.startswith("gns3_") and _app is not None:
         db_engine = getattr(_app.state, "_db_engine", None)
         if db_engine is not None:
@@ -215,8 +225,10 @@ async def _resolve_token(token: str) -> str | None:
                     for db_key in result.scalars().all():
                         if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
                             await repo.update_last_used(db_key.api_key_id)
-                            # Return the raw API key — it will be passed as Bearer token
-                            # and validated by the REST API auth layer
+                            user_repo = UsersRepository(db_session)
+                            user = await user_repo.get_user(db_key.user_id)
+                            if user:
+                                _jwt_username_var.set(user.username)
                             return token
             except Exception:
                 pass
@@ -274,6 +286,7 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
     ctx = {
         "server_url": _server_url(),
         "jwt_token": _jwt_token_var.get(),
+        "jwt_username": _jwt_username_var.get(),
     }
     result = handler(params, ctx)
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
@@ -297,8 +310,8 @@ async def project_get(
 async def project_create(
     name: Annotated[str, Field(description="Project name")],
 ) -> list[dict[str, Any]]:
-    """Create a new GNS3 project."""
-    params = {"name": name}
+    """Create a new GNS3 project. auto_close is set to False so the project stays open when clients disconnect."""
+    params = {"name": name, "auto_close": False}
     return await asyncio.to_thread(_run_handler_sync, create_project_handler, params)
 
 
@@ -396,61 +409,100 @@ async def project_readme_update(
 # ── Node tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def node_list(project_id: str) -> list[dict[str, Any]]:
-    """List all nodes in a project."""
-    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id})
+async def node_list(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields per node. e.g. [\"name\",\"status\"]. Available: name, status, node_type, console, console_type, console_host, node_id, project_id, compute_id, symbol, x, y, z, locked, ports, properties, command_line, node_directory, label, tags, template_id, width, height, aux, aux_type")] = None,
+) -> list[dict[str, Any]]:
+    """List all nodes in a project. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_nodes_handler, {"project_id": project_id, "fields": fields})
 
 
 @mcp.tool()
 async def node_get(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"name\",\"status\"]. Available: name, status, node_type, console, console_type, console_host, node_id, project_id, compute_id, symbol, x, y, z, locked, ports, properties, command_line, node_directory, label, tags, template_id, width, height, aux, aux_type")] = None,
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a specific node."""
-    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Get detailed information about a specific node. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_node_handler, {
+        "project_id": project_id, "node_id": node_id, "fields": fields,
+    })
 
 @mcp.tool()
 async def node_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to start")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — start multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Start a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, start_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Start one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, start_node_handler, params)
 
 @mcp.tool()
 async def node_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to stop")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — stop multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Stop a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Stop one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, stop_node_handler, params)
 
 @mcp.tool()
 async def node_reload(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to reload")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reload multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Reload (restart) a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Reload (restart) one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, params)
 
 @mcp.tool()
 async def node_suspend(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to suspend")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — suspend multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Suspend a node in a project."""
-    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Suspend one or more nodes. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, suspend_node_handler, params)
 
 
 @mcp.tool()
 async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    template_id: Annotated[str, Field(description="UUID of the template to create the node from")],
-    x: Annotated[int, Field(description="X coordinate on the project canvas")] = 0,
-    y: Annotated[int, Field(description="Y coordinate on the project canvas")] = 0,
+    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode)")] = None,
+    x: Annotated[int, Field(description="X coordinate")] = 0,
+    y: Annotated[int, Field(description="Y coordinate")] = 0,
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
+    nodes: Annotated[list | None, Field(description="Batch mode: [{template_id, x?, y?, name?, compute_id?}] — creates multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a new node from a template in a project."""
+    """Create one or more nodes from templates.
+
+    Single mode: provide template_id, x, y (optional compute_id)
+    Batch mode:  provide nodes=[{template_id, x, y, name?, compute_id?}] — creates up to 10 in parallel
+    """
+    if nodes is not None:
+        return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
+            "project_id": project_id, "nodes": nodes,
+        })
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
         "x": x, "y": y, "compute_id": compute_id,
@@ -460,10 +512,16 @@ async def node_create(
 @mcp.tool()
 async def node_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to delete")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — delete multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Delete a node from a project."""
-    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Delete one or more nodes from a project. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, params)
 
 
 @mcp.tool()
@@ -486,6 +544,7 @@ async def node_console(
 
     Returns the WebSocket URL, console type (telnet/ssh/vnc), and other
     connection details needed to interact with a node's console via WebSocket.
+    The URL includes a short-lived JWT (10 min) — reconnect if it expires.
 
     Complete workflow:
       1. Call this tool with project_id and node_id to get the WebSocket URL
@@ -510,9 +569,12 @@ async def node_console(
 # ── Link tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def link_list(project_id: str) -> list[dict[str, Any]]:
-    """List all links in a project."""
-    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
+async def link_list(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"link_id\",\"nodes\"]. Available: link_id, project_id, link_type, nodes, suspend, filters, capturing, capture_file_name, link_style")] = None,
+) -> list[dict[str, Any]]:
+    """List all links in a project. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id, "fields": fields})
 
 
 @mcp.tool()
@@ -527,21 +589,20 @@ async def link_get(
 @mcp.tool()
 async def link_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    nodes: Annotated[list, Field(description="List of node connections, e.g. [{\"node_id\": \"...\", \"adapter_number\": 0, \"port_number\": 0}]")],
+    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}]")] = None,
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
-    filters: Annotated[dict, Field(description="Optional packet filters (must use array format): frequency_drop: [N], packet_loss: [rate], delay: [ms, jitter], corrupt: [rate], bpf: [expression]")] = None,
+    filters: Annotated[dict | None, Field(description="Optional packet filters")] = None,
+    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — creates multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a link between two nodes in a project.
+    """Create one or more links between nodes.
 
-    Filters must use array format:
-    - frequency_drop: [N] - Drop every Nth packet (N: -1 to 32767)
-    - packet_loss: [rate] - Packet loss percentage (rate: 0 to 100)
-    - delay: [ms, jitter] - Latency and jitter in milliseconds
-    - corrupt: [rate] - Packet corruption percentage (rate: 0 to 100)
-    - bpf: [expression] - Berkeley Packet Filter expression
-
-    Example: {"filters": {"delay": [100, 10], "packet_loss": [5]}}
+    Single mode: provide nodes, link_type (optional filters)
+    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 10 in parallel
     """
+    if links:
+        return await asyncio.to_thread(_run_handler_sync, create_link_handler, {
+            "project_id": project_id, "links": links,
+        })
     params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
     if filters:
         params["filters"] = filters
@@ -551,10 +612,16 @@ async def link_create(
 @mcp.tool()
 async def link_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link to delete")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — delete multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Delete a link from a project."""
-    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
+    """Delete one or more links from a project."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, params)
 
 
 @mcp.tool()
@@ -848,9 +915,10 @@ async def node_links(
 @mcp.tool()
 async def link_reset(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reset multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Reset a link by tearing down the underlying UDP connection and recreating it.
+    """Reset one or more links by tearing down and recreating the UDP connection.
 
     Use cases:
     - Clear accumulated packet errors/drops from the link's UDP connection
@@ -859,47 +927,60 @@ async def link_reset(
 
     Filters are preserved but their internal application state resets.
     """
-    return await asyncio.to_thread(_run_handler_sync, reset_link_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, reset_link_handler, params)
 
 
 @mcp.tool()
 async def link_capture_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
     data_link_type: Annotated[str, Field(description="Data link type (default: DLT_EN10MB)")] = "DLT_EN10MB",
     capture_file_name: Annotated[str | None, Field(description="Capture file name (optional)")] = None,
     wireshark: Annotated[bool, Field(description="Open Wireshark automatically (default: false)")] = False,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — start capture on multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Start packet capture on a link. The capture file can later be downloaded with download_capture_file."""
-    return await asyncio.to_thread(_run_handler_sync, start_capture_handler, {
-        "project_id": project_id, "link_id": link_id,
-        "data_link_type": data_link_type, "capture_file_name": capture_file_name,
-        "wireshark": wireshark,
-    })
+    """Start packet capture on one or more links."""
+    params = {"project_id": project_id, "data_link_type": data_link_type, "capture_file_name": capture_file_name, "wireshark": wireshark}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, start_capture_handler, params)
 
 
 @mcp.tool()
 async def link_capture_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — stop capture on multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Stop packet capture on a link. After stopping, the capture file can be downloaded."""
-    return await asyncio.to_thread(_run_handler_sync, stop_capture_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    """Stop packet capture on one or more links."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, stop_capture_handler, params)
 
 
 @mcp.tool()
 async def link_capture_download(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — get download URLs for multiple captures")] = None,
 ) -> list[dict[str, Any]]:
-    """Get the download URL and instructions for a PCAP capture file. Use curl to download."""
-    return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    """Get download URL(s) for PCAP capture file(s). The URL includes a short-lived JWT (10 min). Use curl to download."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, params)
 
 
 # ── Snapshot tools ─────────────────────────────────────────────────────
@@ -920,7 +1001,12 @@ async def snapshot_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     name: Annotated[str, Field(description="Name for the new snapshot")],
 ) -> list[dict[str, Any]]:
-    """Create a new snapshot of a project."""
+    """Create a new snapshot of a project.
+
+    Prerequisite: All stoppable nodes (qemu, docker, dynamips, vpcs, iou, etc.)
+    must be stopped first. Use node_stop_all before creating a snapshot.
+    Cloud, NAT, and switch nodes are always-running and can be ignored.
+    """
     return await asyncio.to_thread(_run_handler_sync, create_snapshot_handler, {
         "project_id": project_id, "name": name,
     })
@@ -1105,7 +1191,7 @@ async def symbol_list() -> list[dict[str, Any]]:
 async def symbol_get(
     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
 ) -> list[dict[str, Any]]:
-    """Get a download URL for a symbol file (SVG). Use curl to download."""
+    """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
         "symbol_id": symbol_id,
     })
@@ -1157,9 +1243,11 @@ async def symbol_delete(
 
 
 @mcp.tool()
-async def appliance_list() -> list[dict[str, Any]]:
-    """List all available appliances (template library)."""
-    return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {})
+async def appliance_list(
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"name\",\"category\"]. Available: name, category, description, vendor_name, product_name, status, availability, images, versions, tags, symbol, usage, builtin")] = None,
+) -> list[dict[str, Any]]:
+    """List all available appliances (template library). Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_appliances_handler, {"fields": fields} if fields else {})
 
 
 @mcp.tool()
@@ -1256,16 +1344,23 @@ async def device_config_send(
     device_configs: Annotated[list, Field(
         description="List of device configs. Each entry: {\"device_name\": \"R1\", \"config_commands\": [\"int lo0\", \"ip add 1.1.1.1 255.255.255.255\"]}"
     )],
+    template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars in each device to reduce token usage for batch config. Example: \"interface lo{{ n }}\\nip address {{ ip }} 255.255.255.255\"")] = None,
 ) -> list[dict[str, Any]]:
     """Send configuration commands to network devices via console (telnet/SSH).
+
+    Two modes:
+      1. Direct commands: each device has config_commands=[...]
+      2. Jinja2 template: provide template + vars per device — template is rendered for each
+         Example: device_configs=[{\"device_name\": \"R1\", \"vars\": {\"n\": 0, \"ip\": \"1.1.1.1\"}}]
 
     Devices must be started first (use node_start or node_start_all).
     Device type is auto-detected from the 'device_type:<type>' tag on each node.
     Common device types: cisco_ios_telnet, cisco_xr_telnet, huawei_telnet, gns3_huawei_telnet_ce
     """
-    return await asyncio.to_thread(_run_handler_sync, device_config_send_handler, {
-        "project_id": project_id, "device_configs": device_configs,
-    })
+    params = {"project_id": project_id, "device_configs": device_configs}
+    if template is not None:
+        params["template"] = template
+    return await asyncio.to_thread(_run_handler_sync, device_config_send_handler, params)
 
 
 @mcp.tool()
@@ -1274,15 +1369,21 @@ async def device_command_run(
     device_configs: Annotated[list, Field(
         description="List of device commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
     )],
+    template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars per device. Example: \"show ip route {{ protocol }}\"")] = None,
 ) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices via console.
+
+    Two modes:
+      1. Direct commands: each device has show_commands=[...]
+      2. Jinja2 template: provide template + vars per device
 
     Use this to inspect device status, view configurations, or verify changes.
     Devices must be started first.
     """
-    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, {
-        "project_id": project_id, "device_configs": device_configs,
-    })
+    params = {"project_id": project_id, "device_configs": device_configs}
+    if template is not None:
+        params["template"] = template
+    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, params)
 
 
 @mcp.tool()

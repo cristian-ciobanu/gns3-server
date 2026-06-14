@@ -33,7 +33,44 @@ import json
 import logging
 from typing import Any
 
+from jinja2 import Template as JinjaTemplate, TemplateError as JinjaError
+
 log = logging.getLogger(__name__)
+
+
+def _render_template(template: str, device_configs: list[dict], commands_field: str = "config_commands") -> list[dict]:
+    """Render a Jinja2 template for each device's vars into the specified commands field.
+
+    Entries with the same device_name are merged into a single entry
+    so they share one Nornir session and avoid output fragmentation.
+
+    Each device in device_configs can have:
+      - "vars": dict of template variables (rendered into commands_field)
+      - commands_field: existing commands merged after rendering if present
+
+    Args:
+        commands_field: field name for the rendered commands, e.g. "config_commands", "commands"
+    """
+    jinja = JinjaTemplate(template)
+    merged: dict[str, dict] = {}
+    for dev in device_configs:
+        name = dev.get("device_name")
+        if not name:
+            continue
+        vars_data = dev.get("vars", {})
+        if name not in merged:
+            merged[name] = {"device_name": name, commands_field: list(dev.get(commands_field, []))}
+        entry = merged[name]
+        if vars_data:
+            try:
+                output = jinja.render(**vars_data)
+                lines = [l for l in output.splitlines() if l.strip()]
+                entry[commands_field].extend(lines)
+            except JinjaError as e:
+                error_msg = f"Template rendering failed for '{name}': {e}"
+                log.error(error_msg)
+                return [{"error": error_msg}]
+    return list(merged.values())
 
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
@@ -42,8 +79,14 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     """Send configuration commands to network devices via console."""
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")
+    template = params.get("template")
     if not project_id or not device_configs:
         return [{"error": "project_id and device_configs are required"}]
+
+    if template:
+        device_configs = _render_template(template, device_configs, commands_field="config_commands")
+        if len(device_configs) == 1 and "error" in device_configs[0]:
+            return device_configs
 
     from gns3server.agent.gns3_copilot.tools_v2.config_tools_nornir import ExecuteMultipleDeviceConfigCommands
 
@@ -63,8 +106,14 @@ def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     """Run read-only diagnostic (show) commands on network devices."""
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")
+    template = params.get("template")
     if not project_id or not device_configs:
         return [{"error": "project_id and device_configs (list of {device_name, show_commands}) are required"}]
+
+    if template:
+        device_configs = _render_template(template, device_configs, commands_field="commands")
+        if len(device_configs) == 1 and "error" in device_configs[0]:
+            return device_configs
 
     from gns3server.agent.gns3_copilot.tools_v2.display_tools_nornir import ExecuteMultipleDeviceCommands
 

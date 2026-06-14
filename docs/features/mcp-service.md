@@ -95,15 +95,15 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `node_list` | List all nodes in a project |
-| `node_get` | Get node details |
-| `node_create` | Create a node from template |
+| `node_list` | List all nodes (`fields` to filter columns, e.g. `["name","status"]`) |
+| `node_get` | Get node details (`fields` to filter columns) |
+| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array |
 | `node_delete` | Delete a node |
 | `node_update` | Update node properties |
-| `node_start` | Start a node |
-| `node_stop` | Stop a node |
-| `node_reload` | Reload a node |
-| `node_suspend` | Suspend a node |
+| `node_start` | Start node(s) — `node_id` or `node_ids` array |
+| `node_stop` | Stop node(s) — `node_id` or `node_ids` array |
+| `node_reload` | Reload node(s) — `node_id` or `node_ids` array |
+| `node_suspend` | Suspend node(s) — `node_id` or `node_ids` array |
 | `node_console` | Get WebSocket console URL |
 | `node_file_list` | List files in node directory |
 | `node_file_get` | Read a file (with offset/limit) |
@@ -122,15 +122,15 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `link_list` | List all links in a project |
+| `link_list` | List all links (`fields` to filter columns) |
 | `link_get` | Get link details |
-| `link_create` | Create a link between nodes |
-| `link_delete` | Delete a link |
+| `link_create` | Create link(s) — single via `nodes` or batch via `links` array |
+| `link_delete` | Delete link(s) — `link_id` or `link_ids` array |
 | `link_update` | Update link (suspend, filters) |
-| `link_reset` | Reset link (delete + recreate) |
-| `link_capture_start` | Start packet capture |
-| `link_capture_stop` | Stop packet capture |
-| `link_capture_download` | Get PCAP download URL |
+| `link_reset` | Reset link(s) — `link_id` or `link_ids` array |
+| `link_capture_start` | Start capture(s) — `link_id` or `link_ids` array |
+| `link_capture_stop` | Stop capture(s) — `link_id` or `link_ids` array |
+| `link_capture_download` | Get PCAP download URL(s) — `link_id` or `link_ids` array |
 
 ### Template (5)
 
@@ -184,7 +184,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `appliance_list` | List appliances from template library |
+| `appliance_list` | List appliances (`fields` to filter, e.g. `["name","category"]`) |
 | `appliance_get` | Get appliance details |
 | `appliance_install` | Create template from appliance (images must exist locally) |
 
@@ -209,11 +209,101 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `device_config_send` | Push config commands to devices via console (Nornir + Netmiko) |
-| `device_command_run` | Run read-only show commands on devices |
+| `device_config_send` | Push config commands to devices via console (Nornir + Netmiko). Supports Jinja2 `template` + `vars` |
+| `device_command_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
 | `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
 
-Requires nodes to be started first. Device type is auto-detected from the node's `device_type:<type>` tag.
+The tool connects to each device's console via telnet/SSH. Nodes must be in the `started` state (use `node_start` or `node_start_all`). Device type is auto-detected from the node's `device_type:<type>` tag in GNS3.
+
+#### Jinja2 Template Mode
+
+Both `device_config_send` and `device_command_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
+
+```python
+# Direct commands (single/batch)
+device_config_send(project_id, device_configs=[
+    {"device_name": "R1", "config_commands": ["int lo0", "ip add 1.1.1.1 255.255.255.255"]},
+])
+
+# Jinja2 template (reduces token usage for batch)
+device_config_send(project_id,
+    template="interface lo{{ n }}\nip address {{ ip }} 255.255.255.255",
+    device_configs=[
+        {"device_name": "R1", "vars": {"n": 0, "ip": "1.1.1.1"}},
+        {"device_name": "R2", "vars": {"n": 0, "ip": "2.2.2.2"}},
+    ])
+
+# Show commands with template
+device_command_run(project_id,
+    template="show ip route {{ protocol }}",
+    device_configs=[
+        {"device_name": "R1", "vars": {"protocol": "ospf"}},
+        {"device_name": "R2", "vars": {"protocol": "bgp"}},
+    ])
+```
+
+### Best Practices
+
+**Prefer template over direct commands for batch.** When ≥2 nodes share the same config structure with different values, use `template`+`vars` instead of writing `config_commands` per node. This reduces token usage and transcription errors.
+
+**Batch merging.** Multiple entries with the same `device_name` are merged into a single Nornir session. The output contains all commands' results in one block. Match results by `device_name`, not list index.
+
+**Don't rely on `status: success` alone.** It only means commands entered config mode. IOS errors (`% Invalid input`, `% overlaps`, `% Incomplete command`) appear inside `output` text — always scan for `%` lines.
+
+**Pilot before full rollout.** Test template + vars on 1–2 devices first to verify rendering and syntax, then expand to all nodes.
+
+**Config backup via file operations.** IOU and Dynamips nodes save startup config as a plain text file (`startup-config.cfg`) in the node directory after `write memory`. These can be backed up and restored via `node_file_get`/`node_file_write`.
+
+```python
+# Save config on device
+device_command_run(project_id, device_configs=[
+    {"device_name": "R1", "commands": ["write memory"]},
+])
+# Backup
+config = node_file_get(project_id, node_id, "startup-config.cfg")
+# Restore if config breaks
+node_file_write(project_id, node_id, "startup-config.cfg", config)
+node_reload(project_id, node_id)
+```
+
+### Device Config Workflow
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Agent
+    participant MCP as MCP Handler
+    participant TM as Template Renderer
+    participant DP as Device Discovery
+    participant NR as Nornir
+    participant NM as Netmiko
+    participant D as Device Console
+
+    Note over AI: Decide: template or direct commands?
+
+    alt Direct commands
+        AI->>MCP: device_config_send(config_commands=[...])
+    else Jinja2 template
+        AI->>MCP: device_config_send(template + vars)
+        MCP->>TM: Render template per device
+        TM->>TM: Jinja2.render(**vars)
+        TM-->>MCP: device_configs with rendered commands
+    end
+
+    MCP->>DP: get_device_ports_from_topology()
+    DP-->>MCP: hosts_data (console port, device_type)
+
+    Note over MCP: Prepare Nornir inventory
+
+    MCP->>NR: InitNornir(hosts, threaded runner)
+    par Device 1 to N (parallel, max 10)
+        NR->>NM: netmiko_send_config(commands)
+        NM->>D: telnet/SSH console session
+        D-->>NM: command output
+        NM-->>NR: execution result
+    end
+    NR-->>MCP: aggregated results
+    MCP-->>AI: per-device results with output
+```
 
 ## Configuration
 
@@ -234,20 +324,6 @@ TOKEN=$(curl -s -X POST http://localhost:3080/v3/access/users/authenticate \
 claude mcp add --transport sse My_GNS3_Server \
   http://localhost:3080/v3/mcp/transport/sse \
   -H "Authorization: Bearer $TOKEN"
-```
-
-### Claude Desktop
-
-Add to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "My_GNS3_Server": {
-      "url": "http://localhost:3080/v3/mcp/transport/sse?token=your_jwt_or_api_key"
-    }
-  }
-}
 ```
 
 ## Transport Security
@@ -310,12 +386,12 @@ For public-facing MCP servers, set `allowed_hosts` to your server's domain name.
 
 ```mermaid
 sequenceDiagram
-    participant Client as Claude Code / Claude Desktop
+    participant Client as Claude Code
     participant MCP as MCP Service
-    participant Auth as JWT Auth
+    participant Auth as Auth
     participant GNS3 as GNS3 REST API
 
-    Note over Client: 1. Connect with JWT
+    Note over Client: 1. Connect with credential (JWT or API Key)
     Client->>MCP: GET /sse (token in header or query)
     MCP->>Auth: Validate Token
     Auth-->>MCP: Token Valid
@@ -329,7 +405,7 @@ sequenceDiagram
     Client->>MCP: POST /messages/ (tools/list)
     MCP-->>Client: event: message (tools list)
 
-    Client->>MCP: POST /messages/ (tools/call list_projects)
+    Client->>MCP: POST /messages/ (tools/call project_list)
     MCP->>GNS3: Gns3Connector HTTP request
     GNS3-->>MCP: Projects data
     MCP-->>Client: event: message (tool result)
@@ -345,7 +421,7 @@ sequenceDiagram
 
 ### Console WebSocket
 
-The `get_node_console_info` tool returns a WebSocket URL for connecting to a node's console. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
+The `node_console` tool returns a WebSocket URL for connecting to a node's console. The URL includes a short-lived JWT (10 min) — reconnect if it expires. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
 
 The WebSocket URL is constructed using the server's `_server_url()`, which resolves the host as follows:
 
