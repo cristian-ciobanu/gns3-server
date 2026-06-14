@@ -266,6 +266,45 @@ node_file_write(project_id, node_id, "startup-config.cfg", config)
 node_reload(project_id, node_id)
 ```
 
+### Device Config Workflow
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Agent
+    participant MCP as MCP Handler
+    participant TM as Template Renderer
+    participant DP as Device Discovery
+    participant NR as Nornir
+    participant NM as Netmiko
+    participant D as Device Console
+
+    Note over AI: Decide: template or direct commands?
+
+    alt Direct commands
+        AI->>MCP: device_config_send(config_commands=[...])
+    else Jinja2 template
+        AI->>MCP: device_config_send(template + vars)
+        MCP->>TM: Render template per device
+        TM->>TM: Jinja2.render(**vars)
+        TM-->>MCP: device_configs with rendered commands
+    end
+
+    MCP->>DP: get_device_ports_from_topology()
+    DP-->>MCP: hosts_data (console port, device_type)
+
+    Note over MCP: Prepare Nornir inventory
+
+    MCP->>NR: InitNornir(hosts, threaded runner)
+    par Device 1 to N (parallel, max 10)
+        NR->>NM: netmiko_send_config(commands)
+        NM->>D: telnet/SSH console session
+        D-->>NM: command output
+        NM-->>NR: execution result
+    end
+    NR-->>MCP: aggregated results
+    MCP-->>AI: per-device results with output
+```
+
 ## Configuration
 
 ### Claude Code (CLI)
