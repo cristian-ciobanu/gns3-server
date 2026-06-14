@@ -128,9 +128,9 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 | `link_delete` | Delete a link |
 | `link_update` | Update link (suspend, filters) |
 | `link_reset` | Reset link (tear down UDP, preserves filters) |
-| `link_capture_start` | Start packet capture |
-| `link_capture_stop` | Stop packet capture |
-| `link_capture_download` | Get PCAP download URL |
+| `link_capture_start` | Start capture(s) — `link_id` or `link_ids` array |
+| `link_capture_stop` | Stop capture(s) — `link_id` or `link_ids` array |
+| `link_capture_download` | Get PCAP download URL(s) — `link_id` or `link_ids` array |
 
 ### Template (5)
 
@@ -421,7 +421,7 @@ sequenceDiagram
 
 ### Console WebSocket
 
-The `get_node_console_info` tool returns a WebSocket URL for connecting to a node's console. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
+The `node_console` tool returns a WebSocket URL for connecting to a node's console. The URL includes a short-lived JWT (10 min) — reconnect if it expires. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
 
 The WebSocket URL is constructed using the server's `_server_url()`, which resolves the host as follows:
 
