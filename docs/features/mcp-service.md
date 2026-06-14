@@ -213,7 +213,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 | `device_command_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
 | `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
 
-Requires nodes to be started first. Device type is auto-detected from the node's `device_type:<type>` tag.
+The tool connects to each device's console via telnet/SSH. Nodes must be in the `started` state (use `node_start` or `node_start_all`). Device type is auto-detected from the node's `device_type:<type>` tag in GNS3.
 
 #### Jinja2 Template Mode
 
