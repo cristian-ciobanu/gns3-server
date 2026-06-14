@@ -27,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 
+from gns3server.services import auth_service
+
 log = logging.getLogger(__name__)
 
 BATCH_MAX_WORKERS = 10
@@ -189,12 +191,13 @@ def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if not project_id or not link_id:
         return {"error": "project_id and link_id are required"}
     download_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{link_id}/capture/file"
-    auth_token = gns3_ctx['jwt_token']
+    # Generate a short-lived download token (10 min) so the user can curl without exposing their API key
+    download_token = auth_service.create_access_token("mcp-download", expires_in=10)
     return {
         "link_id": link_id,
         "download_url": download_url,
-        "curl_command": f"curl -L -o capture.pcap -H 'Authorization: Bearer {auth_token}' '{download_url}'",
-        "note": "Use the curl command to download the PCAP capture file. "
+        "curl_command": f"curl -L -o capture.pcap -H 'Authorization: Bearer {download_token}' '{download_url}'",
+        "note": "This download link expires in 10 minutes. "
                 "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
     }
 
