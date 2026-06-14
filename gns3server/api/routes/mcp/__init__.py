@@ -512,10 +512,16 @@ async def node_create(
 @mcp.tool()
 async def node_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str, Field(description="UUID of the node to delete")],
+    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
+    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — delete multiple nodes in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Delete a node from a project."""
-    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, {"project_id": project_id, "node_id": node_id})
+    """Delete one or more nodes from a project. Provide node_id for single, or node_ids for batch."""
+    params = {"project_id": project_id}
+    if node_ids:
+        params["node_ids"] = node_ids
+    else:
+        params["node_id"] = node_id
+    return await asyncio.to_thread(_run_handler_sync, delete_node_handler, params)
 
 
 @mcp.tool()
