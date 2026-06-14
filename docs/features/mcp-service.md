@@ -95,15 +95,15 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `node_list` | List all nodes in a project |
-| `node_get` | Get node details |
-| `node_create` | Create a node from template |
+| `node_list` | List all nodes (`fields` to filter columns, e.g. `["name","status"]`) |
+| `node_get` | Get node details (`fields` to filter columns) |
+| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array |
 | `node_delete` | Delete a node |
 | `node_update` | Update node properties |
-| `node_start` | Start a node |
-| `node_stop` | Stop a node |
-| `node_reload` | Reload a node |
-| `node_suspend` | Suspend a node |
+| `node_start` | Start node(s) — `node_id` or `node_ids` array |
+| `node_stop` | Stop node(s) — `node_id` or `node_ids` array |
+| `node_reload` | Reload node(s) — `node_id` or `node_ids` array |
+| `node_suspend` | Suspend node(s) — `node_id` or `node_ids` array |
 | `node_console` | Get WebSocket console URL |
 | `node_file_list` | List files in node directory |
 | `node_file_get` | Read a file (with offset/limit) |
@@ -124,10 +124,10 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 |------|-------------|
 | `link_list` | List all links in a project |
 | `link_get` | Get link details |
-| `link_create` | Create a link between nodes |
+| `link_create` | Create link(s) — single via `nodes` or batch via `links` array |
 | `link_delete` | Delete a link |
 | `link_update` | Update link (suspend, filters) |
-| `link_reset` | Reset link (delete + recreate) |
+| `link_reset` | Reset link (tear down UDP, preserves filters) |
 | `link_capture_start` | Start packet capture |
 | `link_capture_stop` | Stop packet capture |
 | `link_capture_download` | Get PCAP download URL |
@@ -184,7 +184,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `appliance_list` | List appliances from template library |
+| `appliance_list` | List appliances (`fields` to filter, e.g. `["name","category"]`) |
 | `appliance_get` | Get appliance details |
 | `appliance_install` | Create template from appliance (images must exist locally) |
 
@@ -209,11 +209,38 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `device_config_send` | Push config commands to devices via console (Nornir + Netmiko) |
-| `device_command_run` | Run read-only show commands on devices |
+| `device_config_send` | Push config commands to devices via console (Nornir + Netmiko). Supports Jinja2 `template` + `vars` |
+| `device_command_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
 | `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
 
 Requires nodes to be started first. Device type is auto-detected from the node's `device_type:<type>` tag.
+
+#### Jinja2 Template Mode
+
+Both `device_config_send` and `device_command_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
+
+```python
+# Direct commands (single/batch)
+device_config_send(project_id, device_configs=[
+    {"device_name": "R1", "config_commands": ["int lo0", "ip add 1.1.1.1 255.255.255.255"]},
+])
+
+# Jinja2 template (reduces token usage for batch)
+device_config_send(project_id,
+    template="interface lo{{ n }}\nip address {{ ip }} 255.255.255.255",
+    device_configs=[
+        {"device_name": "R1", "vars": {"n": 0, "ip": "1.1.1.1"}},
+        {"device_name": "R2", "vars": {"n": 0, "ip": "2.2.2.2"}},
+    ])
+
+# Show commands with template
+device_command_run(project_id,
+    template="show ip route {{ protocol }}",
+    device_configs=[
+        {"device_name": "R1", "vars": {"protocol": "ospf"}},
+        {"device_name": "R2", "vars": {"protocol": "bgp"}},
+    ])
+```
 
 ## Configuration
 
