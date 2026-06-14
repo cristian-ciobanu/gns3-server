@@ -242,6 +242,30 @@ device_command_run(project_id,
     ])
 ```
 
+### Best Practices
+
+**Prefer template over direct commands for batch.** When ≥2 nodes share the same config structure with different values, use `template`+`vars` instead of writing `config_commands` per node. This reduces token usage and transcription errors.
+
+**Batch merging.** Multiple entries with the same `device_name` are merged into a single Nornir session. The output contains all commands' results in one block. Match results by `device_name`, not list index.
+
+**Don't rely on `status: success` alone.** It only means commands entered config mode. IOS errors (`% Invalid input`, `% overlaps`, `% Incomplete command`) appear inside `output` text — always scan for `%` lines.
+
+**Pilot before full rollout.** Test template + vars on 1–2 devices first to verify rendering and syntax, then expand to all nodes.
+
+**Config backup via file operations.** IOU and Dynamips nodes save startup config as a plain text file (`startup-config.cfg`) in the node directory after `write memory`. These can be backed up and restored via `node_file_get`/`node_file_write`.
+
+```python
+# Save config on device
+device_command_run(project_id, device_configs=[
+    {"device_name": "R1", "commands": ["write memory"]},
+])
+# Backup
+config = node_file_get(project_id, node_id, "startup-config.cfg")
+# Restore if config breaks
+node_file_write(project_id, node_id, "startup-config.cfg", config)
+node_reload(project_id, node_id)
+```
+
 ## Configuration
 
 ### Claude Code (CLI)
