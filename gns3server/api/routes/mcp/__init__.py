@@ -118,6 +118,9 @@ from .drawings import (
 
 log = logging.getLogger(__name__)
 
+# Suppress noisy telnet connection logs from device config tools.
+logging.getLogger("telnetlib3").setLevel(logging.WARNING)
+
 # FastAPI app reference — used to lazily access app.state._db_engine for API key validation.
 # The db engine is initialized during the lifespan startup, which runs AFTER
 # register_starlette_routes() is called, so we cannot capture it at registration time.
@@ -958,7 +961,12 @@ async def snapshot_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     name: Annotated[str, Field(description="Name for the new snapshot")],
 ) -> list[dict[str, Any]]:
-    """Create a new snapshot of a project."""
+    """Create a new snapshot of a project.
+
+    Prerequisite: All stoppable nodes (qemu, docker, dynamips, vpcs, iou, etc.)
+    must be stopped first. Use node_stop_all before creating a snapshot.
+    Cloud, NAT, and switch nodes are always-running and can be ignored.
+    """
     return await asyncio.to_thread(_run_handler_sync, create_snapshot_handler, {
         "project_id": project_id, "name": name,
     })
