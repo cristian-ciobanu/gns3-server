@@ -326,20 +326,6 @@ claude mcp add --transport sse My_GNS3_Server \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### Claude Desktop
-
-Add to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "My_GNS3_Server": {
-      "url": "http://localhost:3080/v3/mcp/transport/sse?token=your_jwt_or_api_key"
-    }
-  }
-}
-```
-
 ## Transport Security
 
 MCP server uses FastMCP's DNS rebinding protection to prevent attackers from
@@ -400,12 +386,12 @@ For public-facing MCP servers, set `allowed_hosts` to your server's domain name.
 
 ```mermaid
 sequenceDiagram
-    participant Client as Claude Code / Claude Desktop
+    participant Client as Claude Code
     participant MCP as MCP Service
-    participant Auth as JWT Auth
+    participant Auth as Auth
     participant GNS3 as GNS3 REST API
 
-    Note over Client: 1. Connect with JWT
+    Note over Client: 1. Connect with credential (JWT or API Key)
     Client->>MCP: GET /sse (token in header or query)
     MCP->>Auth: Validate Token
     Auth-->>MCP: Token Valid
@@ -419,7 +405,7 @@ sequenceDiagram
     Client->>MCP: POST /messages/ (tools/list)
     MCP-->>Client: event: message (tools list)
 
-    Client->>MCP: POST /messages/ (tools/call list_projects)
+    Client->>MCP: POST /messages/ (tools/call project_list)
     MCP->>GNS3: Gns3Connector HTTP request
     GNS3-->>MCP: Projects data
     MCP-->>Client: event: message (tool result)
