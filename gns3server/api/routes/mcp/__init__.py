@@ -569,9 +569,12 @@ async def node_console(
 # ── Link tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def link_list(project_id: str) -> list[dict[str, Any]]:
-    """List all links in a project."""
-    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id})
+async def link_list(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    fields: Annotated[list[str] | None, Field(description="Optional: return only these fields. e.g. [\"link_id\",\"nodes\"]. Available: link_id, project_id, link_type, nodes, suspend, filters, capturing, capture_file_name, link_style")] = None,
+) -> list[dict[str, Any]]:
+    """List all links in a project. Use fields=[] to return only what you need."""
+    return await asyncio.to_thread(_run_handler_sync, get_links_handler, {"project_id": project_id, "fields": fields})
 
 
 @mcp.tool()

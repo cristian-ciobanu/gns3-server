@@ -48,12 +48,31 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
+VALID_LINK_FIELDS = {
+    "link_id", "project_id", "link_type", "nodes", "suspend",
+    "link_style", "filters", "show_filters_icon",
+    "capturing", "capture_file_name", "capture_file_path",
+    "capture_compute_id", "wireshark",
+}
+
+
 def get_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
         return {"error": "project_id is required"}
     conn = _get_connector(gns3_ctx)
     links = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/links").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list, e.g. [\"link_id\", \"nodes\"]"}
+        invalid = [f for f in fields if f not in VALID_LINK_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_LINK_FIELDS),
+            }
+        links = [{k: l[k] for k in fields if k in l} for l in links]
     return {"links": links, "count": len(links)}
 
 
