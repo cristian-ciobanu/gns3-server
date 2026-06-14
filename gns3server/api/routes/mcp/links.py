@@ -137,9 +137,24 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def delete_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        def _del(lid):
+            try:
+                conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/links/{lid}")
+                return {"link_id": lid, "status": "deleted"}
+            except Exception as e:
+                return {"link_id": lid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+            return list(pool.map(_del, link_ids))
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/links/{link_id}")
     return {"message": f"Link {link_id} deleted", "link_id": link_id}
@@ -167,9 +182,25 @@ def update_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
 def reset_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        def _rst(lid):
+            try:
+                url = f"{conn.base_url}/projects/{project_id}/links/{lid}/reset"
+                r = conn.http_call("post", url).json()
+                return {"link_id": lid, "status": "reset", "link": r}
+            except Exception as e:
+                return {"link_id": lid, "status": "error", "error": str(e)}
+        with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+            return list(pool.map(_rst, link_ids))
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/reset"
     result = conn.http_call("post", url).json()

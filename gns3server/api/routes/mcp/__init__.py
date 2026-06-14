@@ -612,10 +612,16 @@ async def link_create(
 @mcp.tool()
 async def link_delete(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link to delete")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — delete multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Delete a link from a project."""
-    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, {"project_id": project_id, "link_id": link_id})
+    """Delete one or more links from a project."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, delete_link_handler, params)
 
 
 @mcp.tool()
@@ -909,9 +915,10 @@ async def node_links(
 @mcp.tool()
 async def link_reset(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reset multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Reset a link by tearing down the underlying UDP connection and recreating it.
+    """Reset one or more links by tearing down and recreating the UDP connection.
 
     Use cases:
     - Clear accumulated packet errors/drops from the link's UDP connection
@@ -920,9 +927,12 @@ async def link_reset(
 
     Filters are preserved but their internal application state resets.
     """
-    return await asyncio.to_thread(_run_handler_sync, reset_link_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, reset_link_handler, params)
 
 
 @mcp.tool()
