@@ -919,28 +919,34 @@ async def link_reset(
 @mcp.tool()
 async def link_capture_start(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
     data_link_type: Annotated[str, Field(description="Data link type (default: DLT_EN10MB)")] = "DLT_EN10MB",
     capture_file_name: Annotated[str | None, Field(description="Capture file name (optional)")] = None,
     wireshark: Annotated[bool, Field(description="Open Wireshark automatically (default: false)")] = False,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — start capture on multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Start packet capture on a link. The capture file can later be downloaded with download_capture_file."""
-    return await asyncio.to_thread(_run_handler_sync, start_capture_handler, {
-        "project_id": project_id, "link_id": link_id,
-        "data_link_type": data_link_type, "capture_file_name": capture_file_name,
-        "wireshark": wireshark,
-    })
+    """Start packet capture on one or more links."""
+    params = {"project_id": project_id, "data_link_type": data_link_type, "capture_file_name": capture_file_name, "wireshark": wireshark}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, start_capture_handler, params)
 
 
 @mcp.tool()
 async def link_capture_stop(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    link_id: Annotated[str, Field(description="UUID of the link")],
+    link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
+    link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — stop capture on multiple links in parallel")] = None,
 ) -> list[dict[str, Any]]:
-    """Stop packet capture on a link. After stopping, the capture file can be downloaded."""
-    return await asyncio.to_thread(_run_handler_sync, stop_capture_handler, {
-        "project_id": project_id, "link_id": link_id,
-    })
+    """Stop packet capture on one or more links."""
+    params = {"project_id": project_id}
+    if link_ids:
+        params["link_ids"] = link_ids
+    else:
+        params["link_id"] = link_id
+    return await asyncio.to_thread(_run_handler_sync, stop_capture_handler, params)
 
 
 @mcp.tool()

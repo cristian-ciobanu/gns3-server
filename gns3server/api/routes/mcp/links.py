@@ -157,11 +157,41 @@ def reset_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict
     return {"message": f"Link {link_id} reset", "link": result}
 
 
+def _batch_capture(project_id, link_ids, action, data_builder, conn):
+    """Helper for batch capture start/stop."""
+    def _act(lid):
+        try:
+            url = f"{conn.base_url}/projects/{project_id}/links/{lid}/capture/{action}"
+            kwargs = data_builder(lid) if data_builder else {}
+            conn.http_call("post", url, **kwargs)
+            return {"link_id": lid, "status": "success"}
+        except Exception as e:
+            return {"link_id": lid, "status": "error", "error": str(e)}
+    with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
+        return list(pool.map(_act, link_ids))
+
+
 def start_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        dlt = params.get("data_link_type", "DLT_EN10MB")
+        ws = params.get("wireshark", False)
+        fname = params.get("capture_file_name")
+        def _build(lid):
+            data = {"data_link_type": dlt, "wireshark": ws}
+            if fname:
+                data["capture_file_name"] = fname
+            return {"json_data": data}
+        return _batch_capture(project_id, link_ids, "start", _build, conn)
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     data = {
         "data_link_type": params.get("data_link_type", "DLT_EN10MB"),
@@ -176,9 +206,17 @@ def start_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> d
 
 def stop_capture_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
+    if not project_id:
+        return {"error": "project_id is required"}
+    link_ids = params.get("link_ids")
+    if link_ids:
+        if not isinstance(link_ids, list):
+            return {"error": "link_ids must be a list"}
+        conn = _get_connector(gns3_ctx)
+        return _batch_capture(project_id, link_ids, "stop", None, conn)
     link_id = params.get("link_id")
-    if not project_id or not link_id:
-        return {"error": "project_id and link_id are required"}
+    if not link_id:
+        return {"error": "link_id or link_ids is required"}
     conn = _get_connector(gns3_ctx)
     url = f"{conn.base_url}/projects/{project_id}/links/{link_id}/capture/stop"
     conn.http_call("post", url)
