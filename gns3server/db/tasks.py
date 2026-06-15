@@ -99,17 +99,6 @@ async def connect_to_db(app: FastAPI) -> None:
             return row[0] if row else "unknown"
         wal_mode = await _verify_conn.run_sync(_check_wal)
         log.info(f"SQLite journal mode: {wal_mode} {'✅' if wal_mode and wal_mode.upper() == 'WAL' else '❌ will cause database contention'}")
-    # Warm up the OS page cache by reading the entire database file.
-    # The first API query suffers 8-14s cold-start penalty when the file
-    # isn't in cache (SQLite + OS page cache combined).
-    try:
-        db_file_size = os.path.getsize(db_path)
-        with open(db_path, "rb") as f:
-            while f.read(1024 * 1024):  # 1MB chunks
-                pass
-        log.info(f"Database warmed up ({db_file_size / 1024:.0f} KB)")
-    except OSError as e:
-        log.warning(f"Could not warm up database file: {e}")
     alembic_cfg = config.Config()
     alembic_cfg.set_main_option("script_location", "gns3server:db_migrations")
     #alembic_cfg.set_main_option('sqlalchemy.url', db_url)
