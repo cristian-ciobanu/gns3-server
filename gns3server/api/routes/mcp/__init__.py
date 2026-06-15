@@ -488,24 +488,31 @@ async def node_suspend(
 @mcp.tool()
 async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode)")] = None,
+    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode; used as default in batch mode)")] = None,
     x: Annotated[int, Field(description="X coordinate")] = 0,
     y: Annotated[int, Field(description="Y coordinate")] = 0,
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
-    nodes: Annotated[list | None, Field(description="Batch mode: [{template_id, x?, y?, name?, compute_id?}] — creates multiple nodes in parallel")] = None,
+    nodes: Annotated[list | None, Field(description="Batch mode: [{name, template_id?, x?, y?, compute_id?}] — top-level template_id applies as default")] = None,
+    fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [node_id, name, node_type, status, console]). "
+                                                           "Available: compute_id, name, node_type, node_id, console, console_type, "
+                                                           "console_auto_start, aux, aux_type, properties, label, symbol, x, y, z, "
+                                                           "locked, port_name_format, port_segment_size, first_port_name, "
+                                                           "custom_adapters, tags, template_id, project_id, node_directory, "
+                                                           "status, command_line, width, height, ports, console_host")] = None,
 ) -> list[dict[str, Any]]:
     """Create one or more nodes from templates.
 
     Single mode: provide template_id, x, y (optional compute_id)
-    Batch mode:  provide nodes=[{template_id, x, y, name?, compute_id?}] — creates up to 10 in parallel
+    Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 10 in parallel.
+                 Top-level template_id applies to all nodes; individual nodes can override.
     """
     if nodes is not None:
         return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
-            "project_id": project_id, "nodes": nodes,
+            "project_id": project_id, "nodes": nodes, "fields": fields,
         })
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
-        "x": x, "y": y, "compute_id": compute_id,
+        "x": x, "y": y, "compute_id": compute_id, "fields": fields,
     })
 
 
