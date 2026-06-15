@@ -31,3 +31,6 @@
 ### MCP Service
 - **[MCP Service Design](./mcp-service-design.md)** - MCP (Model Context Protocol) service architecture using FastMCP with SSE transport, JWT auth, 29 tools across 5 domains
 - **[MCP Tool Description Location](./mcp-tool-description-guide.md)** - Where to define MCP tool descriptions: in `@mcp.tool()` functions in `__init__.py`, not in `*_TOOLS` arrays
+
+### Python Code Verification
+- **[Import Validation](./python-import-validation.md)** - Use actual module imports (`python -c "from ... import ..."`) instead of `py_compile` to catch missing imports
