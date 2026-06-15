@@ -80,6 +80,25 @@ async def connect_to_db(app: FastAPI) -> None:
     db_path = os.path.join(Config.instance().config_dir, "gns3_controller.db")
     db_url = os.environ.get("GNS3_DATABASE_URI", f"sqlite+aiosqlite:///{db_path}")
     engine = create_async_engine(db_url, connect_args={"check_same_thread": False, "timeout": 20}, future=True, pool_size=512, max_overflow=1024)
+
+    # Register PRAGMA on the sync engine to ensure it fires for async connections
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    # Verify WAL mode is active
+    async with engine.connect() as _verify_conn:
+        def _check_wal(conn):
+            cursor = conn.connection.cursor()
+            cursor.execute("PRAGMA journal_mode")
+            row = cursor.fetchone()
+            cursor.close()
+            return row[0] if row else "unknown"
+        wal_mode = await _verify_conn.run_sync(_check_wal)
+        log.info(f"SQLite journal mode: {wal_mode} {'✅' if wal_mode and wal_mode.upper() == 'WAL' else '❌ will cause database contention'}")
     alembic_cfg = config.Config()
     alembic_cfg.set_main_option("script_location", "gns3server:db_migrations")
     #alembic_cfg.set_main_option('sqlalchemy.url', db_url)
@@ -144,19 +163,6 @@ async def disconnect_from_db(app: FastAPI) -> None:
     if getattr(app.state, "_db_engine"):
         await app.state._db_engine.dispose()
         log.info(f"Disconnected from database")
-
-
-@event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-
-    # Enable WAL mode for SQLite to allow concurrent reads and writes.
-    # Without WAL, concurrent API requests can cause "database is locked" errors.
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    # Enable SQL foreign key support for SQLite
-    # https://docs.sqlalchemy.org/en/14/dialects/sqlite.html#foreign-key-support
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
 
 
 async def get_computes(app: FastAPI) -> List[dict]:
