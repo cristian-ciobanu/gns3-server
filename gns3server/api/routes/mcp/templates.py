@@ -43,9 +43,38 @@ def _get_connector(gns3_ctx: dict[str, Any]):
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
+VALID_TEMPLATE_FIELDS = {
+    "template_id", "name", "version", "category", "default_name_format",
+    "symbol", "template_type", "compute_id", "usage", "tags", "builtin",
+    "created_at", "updated_at",
+}
+
+TEMPLATE_DEFAULT_FIELDS = ["template_id", "name", "template_type", "category", "default_name_format"]
+
+
+def _filter_templates(templates, fields):
+    """Filter each template to only include requested fields."""
+    if not fields:
+        fields = TEMPLATE_DEFAULT_FIELDS
+    if isinstance(templates, dict):
+        return {k: templates[k] for k in fields if k in templates}
+    return [{k: t[k] for k in fields if k in t} for t in templates]
+
+
 def list_templates_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
     templates = conn.http_call("get", f"{conn.base_url}/templates").json()
+    fields = params.get("fields")
+    if fields:
+        if not isinstance(fields, list):
+            return {"error": "fields must be a list, e.g. [\"template_id\", \"name\"]"}
+        invalid = [f for f in fields if f not in VALID_TEMPLATE_FIELDS]
+        if invalid:
+            return {
+                "error": f"Unknown fields: {invalid}",
+                "available_fields": sorted(VALID_TEMPLATE_FIELDS),
+            }
+        templates = _filter_templates(templates, fields)
     return {"templates": templates, "count": len(templates)}
 
 
