@@ -596,10 +596,10 @@ async def link_get(
 @mcp.tool()
 async def link_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}]")] = None,
+    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}] or compact [id, ad, pt, id, ad, pt]")] = None,
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
     filters: Annotated[dict | None, Field(description="Optional packet filters")] = None,
-    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — creates multiple links in parallel")] = None,
+    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — nodes supports compact [id, ad, pt, id, ad, pt] format")] = None,
     fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [link_id, link_type, nodes]). "
                                                            "Available: link_id, project_id, link_type, nodes, suspend, "
                                                            "link_style, filters, show_filters_icon, capturing, "

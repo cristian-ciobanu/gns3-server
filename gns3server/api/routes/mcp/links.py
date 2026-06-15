@@ -46,6 +46,26 @@ def _get_connector(gns3_ctx: dict[str, Any]):
     )
 
 
+def _normalize_link_nodes(nodes) -> list[dict[str, Any]]:
+    """
+    Normalize link node entries, accepting both standard object format and
+    compact array format to reduce token usage.
+
+    Standard: [{"node_id": "uuid", "adapter_number": 0, "port_number": 0}]
+    Compact:  ["uuid", 0, 0, "uuid", 0, 0]
+    """
+    if not nodes:
+        return nodes
+    if isinstance(nodes[0], dict):
+        return nodes
+    if isinstance(nodes, list) and len(nodes) == 6:
+        return [
+            {"node_id": nodes[0], "adapter_number": nodes[1], "port_number": nodes[2]},
+            {"node_id": nodes[3], "adapter_number": nodes[4], "port_number": nodes[5]},
+        ]
+    return nodes
+
+
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
 VALID_LINK_FIELDS = {
@@ -100,10 +120,11 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(link_data):
-            if not link_data.get("nodes"):
+            raw_nodes = link_data.get("nodes")
+            if not raw_nodes:
                 return {"status": "error", "error": "nodes is required for each link"}
             try:
-                body = {"nodes": link_data["nodes"]}
+                body = {"nodes": _normalize_link_nodes(raw_nodes)}
                 if link_data.get("link_type"):
                     body["link_type"] = link_data["link_type"]
                 if link_data.get("filters"):
@@ -126,7 +147,7 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not nodes:
         return {"error": "nodes is required"}
     conn = _get_connector(gns3_ctx)
-    data = {"nodes": nodes}
+    data = {"nodes": _normalize_link_nodes(nodes)}
     if "link_type" in params:
         data["link_type"] = params["link_type"]
     if "filters" in params:
