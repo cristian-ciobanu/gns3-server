@@ -195,20 +195,31 @@ def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
     return {"message": f"Node {node_id} suspended", "node_id": node_id}
 
 
+def _filter_node_response(node: dict, fields: list[str] = None) -> dict:
+    """Filter node response to only include requested fields."""
+    if not fields:
+        fields = ["node_id", "name", "node_type", "status", "console"]
+    return {k: node[k] for k in fields if k in node}
+
+
 def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
         return {"error": "project_id is required"}
 
+    fields = params.get("fields")
+
     nodes = params.get("nodes")
-    # Batch mode: nodes=[{template_id, x, y, name?, compute_id?}]
+    # Batch mode: nodes=[{template_id?, x, y, name?, compute_id?}]
+    # When top-level template_id is set, it applies to all nodes as a default
     if nodes is not None:
         if not isinstance(nodes, list) or not nodes:
             return {"error": "nodes must be a non-empty array"}
+        default_tid = params.get("template_id")
         results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(node_data):
-            tid = node_data.get("template_id")
+            tid = node_data.get("template_id", default_tid)
             if not tid:
                 return {"template_id": tid, "status": "error", "error": "template_id is required"}
             try:
@@ -219,7 +230,7 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                     "compute_id": node_data.get("compute_id", "local"),
                 }
                 resp = conn.http_call("post", url, json_data=body).json()
-                return {"template_id": tid, "status": "success", "node": resp}
+                return {"template_id": tid, "status": "success", "node": _filter_node_response(resp, fields)}
             except Exception as e:
                 return {"template_id": tid, "status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
@@ -239,7 +250,8 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         "compute_id": params.get("compute_id", "local"),
     }
     url = f"{conn.base_url}/projects/{project_id}/templates/{template_id}"
-    return conn.http_call("post", url, json_data=data).json()
+    resp = conn.http_call("post", url, json_data=data).json()
+    return _filter_node_response(resp, fields)
 
 
 def delete_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
