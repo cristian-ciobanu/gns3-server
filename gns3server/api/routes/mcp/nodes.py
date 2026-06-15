@@ -229,6 +229,9 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                     "y": node_data.get("y", 0),
                     "compute_id": node_data.get("compute_id", "local"),
                 }
+                node_name = node_data.get("name")
+                if node_name:
+                    body["name"] = node_name
                 resp = conn.http_call("post", url, json_data=body).json()
                 return {"template_id": tid, "status": "success", "node": _filter_node_response(resp, fields)}
             except Exception as e:
@@ -249,6 +252,9 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         "y": params.get("y", 0),
         "compute_id": params.get("compute_id", "local"),
     }
+    node_name = params.get("name")
+    if node_name:
+        data["name"] = node_name
     url = f"{conn.base_url}/projects/{project_id}/templates/{template_id}"
     resp = conn.http_call("post", url, json_data=data).json()
     return _filter_node_response(resp, fields)
