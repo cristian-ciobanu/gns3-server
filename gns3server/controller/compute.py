@@ -552,7 +552,7 @@ class Compute:
                 method, url, headers=headers, data=data, auth=self._auth, params=params, chunked=chunked, timeout=timeout
             )
             log.info(f"[CTRL-TIMING] compute._session.request DONE {method} {url.split('/v3')[1] if '/v3' in url else url} "
-                     f"status={response.status} elapsed={_time.time()-_t0:.3f}s")
+                     f"status={response.status} elapsed={time.time()-_t0:.3f}s")
         except asyncio.TimeoutError:
             raise ComputeError(f"Timeout error for {method} call to {url} after {timeout}s")
         except (
