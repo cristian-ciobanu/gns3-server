@@ -57,31 +57,32 @@ async def get_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # API Key authentication
+    # API Key authentication — format: gns3_<api_key_id>_<random_secret>
+    # Direct lookup by UUID avoids O(n) scan of all keys.
     if token.startswith("gns3_"):
         log.info(f"[CTRL-TIMING] get_user_from_token API_KEY auth elapsed={time.time()-_t0:.3f}s")
-        query = select(models.ApiKey).where(models.ApiKey.revoked == False)
-        result = await api_keys_repo._db_session.execute(query)
-        api_keys_list = result.scalars().all()
-        log.info(f"[CTRL-TIMING] get_user_from_token api_keys_count={len(api_keys_list)} elapsed={time.time()-_t0:.3f}s")
-        for db_key in api_keys_list:
-            # bcrypt.checkpw is CPU-bound and blocks the event loop; run in thread
-            if await asyncio.to_thread(bcrypt.checkpw, token.encode(), db_key.key_hash.encode()):
-                await api_keys_repo.update_last_used(db_key.api_key_id)
-                user = await user_repo.get_user(db_key.user_id)
-                if user:
-                    if not user.is_active:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Not an active user",
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
-                    return user
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        parts = token.split("_", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format")
+        try:
+            key_id = UUID(parts[1])
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format")
+        secret = parts[2]
+        db_key = await api_keys_repo.get_api_key(key_id)
+        if not db_key or db_key.revoked:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        if not await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.encode()):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        await api_keys_repo.update_last_used(db_key.api_key_id)
+        user = await user_repo.get_user(db_key.user_id)
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not an active user",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
 
     # JWT authentication
     token_data = auth_service.get_token_data(token)
