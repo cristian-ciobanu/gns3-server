@@ -609,12 +609,9 @@ async def create_node_from_template(
 
     Required privilege: Node.Allocate
     """
-    import time as _time
     _t0 = _time.time()
-    log.info(f"[CTRL-TIMING] create_node_from_template ENTER template_id={template_id}")
 
     template = await TemplatesService(templates_repo).get_template(template_id)
-    log.info(f"[CTRL-TIMING] get_template done elapsed={_time.time()-_t0:.3f}s")
 
     controller = Controller.instance()
     project = controller.get_project(str(project_id))
@@ -622,8 +619,6 @@ async def create_node_from_template(
     node = await project.add_node_from_template(
         template, x=template_usage.x, y=template_usage.y, compute_id=template_usage.compute_id
     )
-    log.info(f"[CTRL-TIMING] add_node_from_template done elapsed={_time.time()-_t0:.3f}s")
 
     result = node.asdict()
-    log.info(f"[CTRL-TIMING] create_node_from_template DONE total={_time.time()-_t0:.3f}s")
     return result

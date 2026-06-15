@@ -49,7 +49,6 @@ Upstream: https://github.com/davidban77/gns3fy
 
 import os
 import time
-import logging
 from collections.abc import Callable
 from dataclasses import field
 from functools import wraps
@@ -76,7 +75,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 config = ConfigDict(validate_assignment=True, extra="ignore")
 
-log = logging.getLogger(__name__)
 
 NODE_TYPES = [
     "cloud",
@@ -214,9 +212,6 @@ class Gns3Connector:
         Performs v3 API authentication using username and password to get JWT token.
         Skips authentication if a JWT token is already provided.
         """
-        import time
-        _t0 = time.time()
-        log.info(f"[MCP-TIMING] _authenticate_v3 ENTER has_token={bool(self.access_token)}")
         # If token is already provided, skip authentication
         if self.access_token:
             return
@@ -255,9 +250,7 @@ class Gns3Connector:
                     f"{response.text}"
                 )
         except Exception as e:
-            log.error(f"[MCP-TIMING] _authenticate_v3 FAIL elapsed={time.time()-_t0:.3f}s error={e}")
             raise HTTPError(f"v3 API authentication error: {str(e)}") from e
-        log.info(f"[MCP-TIMING] _authenticate_v3 DONE elapsed={time.time()-_t0:.3f}s")
 
     def _is_token_expired(self) -> bool:
         """
@@ -299,9 +292,6 @@ class Gns3Connector:
         """
         Executes HTTP operations and handles GNS3-specific error logic.
         """
-        import time
-        _t0 = time.time()
-        log.info(f"[MCP-TIMING] http_call ENTER {method.upper()} {url.split('/v3')[1] if '/v3' in url else url}")
 
         # Handle JWT authentication
         if (
@@ -311,7 +301,6 @@ class Gns3Connector:
             and self.cred
         ):
             self._authenticate_v3()
-            log.info(f"[MCP-TIMING] http_call auth done elapsed={time.time()-_t0:.3f}s")
 
         # Get request function (e.g., session.get, session.post)
         caller = getattr(self.session, method.lower())
@@ -333,12 +322,10 @@ class Gns3Connector:
 
         self.api_calls += 1
 
-        log.info(f"[MCP-TIMING] http_call RESPONSE elapsed={time.time()-_t0:.3f}s status={_response.status_code}")
 
         try:
             _response.raise_for_status()
         except HTTPError as e:
-            log.error(f"[MCP-TIMING] http_call ERROR elapsed={time.time()-_t0:.3f}s {e}")
             # Throw enhanced error
             raise self._extract_gns3_error(e) from e
 

@@ -45,7 +45,6 @@ async def get_user_from_token(
 
     import time
     _t0 = time.time()
-    log.info(f"[CTRL-TIMING] get_user_from_token ENTER bearer={bool(bearer_token)}")
 
     if bearer_token:
         # bearer token is used first, then any token passed as a URL parameter
@@ -61,7 +60,6 @@ async def get_user_from_token(
     # API Key authentication — format: gns3_<api_key_id>_<random_secret>
     # Direct lookup by UUID avoids O(n) scan of all keys.
     if token.startswith("gns3_"):
-        log.info(f"[CTRL-TIMING] get_user_from_token API_KEY auth elapsed={time.time()-_t0:.3f}s")
         parts = token.split("_", 2)
         if len(parts) != 3:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format")
@@ -100,7 +98,6 @@ async def get_user_from_token(
             detail=f"Token has been revoked for '{token_data.username}'",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    log.info(f"[CTRL-TIMING] get_user_from_token DONE elapsed={time.time()-_t0:.3f}s user={user.username}")
     return user
 
 

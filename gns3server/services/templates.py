@@ -264,7 +264,6 @@ class TemplatesService:
         _t0 = time.time()
 
         db_template = await self._templates_repo.get_template(template_id)
-        log.info(f"[CTRL-TIMING] TemplatesService.get_template repo done elapsed={time.time()-_t0:.3f}s")
 
         if db_template:
             template = db_template.asjson()
@@ -272,7 +271,6 @@ class TemplatesService:
             template = self.get_builtin_template(template_id)
         if not template:
             raise ControllerNotFoundError(f"Template '{template_id}' not found")
-        log.info(f"[CTRL-TIMING] TemplatesService.get_template DONE total={time.time()-_t0:.3f}s")
         return template
 
     async def _remove_image(self, template_id: UUID, image_path: str) -> None:

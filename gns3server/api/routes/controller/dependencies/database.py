@@ -30,10 +30,8 @@ async def get_db_session(request: HTTPConnection) -> AsyncSession:
 
     import time
     _t0 = time.time()
-    log.info(f"[CTRL-TIMING] get_db_session ENTER")
     async with AsyncSession(request.app.state._db_engine, expire_on_commit=False) as session:
         try:
-            log.info(f"[CTRL-TIMING] get_db_session SESSION_READY elapsed={time.time()-_t0:.3f}s")
             yield session
         finally:
             await session.close()

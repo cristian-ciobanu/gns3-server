@@ -402,8 +402,6 @@ class Node:
         """
         Create the node on the compute
         """
-        import time as _time
-        _t0 = _time.time()
         data = self._node_data()
         data["node_id"] = self._id
         if self._node_type == "docker":
@@ -416,8 +414,6 @@ class Node:
                 response = await self._compute.post(
                     f"/projects/{self._project.id}/{self._node_type}/nodes", data=data, timeout=timeout
                 )
-                log.info(f"[CTRL-TIMING] Node.create compute_post DONE name={self._name} "
-                         f"type={self._node_type} elapsed={_time.time()-_t0:.3f}s")
             except ComputeConflictError as e:
                 response = e.response()
                 if response.get("exception") == "ImageMissingError":

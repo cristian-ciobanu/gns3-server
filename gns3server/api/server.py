@@ -49,7 +49,6 @@ from gns3server.api.routes import mcp
 from gns3server.core import tasks
 
 import logging
-import time
 
 log = logging.getLogger(__name__)
 
@@ -215,23 +214,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"message": str(exc)}
     )
 
-    @app.middleware("http")
-    async def timing_middleware(request: Request, call_next):
-        _t0 = time.time()
-        response = await call_next(request)
-        elapsed = time.time() - _t0
-        if elapsed > 1.0:
-            log.info(f"[CTRL-TIMING] request {request.method} {request.url.path} total={elapsed:.3f}s")
-        return response
 
 # FIXME: do not use this middleware since it creates issue when using StreamingResponse
 # see https://starlette-context.readthedocs.io/en/latest/middleware.html#why-are-there-two-middlewares-that-do-the-same-thing
 
-# @app.middleware("http")
-# async def add_extra_headers(request: Request, call_next):
-#     start_time = time.time()
-#     response = await call_next(request)
-#     process_time = time.time() - start_time
-#     response.headers["X-Process-Time"] = str(process_time)
-#     response.headers["X-GNS3-Server-Version"] = f"{__version__}"
-#     return response
