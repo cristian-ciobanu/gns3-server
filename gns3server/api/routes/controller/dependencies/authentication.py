@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import asyncio
 import logging
 import bcrypt
 
@@ -64,7 +65,8 @@ async def get_user_from_token(
         api_keys_list = result.scalars().all()
         log.info(f"[CTRL-TIMING] get_user_from_token api_keys_count={len(api_keys_list)} elapsed={time.time()-_t0:.3f}s")
         for db_key in api_keys_list:
-            if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
+            # bcrypt.checkpw is CPU-bound and blocks the event loop; run in thread
+            if await asyncio.to_thread(bcrypt.checkpw, token.encode(), db_key.key_hash.encode()):
                 await api_keys_repo.update_last_used(db_key.api_key_id)
                 user = await user_repo.get_user(db_key.user_id)
                 if user:
