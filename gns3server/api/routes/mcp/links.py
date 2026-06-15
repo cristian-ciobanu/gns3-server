@@ -96,6 +96,16 @@ VALID_LINK_FIELDS = {
 }
 
 
+LINK_DEFAULT_FIELDS = ["link_id", "link_type", "nodes"]
+
+
+def _filter_link_response(link: dict, fields: list[str] = None) -> dict:
+    """Filter link response to only include requested fields."""
+    if not fields:
+        fields = LINK_DEFAULT_FIELDS
+    return {k: link[k] for k in fields if k in link}
+
+
 def get_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
