@@ -43,8 +43,6 @@ async def get_user_from_token(
         token: Optional[str] = Query(None, include_in_schema=False)
 ) -> schemas.User:
 
-    import time
-    _t0 = time.time()
 
     if bearer_token:
         # bearer token is used first, then any token passed as a URL parameter

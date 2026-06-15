@@ -260,8 +260,6 @@ class TemplatesService:
         return template
 
     async def get_template(self, template_id: UUID) -> dict:
-        import time
-        _t0 = time.time()
 
         db_template = await self._templates_repo.get_template(template_id)
 

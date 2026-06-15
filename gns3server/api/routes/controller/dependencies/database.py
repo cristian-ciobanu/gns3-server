@@ -28,8 +28,6 @@ log = logging.getLogger(__name__)
 
 async def get_db_session(request: HTTPConnection) -> AsyncSession:
 
-    import time
-    _t0 = time.time()
     async with AsyncSession(request.app.state._db_engine, expire_on_commit=False) as session:
         try:
             yield session

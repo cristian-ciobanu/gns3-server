@@ -203,8 +203,6 @@ def _filter_node_response(node: dict, fields: list[str] = None) -> dict:
 
 
 def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    import time
-    _t0 = time.time()
 
     project_id = params.get("project_id")
     if not project_id:
@@ -222,7 +220,6 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(node_data):
-            _t1 = time.time()
             tid = node_data.get("template_id", default_tid)
             if not tid:
                 return {"template_id": tid, "status": "error", "error": "template_id is required"}
@@ -260,7 +257,6 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if node_name:
         data["name"] = node_name
     url = f"{conn.base_url}/projects/{project_id}/templates/{template_id}"
-    _t2 = time.time()
     resp = conn.http_call("post", url, json_data=data).json()
     return _filter_node_response(resp, fields)
 
