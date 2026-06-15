@@ -620,18 +620,17 @@ class Project:
 
         if node_type == "iou":
             async with self._iou_id_lock:
-                # Only hold the lock while allocating a unique application ID to avoid
-                # serializing the HTTP call to the compute across all IOU nodes.
-                # Multiple IOU nodes can be created concurrently once IDs are assigned.
+                # IOU application IDs must be allocated serially to avoid duplicates.
+                # The lock must also cover _create_node() because get_next_application_id()
+                # checks in-memory nodes (self._nodes), which are only registered
+                # after _create_node() completes.
                 if "properties" in kwargs.keys():
-                    # allocate a new application id for nodes loaded from the project
                     kwargs.get("properties")["application_id"] = get_next_application_id(
                         self._controller.projects, self._computes
                     )
                 elif "application_id" not in kwargs.keys() and not kwargs.get("properties"):
-                    # allocate a new application id for nodes added to the project
                     kwargs["application_id"] = get_next_application_id(self._controller.projects, self._computes)
-            node = await self._create_node(compute, name, node_id, node_type, **kwargs)
+                node = await self._create_node(compute, name, node_id, node_type, **kwargs)
         else:
             node = await self._create_node(compute, name, node_id, node_type, **kwargs)
         self.emit_notification("node.created", node.asdict())
