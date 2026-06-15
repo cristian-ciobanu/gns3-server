@@ -41,6 +41,10 @@ async def get_user_from_token(
         token: Optional[str] = Query(None, include_in_schema=False)
 ) -> schemas.User:
 
+    import time
+    _t0 = time.time()
+    log.info(f"[CTRL-TIMING] get_user_from_token ENTER bearer={bool(bearer_token)}")
+
     if bearer_token:
         # bearer token is used first, then any token passed as a URL parameter
         token = bearer_token
@@ -89,6 +93,7 @@ async def get_user_from_token(
             detail=f"Token has been revoked for '{token_data.username}'",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    log.info(f"[CTRL-TIMING] get_user_from_token DONE elapsed={time.time()-_t0:.3f}s user={user.username}")
     return user
 
 
