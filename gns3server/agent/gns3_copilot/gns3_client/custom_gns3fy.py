@@ -308,7 +308,7 @@ class Gns3Connector:
             "headers": headers,
             "params": params,
             "verify": verify,
-            "timeout": 10.0,  # Fixed 10-second timeout for all GNS3 API requests
+            "timeout": 30.0,
         }
         if data is not None:
             kwargs["data"] = data
