@@ -563,13 +563,14 @@ class Project:
         """
         Create a node from a template.
         """
+        import time as _time
+        _t0 = _time.time()
 
         template["x"] = x
         template["y"] = y
         node_type = template.pop("template_type")
 
         if compute_id:
-            # use a custom compute_id
             compute = self.controller.get_compute(compute_id)
         else:
             compute = self.controller.get_compute(template.pop("compute_id"))
@@ -580,26 +581,30 @@ class Project:
             name = default_name_format.replace("{name}", template_name)
         node_id = str(uuid.uuid4())
         node = await self.add_node(compute, name, node_id, node_type=node_type, **template)
+        log.info(f"[CTRL-TIMING] add_node_from_template DONE name={name} elapsed={_time.time()-_t0:.3f}s")
         return node
 
     async def _create_node(self, compute, name, node_id, node_type=None, **kwargs):
+        import time as _time
+        _t0 = _time.time()
 
         node = Node(self, compute, name, node_id=node_id, node_type=node_type, **kwargs)
+        _t1 = _time.time()
         if compute not in self._project_created_on_compute:
-            # For a local server we send the project path
             if compute.id == "local":
                 data = {"name": self._name, "project_id": self._id, "path": self._path}
             else:
                 data = {"name": self._name, "project_id": self._id}
-
             if self._variables:
                 data["variables"] = self._variables
-
             await compute.post("/projects", data=data)
             self._project_created_on_compute.add(compute)
+        log.info(f"[CTRL-TIMING] _create_node project_setup name={name} elapsed={_time.time()-_t0:.3f}s"
+                 f" (node_init={_t1-_t0:.3f}s)")
 
         await node.create()
         self._nodes[node.id] = node
+        log.info(f"[CTRL-TIMING] _create_node node.create DONE name={name} elapsed={_time.time()-_t0:.3f}s")
 
         return node
 
