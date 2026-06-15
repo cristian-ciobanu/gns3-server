@@ -149,9 +149,12 @@ async def disconnect_from_db(app: FastAPI) -> None:
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
 
+    # Enable WAL mode for SQLite to allow concurrent reads and writes.
+    # Without WAL, concurrent API requests can cause "database is locked" errors.
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
     # Enable SQL foreign key support for SQLite
     # https://docs.sqlalchemy.org/en/14/dialects/sqlite.html#foreign-key-support
-    cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
