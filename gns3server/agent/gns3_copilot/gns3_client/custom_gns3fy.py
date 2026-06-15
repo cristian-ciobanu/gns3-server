@@ -192,6 +192,10 @@ class Gns3Connector:
         Creates the requests.Session object and applies the necessary parameters
         """
         self.session = requests.Session()  # pragma: no cover
+        # Increase connection pool size to support concurrent MCP batch operations
+        adapter = requests.adapters.HTTPAdapter(pool_connections=500, pool_maxsize=1000)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.session.headers["Accept"] = "application/json"  # pragma: no cover
 
         # Set authentication based on API version
