@@ -609,7 +609,6 @@ async def create_node_from_template(
 
     Required privilege: Node.Allocate
     """
-    _t0 = _time.time()
 
     template = await TemplatesService(templates_repo).get_template(template_id)
 
