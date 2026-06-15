@@ -53,17 +53,37 @@ def _normalize_link_nodes(nodes) -> list[dict[str, Any]]:
 
     Standard: [{"node_id": "uuid", "adapter_number": 0, "port_number": 0}]
     Compact:  ["uuid", 0, 0, "uuid", 0, 0]
+
+    Returns the normalized list, or raises ValueError with a clear message
+    on format errors so the AI can self-correct.
     """
     if not nodes:
         return nodes
+    # Standard object format: [{"node_id": "...", ...}]
     if isinstance(nodes[0], dict):
         return nodes
-    if isinstance(nodes, list) and len(nodes) == 6:
+    # Compact array format: ["uuid", ad, pt, "uuid", ad, pt]
+    if isinstance(nodes, list) and all(not isinstance(n, dict) for n in nodes):
+        if len(nodes) != 6:
+            raise ValueError(
+                f"Compact link format requires exactly 6 elements "
+                f"[node_id, adapter, port, node_id, adapter, port], "
+                f"but got {len(nodes)} elements: {nodes}"
+            )
+        if not isinstance(nodes[0], str) or not isinstance(nodes[3], str):
+            raise ValueError(
+                f"Compact link format expects node_id (string) at positions 0 and 3, "
+                f"got types {type(nodes[0]).__name__} and {type(nodes[3]).__name__}: {nodes}"
+            )
         return [
             {"node_id": nodes[0], "adapter_number": nodes[1], "port_number": nodes[2]},
             {"node_id": nodes[3], "adapter_number": nodes[4], "port_number": nodes[5]},
         ]
-    return nodes
+    raise ValueError(
+        f"Unrecognized link nodes format. "
+        f"Use standard [{{\"node_id\":\"..\",\"adapter_number\":0,\"port_number\":0}},...] "
+        f"or compact [\"id\",0,0,\"id\",0,0], got: {nodes}"
+    )
 
 
 # ── Tool handlers ──────────────────────────────────────────────────────────
