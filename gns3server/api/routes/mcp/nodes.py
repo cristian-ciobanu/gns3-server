@@ -31,7 +31,7 @@ from gns3server.services import auth_service
 
 log = logging.getLogger(__name__)
 
-BATCH_MAX_WORKERS = 10
+BATCH_MAX_WORKERS = 100
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
