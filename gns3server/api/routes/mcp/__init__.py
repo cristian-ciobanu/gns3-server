@@ -32,6 +32,7 @@ import asyncio
 import logging
 import socket
 import uuid
+from uuid import UUID
 import bcrypt
 from typing import Any, Annotated
 from urllib.parse import parse_qs
