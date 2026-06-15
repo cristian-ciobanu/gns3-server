@@ -53,11 +53,15 @@ class TemplatesRepository(BaseRepository):
         super().__init__(db_session)
 
     async def get_template(self, template_id: UUID) -> Union[None, models.Template]:
-
+        import time
+        _t0 = time.time()
         query = select(models.Template).\
             options(selectinload(models.Template.images)).\
             where(models.Template.template_id == template_id)
         result = await self._db_session.execute(query)
+        elapsed = time.time() - _t0
+        if elapsed > 0.1:
+            log.warning(f"[CTRL-TIMING] DB get_template SLOW template_id={template_id} elapsed={elapsed:.3f}s")
         return result.scalars().first()
 
     async def get_template_by_name_and_version(self, name: str, version: str) -> Union[None, models.Template]:
