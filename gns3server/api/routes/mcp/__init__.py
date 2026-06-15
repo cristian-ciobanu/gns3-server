@@ -509,6 +509,7 @@ async def node_create(
     if nodes is not None:
         return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
             "project_id": project_id, "nodes": nodes, "fields": fields,
+            "template_id": template_id,
         })
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
