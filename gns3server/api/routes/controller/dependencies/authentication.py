@@ -58,9 +58,12 @@ async def get_user_from_token(
 
     # API Key authentication
     if token.startswith("gns3_"):
+        log.info(f"[CTRL-TIMING] get_user_from_token API_KEY auth elapsed={time.time()-_t0:.3f}s")
         query = select(models.ApiKey).where(models.ApiKey.revoked == False)
         result = await api_keys_repo._db_session.execute(query)
-        for db_key in result.scalars().all():
+        api_keys_list = result.scalars().all()
+        log.info(f"[CTRL-TIMING] get_user_from_token api_keys_count={len(api_keys_list)} elapsed={time.time()-_t0:.3f}s")
+        for db_key in api_keys_list:
             if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
                 await api_keys_repo.update_last_used(db_key.api_key_id)
                 user = await user_repo.get_user(db_key.user_id)
