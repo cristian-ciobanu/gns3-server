@@ -203,6 +203,10 @@ def _filter_node_response(node: dict, fields: list[str] = None) -> dict:
 
 
 def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    import time
+    _t0 = time.time()
+    log.info(f"[MCP-TIMING] create_node_handler ENTER at T={_t0:.3f}")
+
     project_id = params.get("project_id")
     if not project_id:
         return {"error": "project_id is required"}
@@ -215,10 +219,12 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if nodes is not None:
         if not isinstance(nodes, list) or not nodes:
             return {"error": "nodes must be a non-empty array"}
+        log.info(f"[MCP-TIMING] batch mode: {len(nodes)} nodes, handler_setup={time.time()-_t0:.3f}s")
         default_tid = params.get("template_id")
         results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(node_data):
+            _t1 = time.time()
             tid = node_data.get("template_id", default_tid)
             if not tid:
                 return {"template_id": tid, "status": "error", "error": "template_id is required"}
@@ -232,17 +238,22 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                 node_name = node_data.get("name")
                 if node_name:
                     body["name"] = node_name
+                log.info(f"[MCP-TIMING] http_call START tid={tid} name={node_name} setup={time.time()-_t1:.3f}s")
                 resp = conn.http_call("post", url, json_data=body).json()
+                log.info(f"[MCP-TIMING] http_call END tid={tid} elapsed={time.time()-_t1:.3f}s")
                 return {"template_id": tid, "status": "success", "node": _filter_node_response(resp, fields)}
             except Exception as e:
+                log.error(f"[MCP-TIMING] http_call FAIL tid={tid} elapsed={time.time()-_t1:.3f}s error={e}")
                 return {"template_id": tid, "status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
             futures = {pool.submit(_create_one, n): n for n in nodes}
             for future in as_completed(futures):
                 results.append(future.result())
+        log.info(f"[MCP-TIMING] batch done: {len(results)} results, total={time.time()-_t0:.3f}s")
         return results
 
     # Single mode
+    log.info(f"[MCP-TIMING] single mode: handler_setup={time.time()-_t0:.3f}s")
     template_id = params.get("template_id")
     if not template_id:
         return {"error": "template_id is required"}
@@ -256,7 +267,10 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if node_name:
         data["name"] = node_name
     url = f"{conn.base_url}/projects/{project_id}/templates/{template_id}"
+    _t2 = time.time()
+    log.info(f"[MCP-TIMING] http_call START single template_id={template_id} setup={_t2-_t0:.3f}s")
     resp = conn.http_call("post", url, json_data=data).json()
+    log.info(f"[MCP-TIMING] http_call END single elapsed={time.time()-_t2:.3f}s, total={time.time()-_t0:.3f}s")
     return _filter_node_response(resp, fields)
 
 
