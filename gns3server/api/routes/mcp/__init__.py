@@ -600,6 +600,10 @@ async def link_create(
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
     filters: Annotated[dict | None, Field(description="Optional packet filters")] = None,
     links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — creates multiple links in parallel")] = None,
+    fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [link_id, link_type, nodes]). "
+                                                           "Available: link_id, project_id, link_type, nodes, suspend, "
+                                                           "link_style, filters, show_filters_icon, capturing, "
+                                                           "capture_file_name, capture_file_path, capture_compute_id, wireshark")] = None,
 ) -> list[dict[str, Any]]:
     """Create one or more links between nodes.
 
@@ -608,9 +612,9 @@ async def link_create(
     """
     if links:
         return await asyncio.to_thread(_run_handler_sync, create_link_handler, {
-            "project_id": project_id, "links": links,
+            "project_id": project_id, "links": links, "fields": fields,
         })
-    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
+    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type, "fields": fields}
     if filters:
         params["filters"] = filters
     return await asyncio.to_thread(_run_handler_sync, create_link_handler, params)

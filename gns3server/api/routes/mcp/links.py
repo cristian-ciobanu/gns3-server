@@ -90,6 +90,8 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id:
         return {"error": "project_id is required"}
 
+    fields = params.get("fields")
+
     links = params.get("links")
     # Batch mode: links=[{nodes, link_type?, filters?, suspend?}]
     if links is not None:
@@ -110,7 +112,7 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                     body["suspend"] = link_data["suspend"]
                 url = f"{conn.base_url}/projects/{project_id}/links"
                 resp = conn.http_call("post", url, json_data=body).json()
-                return {"status": "success", "link": resp}
+                return {"status": "success", "link": _filter_link_response(resp, fields)}
             except Exception as e:
                 return {"status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(links), BATCH_MAX_WORKERS)) as pool:
@@ -132,7 +134,8 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if "suspend" in params:
         data["suspend"] = params["suspend"]
     url = f"{conn.base_url}/projects/{project_id}/links"
-    return conn.http_call("post", url, json_data=data).json()
+    resp = conn.http_call("post", url, json_data=data).json()
+    return _filter_link_response(resp, fields)
 
 
 def delete_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
