@@ -213,23 +213,27 @@ async def _resolve_token(token: str) -> str | None:
     except Exception:
         pass
 
-    # Try API key
+    # Try API key — format: gns3_<api_key_id>_<random_secret> → O(1) lookup
     if token.startswith("gns3_") and _app is not None:
         db_engine = getattr(_app.state, "_db_engine", None)
         if db_engine is not None:
             try:
-                async with AsyncSession(db_engine, expire_on_commit=False) as db_session:
-                    repo = ApiKeysRepository(db_session)
-                    query = select(models.ApiKey).where(models.ApiKey.revoked == False)
-                    result = await db_session.execute(query)
-                    for db_key in result.scalars().all():
-                        if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
-                            await repo.update_last_used(db_key.api_key_id)
-                            user_repo = UsersRepository(db_session)
-                            user = await user_repo.get_user(db_key.user_id)
-                            if user:
-                                _jwt_username_var.set(user.username)
-                            return token
+                parts = token.split("_", 2)
+                if len(parts) == 3:
+                    key_id = UUID(parts[1])
+                    secret = parts[2]
+                    async with AsyncSession(db_engine, expire_on_commit=False) as db_session:
+                        repo = ApiKeysRepository(db_session)
+                        db_key = await repo.get_api_key(key_id)
+                        if db_key and not db_key.revoked:
+                            if await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.encode()):
+                                await repo.update_last_used(db_key.api_key_id)
+                                user_repo = UsersRepository(db_session)
+                                user = await user_repo.get_user(db_key.user_id)
+                                if user:
+                                    _jwt_username_var.set(user.username)
+                                    fresh_token = auth_service.create_access_token(user.username)
+                                    return fresh_token
             except Exception:
                 pass
 
