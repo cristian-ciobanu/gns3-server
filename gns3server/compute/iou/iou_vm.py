@@ -57,6 +57,12 @@ log = logging.getLogger(__name__)
 class IOUVM(BaseNode):
     module_name = "iou"
 
+    # Class-level caches shared across all IOU VM instances using the same image.
+    # These avoid redundant subprocess calls during project loading when multiple
+    # IOU nodes use the same image.
+    _loader_cache = {}  # image path -> loader command list
+    _default_values_cache = {}  # image path -> (ram, nvram)
+
     """
     IOU VM implementation.
 
@@ -180,7 +186,14 @@ class IOUVM(BaseNode):
     async def update_default_iou_values(self):
         """
         Finds the default RAM and NVRAM values for the IOU image.
+        Results are cached per image path to avoid redundant subprocess calls
+        when multiple IOU nodes use the same image.
         """
+
+        # Check class-level cache for default values
+        if self._path in IOUVM._default_values_cache:
+            self._ram, self._nvram = IOUVM._default_values_cache[self._path]
+            return
 
         await self._check_requirements()
         try:
@@ -193,6 +206,9 @@ class IOUVM(BaseNode):
             match = re.search(r"-m <n>\s+Megabytes of router memory \(default ([0-9]+)MB\)", output)
             if match:
                 self.ram = int(match.group(1))
+            # Only cache on success, so a subsequent call with explicitly set
+            # ram/nvram values won't be overwritten by stale cached defaults
+            IOUVM._default_values_cache[self._path] = (self._ram, self._nvram)
         except (ValueError, OSError, subprocess.SubprocessError) as e:
             log.warning(f"could not find default RAM and NVRAM values for {os.path.basename(self._path)}: {e}")
 
@@ -207,6 +223,13 @@ class IOUVM(BaseNode):
 
         if self._loader is not None:
             return  # image already checked
+
+        # Check class-level cache: if another IOU VM already verified this image,
+        # reuse its loader configuration to avoid redundant subprocess calls.
+        if self._path in IOUVM._loader_cache:
+            self._loader = IOUVM._loader_cache[self._path]
+            return
+
         if not self._path:
             raise IOUError("IOU image is not configured")
         if not os.path.isfile(self._path) or not os.path.exists(self._path):
@@ -251,6 +274,9 @@ class IOUVM(BaseNode):
                     log.warning(f"Loader {loader} incompatible with '{self._path}'")
             except (OSError, subprocess.SubprocessError) as e:
                 log.warning(f"Could not use loader {loader}: {e}")
+
+        # Cache the loader result for other IOU VMs using the same image
+        IOUVM._loader_cache[self._path] = self._loader
 
     def asdict(self):
 
