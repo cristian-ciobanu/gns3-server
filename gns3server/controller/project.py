@@ -1301,7 +1301,7 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
-            pool = Pool(concurrency=5)
+            pool = Pool(concurrency=20)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
@@ -1319,7 +1319,7 @@ class Project:
                 if count > 0:
                     await self.preallocate_udp_ports_for_compute(compute, count)
             # Create links in parallel for improved performance
-            pool = Pool(concurrency=5)
+            pool = Pool(concurrency=20)
             for link_data in topology.get("links", []):
                 if "link_id" not in link_data.keys():
                     continue
