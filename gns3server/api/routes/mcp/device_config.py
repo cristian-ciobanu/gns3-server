@@ -102,7 +102,7 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     )
 
 
-def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> list[dict[str, Any]]:
+def device_show_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices."""
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")

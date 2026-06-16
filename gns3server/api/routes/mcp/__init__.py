@@ -81,7 +81,7 @@ from .images import (
     install_images_handler,
 )
 from .device_config import (
-    device_config_send_handler, device_command_run_handler,
+    device_config_send_handler, device_show_run_handler,
     vpcs_config_set_handler,
 )
 from .nodes import (
@@ -1405,7 +1405,7 @@ async def device_show_run(
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
         params["template"] = template
-    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, params)
+    return await asyncio.to_thread(_run_handler_sync, device_show_run_handler, params)
 
 
 @mcp.tool()
