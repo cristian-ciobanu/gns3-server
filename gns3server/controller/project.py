@@ -1320,6 +1320,11 @@ class Project:
                     continue
                 pool.append(self._create_link_from_topology_data, link_data)
             await pool.join()
+            # Release any pre-allocated UDP ports that were not consumed by links
+            for compute_id, ports in self._preallocated_udp_ports.items():
+                if ports:
+                    log.warning(f"Releasing {len(ports)} unconsumed pre-allocated UDP ports on compute {compute_id}")
+            self._preallocated_udp_ports.clear()
             for drawing_data in topology.get("drawings", []):
                 await self.add_drawing(dump=False, **drawing_data)
 
