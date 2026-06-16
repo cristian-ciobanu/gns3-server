@@ -494,8 +494,8 @@ async def node_suspend(
 async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
     template_id: Annotated[str | None, Field(description="Template UUID (required for single mode; used as default in batch mode)")] = None,
-    x: Annotated[int, Field(description="X coordinate")] = 0,
-    y: Annotated[int, Field(description="Y coordinate")] = 0,
+    x: Annotated[int, Field(description="X coordinate (canvas center origin, right positive)")] = 0,
+    y: Annotated[int, Field(description="Y coordinate (canvas center origin, down positive)")] = 0,
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
     nodes: Annotated[list | None, Field(description="Batch mode: [{name, template_id?, x?, y?, compute_id?}] — top-level template_id applies as default")] = None,
     fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [node_id, name, node_type, status, console]). "
