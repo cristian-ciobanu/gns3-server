@@ -98,7 +98,9 @@ async def connect_to_db(app: FastAPI) -> None:
             cursor.close()
             return row[0] if row else "unknown"
         wal_mode = await _verify_conn.run_sync(_check_wal)
-        log.info(f"SQLite journal mode: {wal_mode} {'✅' if wal_mode and wal_mode.upper() == 'WAL' else '❌ will cause database contention'}")
+        log.info(f"SQLite journal mode: {wal_mode}")
+        if wal_mode and wal_mode.upper() != "WAL":
+            log.warning("WAL mode not active - concurrent writes may cause 'database is locked' errors")
     alembic_cfg = config.Config()
     alembic_cfg.set_main_option("script_location", "gns3server:db_migrations")
     #alembic_cfg.set_main_option('sqlalchemy.url', db_url)

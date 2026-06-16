@@ -65,6 +65,10 @@ def batch_allocate_udp_ports(project_id: UUID, body: dict) -> dict:
     """
 
     count = body.get("count", 1)
+    try:
+        count = max(1, min(int(count), 10000))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="count must be a positive integer")
     pm = ProjectManager.instance()
     project = pm.get_project(str(project_id))
     m = PortManager.instance()

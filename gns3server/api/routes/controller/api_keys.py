@@ -46,7 +46,7 @@ def _generate_api_key(api_key_id: UUID = None) -> tuple[str, str, str, UUID]:
     raw_key = f"gns3_{api_key_id}_{random_bytes}"
     # Only hash the random secret part, so auth can extract api_key_id and do O(1) lookup
     key_hash = bcrypt.hashpw(random_bytes.encode(), bcrypt.gensalt()).decode()
-    key_prefix = raw_key[: len(API_KEY_PREFIX) + 8]
+    key_prefix = raw_key[:8]
     return raw_key, key_hash, key_prefix, api_key_id
 
 
