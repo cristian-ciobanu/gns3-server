@@ -17,7 +17,6 @@
 import os
 import uuid
 import pydantic
-import logging
 
 from uuid import UUID
 from fastapi.encoders import jsonable_encoder
@@ -34,7 +33,6 @@ from gns3server.controller.controller_error import (
     ControllerForbiddenError,
 )
 
-log = logging.getLogger(__name__)
 
 TEMPLATE_TYPE_TO_SCHEMA = {
     "cloud": schemas.CloudTemplate,

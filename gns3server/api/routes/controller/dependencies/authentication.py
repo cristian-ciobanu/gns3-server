@@ -22,7 +22,6 @@ from fastapi import Request, Query, Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Optional
 from uuid import UUID
-from sqlalchemy import select
 
 from gns3server import schemas
 import gns3server.db.models as models

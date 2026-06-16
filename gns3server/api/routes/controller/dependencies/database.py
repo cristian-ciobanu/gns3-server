@@ -21,9 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gns3server.db.repositories.base import BaseRepository
 
-import logging
 
-log = logging.getLogger(__name__)
 
 
 async def get_db_session(request: HTTPConnection) -> AsyncSession:
