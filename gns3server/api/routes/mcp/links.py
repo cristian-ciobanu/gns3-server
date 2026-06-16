@@ -59,11 +59,13 @@ def _normalize_link_nodes(nodes) -> list[dict[str, Any]]:
     """
     if not nodes:
         return nodes
+    if not isinstance(nodes, list):
+        raise ValueError(f"nodes must be a list, got {type(nodes).__name__}: {nodes}")
     # Standard object format: [{"node_id": "...", ...}]
     if isinstance(nodes[0], dict):
         return nodes
     # Compact array format: ["uuid", ad, pt, "uuid", ad, pt]
-    if isinstance(nodes, list) and all(not isinstance(n, dict) for n in nodes):
+    if all(not isinstance(n, dict) for n in nodes):
         if len(nodes) != 6:
             raise ValueError(
                 f"Compact link format requires exactly 6 elements "
