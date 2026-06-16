@@ -1356,7 +1356,7 @@ async def image_install() -> list[dict[str, Any]]:
 #   1. node_list(project_id) → identify device names
 #   2. node_start_all(project_id) → ensure devices are running
 #   3. device_config_send(project_id, device_configs=[...]) → push config
-#   4. device_command_run(project_id, device_commands=[...]) → verify
+#   4. device_show_run(project_id, device_commands=[...]) → verify
 
 
 @mcp.tool()
@@ -1385,7 +1385,7 @@ async def device_config_send(
 
 
 @mcp.tool()
-async def device_command_run(
+async def device_show_run(
     project_id: Annotated[str, Field(description="UUID of the project")],
     device_configs: Annotated[list, Field(
         description="List of device commands. Each entry: {\"device_name\": \"R1\", \"commands\": [\"show ip int brief\", \"show running-config\"]}"

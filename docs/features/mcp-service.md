@@ -235,14 +235,14 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | Tool | Description |
 |------|-------------|
 | `device_config_send` | Push config commands to devices via console (Nornir + Netmiko). Supports Jinja2 `template` + `vars` |
-| `device_command_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
+| `device_show_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
 | `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
 
 The tool connects to each device's console via telnet/SSH. Nodes must be in the `started` state (use `node_start` or `node_start_all`). Device type is auto-detected from the node's `device_type:<type>` tag in GNS3.
 
 #### Jinja2 Template Mode
 
-Both `device_config_send` and `device_command_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
+Both `device_config_send` and `device_show_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
 
 ```python
 # Direct commands (single/batch)
@@ -259,7 +259,7 @@ device_config_send(project_id,
     ])
 
 # Show commands with template
-device_command_run(project_id,
+device_show_run(project_id,
     template="show ip route {{ protocol }}",
     device_configs=[
         {"device_name": "R1", "vars": {"protocol": "ospf"}},
@@ -281,7 +281,7 @@ device_command_run(project_id,
 
 ```python
 # Save config on device
-device_command_run(project_id, device_configs=[
+device_show_run(project_id, device_configs=[
     {"device_name": "R1", "commands": ["write memory"]},
 ])
 # Backup
