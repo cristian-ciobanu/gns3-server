@@ -508,7 +508,7 @@ async def node_create(
     """Create one or more nodes from templates.
 
     Single mode: provide template_id, x, y (optional compute_id)
-    Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 10 in parallel.
+    Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 100 in parallel.
                  Top-level template_id applies to all nodes; individual nodes can override.
     """
     if nodes is not None:
@@ -614,7 +614,7 @@ async def link_create(
     """Create one or more links between nodes.
 
     Single mode: provide nodes, link_type (optional filters)
-    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 10 in parallel
+    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 100 in parallel
     """
     if links:
         return await asyncio.to_thread(_run_handler_sync, create_link_handler, {
