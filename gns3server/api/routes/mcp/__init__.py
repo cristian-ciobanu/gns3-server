@@ -675,7 +675,7 @@ async def template_list(
     fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [template_id, name, template_type, category, default_name_format]). "
                                                            "Available: template_id, name, version, category, default_name_format, symbol, "
                                                            "template_type, compute_id, usage, tags, builtin, created_at, updated_at")] = None,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """List all available templates on the server."""
     return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {"fields": fields})
 
