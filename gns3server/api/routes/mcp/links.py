@@ -141,6 +141,8 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         return {"error": "project_id is required"}
 
     fields = params.get("fields")
+    if fields is not None and not isinstance(fields, list):
+        return {"error": "fields must be a list, e.g. [\"link_id\", \"nodes\"]"}
 
     links = params.get("links")
     # Batch mode: links=[{nodes, link_type?, filters?, suspend?}]
