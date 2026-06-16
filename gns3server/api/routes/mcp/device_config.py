@@ -108,7 +108,7 @@ def device_command_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     device_configs = params.get("device_configs")
     template = params.get("template")
     if not project_id or not device_configs:
-        return [{"error": "project_id and device_configs (list of {device_name, show_commands}) are required"}]
+        return [{"error": "project_id and device_configs (list of {device_name, commands}) are required"}]
 
     if template:
         device_configs = _render_template(template, device_configs, commands_field="commands")

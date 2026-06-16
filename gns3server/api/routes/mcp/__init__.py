@@ -1388,17 +1388,18 @@ async def device_config_send(
 async def device_command_run(
     project_id: Annotated[str, Field(description="UUID of the project")],
     device_configs: Annotated[list, Field(
-        description="List of device commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
+        description="List of device commands. Each entry: {\"device_name\": \"R1\", \"commands\": [\"show ip int brief\", \"show running-config\"]}"
     )],
     template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars per device. Example: \"show ip route {{ protocol }}\"")] = None,
 ) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices via console.
 
     Two modes:
-      1. Direct commands: each device has show_commands=[...]
+      1. Direct commands: each device has commands=[...] (read-only show/display/ping/traceroute only)
       2. Jinja2 template: provide template + vars per device
 
     Use this to inspect device status, view configurations, or verify changes.
+    For configuration changes use device_config_send instead.
     Devices must be started first.
     """
     params = {"project_id": project_id, "device_configs": device_configs}
