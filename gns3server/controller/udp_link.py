@@ -65,10 +65,19 @@ class UDPLink(Link):
             raise ControllerError(f"Cannot get an IP address on same subnet: {e}")
 
         # Reserve a UDP port on both side
-        response = await node1.compute.post(f"/projects/{self._project.id}/ports/udp")
-        self._node1_port = response.json["udp_port"]
-        response = await node2.compute.post(f"/projects/{self._project.id}/ports/udp")
-        self._node2_port = response.json["udp_port"]
+        # Try pre-allocated ports first (used during batch project loading)
+        port = self._project.pop_preallocated_udp_port(node1.compute.id)
+        if port is not None:
+            self._node1_port = port
+        else:
+            response = await node1.compute.post(f"/projects/{self._project.id}/ports/udp")
+            self._node1_port = response.json["udp_port"]
+        port = self._project.pop_preallocated_udp_port(node2.compute.id)
+        if port is not None:
+            self._node2_port = port
+        else:
+            response = await node2.compute.post(f"/projects/{self._project.id}/ports/udp")
+            self._node2_port = response.json["udp_port"]
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
 

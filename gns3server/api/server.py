@@ -213,15 +213,3 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={"message": str(exc)}
     )
-
-# FIXME: do not use this middleware since it creates issue when using StreamingResponse
-# see https://starlette-context.readthedocs.io/en/latest/middleware.html#why-are-there-two-middlewares-that-do-the-same-thing
-
-# @app.middleware("http")
-# async def add_extra_headers(request: Request, call_next):
-#     start_time = time.time()
-#     response = await call_next(request)
-#     process_time = time.time() - start_time
-#     response.headers["X-Process-Time"] = str(process_time)
-#     response.headers["X-GNS3-Server-Version"] = f"{__version__}"
-#     return response

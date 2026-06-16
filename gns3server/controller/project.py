@@ -158,6 +158,7 @@ class Project:
             self.dump()
 
         self._iou_id_lock = asyncio.Lock()
+        self._preallocated_udp_ports = {}  # compute_id -> list of pre-allocated UDP ports
         log.debug(f'Project "{self.name}" [{self._id}] loaded')
         self.emit_controller_notification("project.created", self.asdict())
 
@@ -216,6 +217,7 @@ class Project:
         self._load_snapshot_config()
         # Create the project on demand on the compute node
         self._project_created_on_compute = set()
+        self._preallocated_udp_ports = {}
 
     @property
     def scene_height(self):
@@ -561,13 +563,11 @@ class Project:
         """
         Create a node from a template.
         """
-
         template["x"] = x
         template["y"] = y
         node_type = template.pop("template_type")
 
         if compute_id:
-            # use a custom compute_id
             compute = self.controller.get_compute(compute_id)
         else:
             compute = self.controller.get_compute(template.pop("compute_id"))
@@ -584,15 +584,12 @@ class Project:
 
         node = Node(self, compute, name, node_id=node_id, node_type=node_type, **kwargs)
         if compute not in self._project_created_on_compute:
-            # For a local server we send the project path
             if compute.id == "local":
                 data = {"name": self._name, "project_id": self._id, "path": self._path}
             else:
                 data = {"name": self._name, "project_id": self._id}
-
             if self._variables:
                 data["variables"] = self._variables
-
             await compute.post("/projects", data=data)
             self._project_created_on_compute.add(compute)
 
@@ -618,16 +615,15 @@ class Project:
 
         if node_type == "iou":
             async with self._iou_id_lock:
-                # wait for an IOU node to be completely created before adding a new one
-                # this is important otherwise we allocate the same application ID (used
-                # to generate MAC addresses) when creating multiple IOU node at the same time
+                # IOU application IDs must be allocated serially to avoid duplicates.
+                # The lock must also cover _create_node() because get_next_application_id()
+                # checks in-memory nodes (self._nodes), which are only registered
+                # after _create_node() completes.
                 if "properties" in kwargs.keys():
-                    # allocate a new application id for nodes loaded from the project
                     kwargs.get("properties")["application_id"] = get_next_application_id(
                         self._controller.projects, self._computes
                     )
                 elif "application_id" not in kwargs.keys() and not kwargs.get("properties"):
-                    # allocate a new application id for nodes added to the project
                     kwargs["application_id"] = get_next_application_id(self._controller.projects, self._computes)
                 node = await self._create_node(compute, name, node_id, node_type, **kwargs)
         else:
@@ -751,6 +747,56 @@ class Project:
         self.dump()
         self.emit_notification("drawing.deleted", drawing.asdict())
 
+    async def _create_link_from_topology_data(self, link_data):
+        """
+        Create a link from topology data (used during project loading).
+
+        Extracted into a separate method so links can be created in parallel
+        via Pool() during project.open().
+
+        :param link_data: Link data from the topology file
+        """
+        link = await self.add_link(link_id=link_data["link_id"])
+        if "filters" in link_data:
+            try:
+                await link.update_filters(link_data["filters"])
+            except ControllerError as e:
+                log.warning(
+                    "Dropping invalid filters on link %s: %s",
+                    link_data.get("link_id"), e
+                )
+        if "link_style" in link_data:
+            await link.update_link_style(link_data["link_style"])
+        if "show_filters_icon" in link_data:
+            await link.update_show_filters_icon(link_data["show_filters_icon"])
+        for node_link in link_data.get("nodes", []):
+            node = self.get_node(node_link["node_id"])
+            port = node.get_port(node_link["adapter_number"], node_link["port_number"])
+            if port is None:
+                log.warning(
+                    "Port {}/{} for {} not found".format(
+                        node_link["adapter_number"], node_link["port_number"], node.name
+                    )
+                )
+                continue
+            if port.link is not None:
+                log.warning(
+                    "Port {}/{} is already connected to link ID {}".format(
+                        node_link["adapter_number"], node_link["port_number"], port.link.id
+                    )
+                )
+                continue
+            await link.add_node(
+                node,
+                node_link["adapter_number"],
+                node_link["port_number"],
+                label=node_link.get("label"),
+                dump=False,
+            )
+        if len(link.nodes) != 2:
+            # a link should have 2 attached nodes, this can happen with corrupted projects
+            await self.delete_link(link.id, force_delete=True)
+
     @open_required
     async def add_link(self, link_id=None, dump=True):
         """
@@ -765,6 +811,35 @@ class Project:
         if dump:
             self.dump()
         return link
+
+    async def preallocate_udp_ports_for_compute(self, compute, count):
+        """
+        Pre-allocate UDP ports from a compute in a single batch call.
+
+        Used during project loading to reduce HTTP round-trips when
+        creating many links.
+
+        :param compute: Compute instance
+        :param count: Number of UDP ports to pre-allocate
+        """
+        if count <= 0:
+            return
+        response = await compute.post(f"/projects/{self._id}/ports/udp/batch", data={"count": count})
+        ports = response.json["udp_ports"]
+        self._preallocated_udp_ports.setdefault(compute.id, [])
+        self._preallocated_udp_ports[compute.id].extend(ports)
+
+    def pop_preallocated_udp_port(self, compute_id):
+        """
+        Pop a pre-allocated UDP port for a compute.
+
+        :param compute_id: Compute ID
+        :returns: UDP port number or None if no pre-allocated port is available
+        """
+        ports = self._preallocated_udp_ports.get(compute_id, [])
+        if ports:
+            return ports.pop()
+        return None
 
     @open_required
     async def delete_link(self, link_id, force_delete=False):
@@ -1221,54 +1296,35 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
-            pool = Pool(concurrency=5)
+            pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
+            # Pre-allocate UDP ports for all links in batch to reduce HTTP round-trips
+            ports_per_compute = {}
             for link_data in topology.get("links", []):
                 if "link_id" not in link_data.keys():
-                    # skip the link
                     continue
-                link = await self.add_link(link_id=link_data["link_id"])
-                if "filters" in link_data:
-                    try:
-                        await link.update_filters(link_data["filters"])
-                    except ControllerError as e:
-                        log.warning(
-                            "Dropping invalid filters on link %s: %s",
-                            link_data.get("link_id"), e
-                        )
-                if "link_style" in link_data:
-                    await link.update_link_style(link_data["link_style"])
-                if "show_filters_icon" in link_data:
-                    await link.update_show_filters_icon(link_data["show_filters_icon"])
                 for node_link in link_data.get("nodes", []):
-                    node = self.get_node(node_link["node_id"])
-                    port = node.get_port(node_link["adapter_number"], node_link["port_number"])
-                    if port is None:
-                        log.warning(
-                            "Port {}/{} for {} not found".format(
-                                node_link["adapter_number"], node_link["port_number"], node.name
-                            )
-                        )
-                        continue
-                    if port.link is not None:
-                        log.warning(
-                            "Port {}/{} is already connected to link ID {}".format(
-                                node_link["adapter_number"], node_link["port_number"], port.link.id
-                            )
-                        )
-                        continue
-                    await link.add_node(
-                        node,
-                        node_link["adapter_number"],
-                        node_link["port_number"],
-                        label=node_link.get("label"),
-                        dump=False,
-                    )
-                if len(link.nodes) != 2:
-                    # a link should have 2 attached nodes, this can happen with corrupted projects
-                    await self.delete_link(link.id, force_delete=True)
+                    node = self._nodes.get(node_link["node_id"])
+                    if node:
+                        ports_per_compute[node.compute.id] = ports_per_compute.get(node.compute.id, 0) + 1
+            for compute in self.computes:
+                count = ports_per_compute.get(compute.id, 0)
+                if count > 0:
+                    await self.preallocate_udp_ports_for_compute(compute, count)
+            # Create links in parallel for improved performance
+            pool = Pool(concurrency=100)
+            for link_data in topology.get("links", []):
+                if "link_id" not in link_data.keys():
+                    continue
+                pool.append(self._create_link_from_topology_data, link_data)
+            await pool.join()
+            # Release any pre-allocated UDP ports that were not consumed by links
+            for compute_id, ports in self._preallocated_udp_ports.items():
+                if ports:
+                    log.warning(f"Releasing {len(ports)} unconsumed pre-allocated UDP ports on compute {compute_id}")
+            self._preallocated_udp_ports.clear()
             for drawing_data in topology.get("drawings", []):
                 await self.add_drawing(dump=False, **drawing_data)
 

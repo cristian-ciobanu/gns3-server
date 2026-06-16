@@ -32,6 +32,7 @@ import asyncio
 import logging
 import socket
 import uuid
+from uuid import UUID
 import bcrypt
 from typing import Any, Annotated
 from urllib.parse import parse_qs
@@ -80,7 +81,7 @@ from .images import (
     install_images_handler,
 )
 from .device_config import (
-    device_config_send_handler, device_command_run_handler,
+    device_config_send_handler, device_show_run_handler,
     vpcs_config_set_handler,
 )
 from .nodes import (
@@ -213,23 +214,27 @@ async def _resolve_token(token: str) -> str | None:
     except Exception:
         pass
 
-    # Try API key
+    # Try API key — format: gns3_<api_key_id>_<random_secret> → O(1) lookup
     if token.startswith("gns3_") and _app is not None:
         db_engine = getattr(_app.state, "_db_engine", None)
         if db_engine is not None:
             try:
-                async with AsyncSession(db_engine, expire_on_commit=False) as db_session:
-                    repo = ApiKeysRepository(db_session)
-                    query = select(models.ApiKey).where(models.ApiKey.revoked == False)
-                    result = await db_session.execute(query)
-                    for db_key in result.scalars().all():
-                        if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
-                            await repo.update_last_used(db_key.api_key_id)
-                            user_repo = UsersRepository(db_session)
-                            user = await user_repo.get_user(db_key.user_id)
-                            if user:
-                                _jwt_username_var.set(user.username)
-                            return token
+                parts = token.split("_", 2)
+                if len(parts) == 3:
+                    key_id = UUID(parts[1])
+                    secret = parts[2]
+                    async with AsyncSession(db_engine, expire_on_commit=False) as db_session:
+                        repo = ApiKeysRepository(db_session)
+                        db_key = await repo.get_api_key(key_id)
+                        if db_key and not db_key.revoked:
+                            if await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.encode()):
+                                await repo.update_last_used(db_key.api_key_id)
+                                user_repo = UsersRepository(db_session)
+                                user = await user_repo.get_user(db_key.user_id)
+                                if user:
+                                    _jwt_username_var.set(user.username)
+                                    fresh_token = auth_service.create_access_token(user.username)
+                                    return fresh_token
             except Exception:
                 pass
 
@@ -488,24 +493,32 @@ async def node_suspend(
 @mcp.tool()
 async def node_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode)")] = None,
-    x: Annotated[int, Field(description="X coordinate")] = 0,
-    y: Annotated[int, Field(description="Y coordinate")] = 0,
+    template_id: Annotated[str | None, Field(description="Template UUID (required for single mode; used as default in batch mode)")] = None,
+    x: Annotated[int, Field(description="X coordinate (canvas center origin, right positive)")] = 0,
+    y: Annotated[int, Field(description="Y coordinate (canvas center origin, down positive)")] = 0,
     compute_id: Annotated[str, Field(description="Compute ID (default: local)")] = "local",
-    nodes: Annotated[list | None, Field(description="Batch mode: [{template_id, x?, y?, name?, compute_id?}] — creates multiple nodes in parallel")] = None,
+    nodes: Annotated[list | None, Field(description="Batch mode: [{name, template_id?, x?, y?, compute_id?}] — top-level template_id applies as default")] = None,
+    fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [node_id, name, node_type, status, console]). "
+                                                           "Available: compute_id, name, node_type, node_id, console, console_type, "
+                                                           "console_auto_start, aux, aux_type, properties, label, symbol, x, y, z, "
+                                                           "locked, port_name_format, port_segment_size, first_port_name, "
+                                                           "custom_adapters, tags, template_id, project_id, node_directory, "
+                                                           "status, command_line, width, height, ports, console_host")] = None,
 ) -> list[dict[str, Any]]:
     """Create one or more nodes from templates.
 
     Single mode: provide template_id, x, y (optional compute_id)
-    Batch mode:  provide nodes=[{template_id, x, y, name?, compute_id?}] — creates up to 10 in parallel
+    Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 100 in parallel.
+                 Top-level template_id applies to all nodes; individual nodes can override.
     """
     if nodes is not None:
         return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
-            "project_id": project_id, "nodes": nodes,
+            "project_id": project_id, "nodes": nodes, "fields": fields,
+            "template_id": template_id,
         })
     return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
         "project_id": project_id, "template_id": template_id,
-        "x": x, "y": y, "compute_id": compute_id,
+        "x": x, "y": y, "compute_id": compute_id, "fields": fields,
     })
 
 
@@ -589,21 +602,25 @@ async def link_get(
 @mcp.tool()
 async def link_create(
     project_id: Annotated[str, Field(description="UUID of the project")],
-    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}]")] = None,
+    nodes: Annotated[list | None, Field(description="Single mode: [{node_id, adapter_number, port_number}] or compact [id, ad, pt, id, ad, pt]")] = None,
     link_type: Annotated[str, Field(description="Link type - ethernet or serial")] = "ethernet",
     filters: Annotated[dict | None, Field(description="Optional packet filters")] = None,
-    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — creates multiple links in parallel")] = None,
+    links: Annotated[list | None, Field(description="Batch mode: [{nodes, link_type?, filters?}] — nodes supports compact [id, ad, pt, id, ad, pt] format")] = None,
+    fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [link_id, link_type, nodes]). "
+                                                           "Available: link_id, project_id, link_type, nodes, suspend, "
+                                                           "link_style, filters, show_filters_icon, capturing, "
+                                                           "capture_file_name, capture_file_path, capture_compute_id, wireshark")] = None,
 ) -> list[dict[str, Any]]:
     """Create one or more links between nodes.
 
     Single mode: provide nodes, link_type (optional filters)
-    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 10 in parallel
+    Batch mode:  provide links=[{nodes, link_type?, filters?}] — up to 100 in parallel
     """
     if links:
         return await asyncio.to_thread(_run_handler_sync, create_link_handler, {
-            "project_id": project_id, "links": links,
+            "project_id": project_id, "links": links, "fields": fields,
         })
-    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type}
+    params = {"project_id": project_id, "nodes": nodes, "link_type": link_type, "fields": fields}
     if filters:
         params["filters"] = filters
     return await asyncio.to_thread(_run_handler_sync, create_link_handler, params)
@@ -654,9 +671,13 @@ async def link_update(
 # ── Template tools ────────────────────────────────────────────────────
 
 @mcp.tool()
-async def template_list() -> list[dict[str, Any]]:
+async def template_list(
+    fields: Annotated[list[str] | None, Field(description="Response fields to include (default: [template_id, name, template_type, category, default_name_format]). "
+                                                           "Available: template_id, name, version, category, default_name_format, symbol, "
+                                                           "template_type, compute_id, usage, tags, builtin, created_at, updated_at")] = None,
+) -> list[dict[str, Any]]:
     """List all available templates on the server."""
-    return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {})
+    return await asyncio.to_thread(_run_handler_sync, list_templates_handler, {"fields": fields})
 
 
 @mcp.tool()
@@ -1335,7 +1356,7 @@ async def image_install() -> list[dict[str, Any]]:
 #   1. node_list(project_id) → identify device names
 #   2. node_start_all(project_id) → ensure devices are running
 #   3. device_config_send(project_id, device_configs=[...]) → push config
-#   4. device_command_run(project_id, device_commands=[...]) → verify
+#   4. device_show_run(project_id, device_commands=[...]) → verify
 
 
 @mcp.tool()
@@ -1364,26 +1385,27 @@ async def device_config_send(
 
 
 @mcp.tool()
-async def device_command_run(
+async def device_show_run(
     project_id: Annotated[str, Field(description="UUID of the project")],
     device_configs: Annotated[list, Field(
-        description="List of device commands. Each entry: {\"device_name\": \"R1\", \"show_commands\": [\"show ip int brief\", \"show running-config\"]}"
+        description="List of device commands. Each entry: {\"device_name\": \"R1\", \"commands\": [\"show ip int brief\", \"show running-config\"]}"
     )],
     template: Annotated[str | None, Field(description="Optional Jinja2 template. Use with vars per device. Example: \"show ip route {{ protocol }}\"")] = None,
 ) -> list[dict[str, Any]]:
     """Run read-only diagnostic (show) commands on network devices via console.
 
     Two modes:
-      1. Direct commands: each device has show_commands=[...]
+      1. Direct commands: each device has commands=[...] (read-only show/display/ping/traceroute only)
       2. Jinja2 template: provide template + vars per device
 
     Use this to inspect device status, view configurations, or verify changes.
+    For configuration changes use device_config_send instead.
     Devices must be started first.
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
         params["template"] = template
-    return await asyncio.to_thread(_run_handler_sync, device_command_run_handler, params)
+    return await asyncio.to_thread(_run_handler_sync, device_show_run_handler, params)
 
 
 @mcp.tool()

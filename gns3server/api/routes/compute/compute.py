@@ -55,6 +55,27 @@ def allocate_udp_port(project_id: UUID) -> dict:
     return {"udp_port": udp_port}
 
 
+@router.post("/projects/{project_id}/ports/udp/batch", status_code=status.HTTP_201_CREATED)
+def batch_allocate_udp_ports(project_id: UUID, body: dict) -> dict:
+    """
+    Allocate multiple UDP ports on the compute in a single call.
+
+    Used during project loading to pre-allocate all required UDP ports
+    before creating links, reducing HTTP round-trips.
+    """
+
+    count = body.get("count", 1)
+    try:
+        count = max(1, min(int(count), 10000))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="count must be a positive integer")
+    pm = ProjectManager.instance()
+    project = pm.get_project(str(project_id))
+    m = PortManager.instance()
+    udp_ports = [m.get_free_udp_port(project) for _ in range(count)]
+    return {"udp_ports": udp_ports}
+
+
 @router.get("/network/interfaces")
 def network_interfaces() -> List[dict]:
     """

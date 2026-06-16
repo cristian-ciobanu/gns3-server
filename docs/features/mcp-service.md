@@ -43,7 +43,9 @@ jwt_access_token_expire_minutes = 1440  ; 24 hours
 
 ### Option 2: API Key (permanent, revocable) — Recommended for MCP
 
-API keys never expire and can be revoked individually. Create one via the REST API:
+API keys never expire and can be revoked individually. Format: `gns3_<api_key_id>_<random_secret>` — the embedded UUID enables O(1) lookup without scanning all keys.
+
+Create one via the REST API:
 
 ```bash
 # Create an API key (requires a JWT to authenticate)
@@ -51,7 +53,7 @@ curl -X POST http://localhost:3080/v3/access/api-keys \
   -H "Authorization: Bearer <your_jwt>" \
   -H "Content-Type: application/json" \
   -d '{"name": "MCP Production"}'
-# Response: {"api_key": "gns3_a1b2c3d4...", "api_key_id": "...", ...}
+# Response: {"api_key": "gns3_550e8400-e29b-41d4-a716-446655440000_a1b2c3d4...", ...}
 # ⚠️ The key is only shown once — save it immediately.
 ```
 
@@ -66,6 +68,29 @@ API key management endpoints:
 | `DELETE /v3/access/api-keys/{id}` | Permanently delete a key |
 
 Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably.
+
+### Authentication Flow
+
+When connecting with an API key:
+
+```
+SSE connect → Authorization: Bearer gns3_<uuid>_<secret>
+  ↓
+MCP auth wrapper extracts UUID → single DB query → 1 bcrypt (thread pool)
+  ↓
+Generates a fresh short-lived JWT → stored in ContextVar for the session
+  ↓
+All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
+```
+
+### Concurrency
+
+| Setting | Value |
+|---------|-------|
+| MCP batch workers | 100 (`BATCH_MAX_WORKERS`) |
+| MCP HTTP client timeout | 30s |
+| HTTP connection pool (`pool_connections`/`pool_maxsize`) | 500 / 1000 |
+| REST API node/link creation pool | 100 (`Pool(concurrency=100)`) |
 
 ## Available Tools
 
@@ -97,7 +122,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 |------|-------------|
 | `node_list` | List all nodes (`fields` to filter columns, e.g. `["name","status"]`) |
 | `node_get` | Get node details (`fields` to filter columns) |
-| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array |
+| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array. Supports `fields` to filter response. Top-level `template_id` applies as default in batch mode. Pass `name` to override template naming. Coordinates: left-handed Cartesian (origin at canvas center, X right-positive, Y down-positive). |
 | `node_delete` | Delete a node |
 | `node_update` | Update node properties |
 | `node_start` | Start node(s) — `node_id` or `node_ids` array |
@@ -124,7 +149,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 |------|-------------|
 | `link_list` | List all links (`fields` to filter columns) |
 | `link_get` | Get link details |
-| `link_create` | Create link(s) — single via `nodes` or batch via `links` array |
+| `link_create` | Create link(s) — single via `nodes` or batch via `links` array. Nodes support compact `[id, ad, pt, id, ad, pt]` format. Supports `fields` to filter response. |
 | `link_delete` | Delete link(s) — `link_id` or `link_ids` array |
 | `link_update` | Update link (suspend, filters) |
 | `link_reset` | Reset link(s) — `link_id` or `link_ids` array |
@@ -136,7 +161,7 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 
 | Tool | Description |
 |------|-------------|
-| `template_list` | List all templates |
+| `template_list` | List all templates. Supports `fields` to filter response columns. |
 | `template_get` | Get template details |
 | `template_create` | Create a template (Docker needs `image`) |
 | `template_update` | Update a template |
@@ -210,14 +235,14 @@ Both JWT tokens and API keys work for MCP and REST API endpoints interchangeably
 | Tool | Description |
 |------|-------------|
 | `device_config_send` | Push config commands to devices via console (Nornir + Netmiko). Supports Jinja2 `template` + `vars` |
-| `device_command_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
+| `device_show_run` | Run read-only show commands on devices. Supports Jinja2 `template` + `vars` |
 | `vpcs_config_set` | Configure VPCS devices (IP, gateway, etc.) |
 
 The tool connects to each device's console via telnet/SSH. Nodes must be in the `started` state (use `node_start` or `node_start_all`). Device type is auto-detected from the node's `device_type:<type>` tag in GNS3.
 
 #### Jinja2 Template Mode
 
-Both `device_config_send` and `device_command_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
+Both `device_config_send` and `device_show_run` support an optional `template` parameter. When provided, each device's `vars` dict is rendered against the template to produce commands. Entries with the same `device_name` are merged into a single device session.
 
 ```python
 # Direct commands (single/batch)
@@ -234,7 +259,7 @@ device_config_send(project_id,
     ])
 
 # Show commands with template
-device_command_run(project_id,
+device_show_run(project_id,
     template="show ip route {{ protocol }}",
     device_configs=[
         {"device_name": "R1", "vars": {"protocol": "ospf"}},
@@ -256,7 +281,7 @@ device_command_run(project_id,
 
 ```python
 # Save config on device
-device_command_run(project_id, device_configs=[
+device_show_run(project_id, device_configs=[
     {"device_name": "R1", "commands": ["write memory"]},
 ])
 # Backup
@@ -391,23 +416,23 @@ sequenceDiagram
     participant Auth as Auth
     participant GNS3 as GNS3 REST API
 
-    Note over Client: 1. Connect with credential (JWT or API Key)
-    Client->>MCP: GET /sse (token in header or query)
-    MCP->>Auth: Validate Token
-    Auth-->>MCP: Token Valid
+    Note over Client: 1. Connect with API Key or JWT
+    Client->>MCP: GET /sse (Authorization: Bearer <key>)
+    
+    alt API Key (gns3_&lt;uuid&gt;_&lt;secret&gt;)
+        MCP->>Auth: Extract UUID → DB lookup → 1 bcrypt (thread pool)
+        Auth-->>MCP: Generate fresh JWT
+    else JWT
+        MCP->>Auth: Decode JWT
+        Auth-->>MCP: Token valid
+    end
+    
     MCP-->>Client: event: endpoint /messages/?session_id=xxx
 
-    Note over Client: 2. Initialize
-    Client->>MCP: POST /messages/ (initialize)
-    MCP-->>Client: event: message (protocolVersion, capabilities)
-
-    Note over Client: 3. List & Call Tools
-    Client->>MCP: POST /messages/ (tools/list)
-    MCP-->>Client: event: message (tools list)
-
-    Client->>MCP: POST /messages/ (tools/call project_list)
-    MCP->>GNS3: Gns3Connector HTTP request
-    GNS3-->>MCP: Projects data
+    Note over Client: 2. Initialize & Call Tools
+    Client->>MCP: POST /messages/ (tools/call ...)
+    MCP->>GNS3: HTTP request (with JWT from step 1)
+    GNS3-->>MCP: Response
     MCP-->>Client: event: message (tool result)
 ```
 
@@ -415,7 +440,7 @@ sequenceDiagram
 
 - **FastMCP** (Anthropic MCP SDK) is used for tool registration and SSE transport
 - The SSE app is mounted as a Starlette sub-application under `/v3/mcp/transport`
-- JWT tokens are validated using GNS3's existing `auth_service`
+- **Auth:** JWT validation via `auth_service`. API key (`gns3_<uuid>_<secret>`) extracts UUID for O(1) DB lookup, runs bcrypt in thread pool, returns a fresh JWT — subsequent calls use the JWT with zero extra bcrypt.
 - Tool handlers use `Gns3Connector` (from `custom_gns3fy`) to call GNS3's own REST API, keeping the MCP layer decoupled
 - The JWT token is stored in a `contextvars.ContextVar` so it is available within tool handler threads (Python ≥ 3.9 propagates contextvars through `asyncio.to_thread`)
 

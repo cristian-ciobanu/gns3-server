@@ -14,13 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import asyncio
 import logging
 import bcrypt
 
 from fastapi import Request, Query, Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Optional
-from sqlalchemy import select
+from uuid import UUID
 
 from gns3server import schemas
 import gns3server.db.models as models
@@ -41,6 +42,7 @@ async def get_user_from_token(
         token: Optional[str] = Query(None, include_in_schema=False)
 ) -> schemas.User:
 
+
     if bearer_token:
         # bearer token is used first, then any token passed as a URL parameter
         token = bearer_token
@@ -52,27 +54,31 @@ async def get_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # API Key authentication
+    # API Key authentication — format: gns3_<api_key_id>_<random_secret>
+    # Direct lookup by UUID avoids O(n) scan of all keys.
     if token.startswith("gns3_"):
-        query = select(models.ApiKey).where(models.ApiKey.revoked == False)
-        result = await api_keys_repo._db_session.execute(query)
-        for db_key in result.scalars().all():
-            if bcrypt.checkpw(token.encode(), db_key.key_hash.encode()):
-                await api_keys_repo.update_last_used(db_key.api_key_id)
-                user = await user_repo.get_user(db_key.user_id)
-                if user:
-                    if not user.is_active:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Not an active user",
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
-                    return user
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        parts = token.split("_", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format")
+        try:
+            key_id = UUID(parts[1])
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format")
+        secret = parts[2]
+        db_key = await api_keys_repo.get_api_key(key_id)
+        if not db_key or db_key.revoked:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        if not await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.encode()):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        await api_keys_repo.update_last_used(db_key.api_key_id)
+        user = await user_repo.get_user(db_key.user_id)
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not an active user",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
 
     # JWT authentication
     token_data = auth_service.get_token_data(token)

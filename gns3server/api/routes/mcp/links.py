@@ -31,7 +31,7 @@ from gns3server.services import auth_service
 
 log = logging.getLogger(__name__)
 
-BATCH_MAX_WORKERS = 10
+BATCH_MAX_WORKERS = 100
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────
@@ -46,6 +46,48 @@ def _get_connector(gns3_ctx: dict[str, Any]):
     )
 
 
+def _normalize_link_nodes(nodes) -> list[dict[str, Any]]:
+    """
+    Normalize link node entries, accepting both standard object format and
+    compact array format to reduce token usage.
+
+    Standard: [{"node_id": "uuid", "adapter_number": 0, "port_number": 0}]
+    Compact:  ["uuid", 0, 0, "uuid", 0, 0]
+
+    Returns the normalized list, or raises ValueError with a clear message
+    on format errors so the AI can self-correct.
+    """
+    if not nodes:
+        return nodes
+    if not isinstance(nodes, list):
+        raise ValueError(f"nodes must be a list, got {type(nodes).__name__}: {nodes}")
+    # Standard object format: [{"node_id": "...", ...}]
+    if isinstance(nodes[0], dict):
+        return nodes
+    # Compact array format: ["uuid", ad, pt, "uuid", ad, pt]
+    if all(not isinstance(n, dict) for n in nodes):
+        if len(nodes) != 6:
+            raise ValueError(
+                f"Compact link format requires exactly 6 elements "
+                f"[node_id, adapter, port, node_id, adapter, port], "
+                f"but got {len(nodes)} elements: {nodes}"
+            )
+        if not isinstance(nodes[0], str) or not isinstance(nodes[3], str):
+            raise ValueError(
+                f"Compact link format expects node_id (string) at positions 0 and 3, "
+                f"got types {type(nodes[0]).__name__} and {type(nodes[3]).__name__}: {nodes}"
+            )
+        return [
+            {"node_id": nodes[0], "adapter_number": nodes[1], "port_number": nodes[2]},
+            {"node_id": nodes[3], "adapter_number": nodes[4], "port_number": nodes[5]},
+        ]
+    raise ValueError(
+        f"Unrecognized link nodes format. "
+        f"Use standard [{{\"node_id\":\"..\",\"adapter_number\":0,\"port_number\":0}},...] "
+        f"or compact [\"id\",0,0,\"id\",0,0], got: {nodes}"
+    )
+
+
 # ── Tool handlers ──────────────────────────────────────────────────────────
 
 VALID_LINK_FIELDS = {
@@ -54,6 +96,16 @@ VALID_LINK_FIELDS = {
     "capturing", "capture_file_name", "capture_file_path",
     "capture_compute_id", "wireshark",
 }
+
+
+LINK_DEFAULT_FIELDS = ["link_id", "link_type", "nodes"]
+
+
+def _filter_link_response(link: dict, fields: list[str] = None) -> dict:
+    """Filter link response to only include requested fields."""
+    if not fields:
+        fields = LINK_DEFAULT_FIELDS
+    return {k: link[k] for k in fields if k in link}
 
 
 def get_links_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -90,6 +142,10 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not project_id:
         return {"error": "project_id is required"}
 
+    fields = params.get("fields")
+    if fields is not None and not isinstance(fields, list):
+        return {"error": "fields must be a list, e.g. [\"link_id\", \"nodes\"]"}
+
     links = params.get("links")
     # Batch mode: links=[{nodes, link_type?, filters?, suspend?}]
     if links is not None:
@@ -98,10 +154,11 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(link_data):
-            if not link_data.get("nodes"):
+            raw_nodes = link_data.get("nodes")
+            if not raw_nodes:
                 return {"status": "error", "error": "nodes is required for each link"}
             try:
-                body = {"nodes": link_data["nodes"]}
+                body = {"nodes": _normalize_link_nodes(raw_nodes)}
                 if link_data.get("link_type"):
                     body["link_type"] = link_data["link_type"]
                 if link_data.get("filters"):
@@ -110,7 +167,7 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                     body["suspend"] = link_data["suspend"]
                 url = f"{conn.base_url}/projects/{project_id}/links"
                 resp = conn.http_call("post", url, json_data=body).json()
-                return {"status": "success", "link": resp}
+                return {"status": "success", "link": _filter_link_response(resp, fields)}
             except Exception as e:
                 return {"status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(links), BATCH_MAX_WORKERS)) as pool:
@@ -124,7 +181,7 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if not nodes:
         return {"error": "nodes is required"}
     conn = _get_connector(gns3_ctx)
-    data = {"nodes": nodes}
+    data = {"nodes": _normalize_link_nodes(nodes)}
     if "link_type" in params:
         data["link_type"] = params["link_type"]
     if "filters" in params:
@@ -132,7 +189,8 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if "suspend" in params:
         data["suspend"] = params["suspend"]
     url = f"{conn.base_url}/projects/{project_id}/links"
-    return conn.http_call("post", url, json_data=data).json()
+    resp = conn.http_call("post", url, json_data=data).json()
+    return _filter_link_response(resp, fields)
 
 
 def delete_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:

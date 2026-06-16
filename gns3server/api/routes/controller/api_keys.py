@@ -39,12 +39,15 @@ API_KEY_PREFIX = "gns3_"
 API_KEY_BYTES = 32
 
 
-def _generate_api_key() -> tuple[str, str, str]:
+def _generate_api_key(api_key_id: UUID = None) -> tuple[str, str, str, UUID]:
+    if api_key_id is None:
+        api_key_id = uuid4()
     random_bytes = secrets.token_hex(API_KEY_BYTES)
-    raw_key = API_KEY_PREFIX + random_bytes
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt()).decode()
-    key_prefix = raw_key[: len(API_KEY_PREFIX) + 8]
-    return raw_key, key_hash, key_prefix
+    raw_key = f"gns3_{api_key_id}_{random_bytes}"
+    # Only hash the random secret part, so auth can extract api_key_id and do O(1) lookup
+    key_hash = bcrypt.hashpw(random_bytes.encode(), bcrypt.gensalt()).decode()
+    key_prefix = raw_key[:8]
+    return raw_key, key_hash, key_prefix, api_key_id
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -55,9 +58,9 @@ async def create_api_key(
 ) -> dict:
     """Create a new API key. The full key is returned only once."""
 
-    raw_key, key_hash, key_prefix = _generate_api_key()
+    raw_key, key_hash, key_prefix, new_key_id = _generate_api_key()
     db_key = await api_keys_repo.create_api_key(
-        api_key_id=uuid4(),
+        api_key_id=new_key_id,
         user_id=current_user.user_id,
         name=api_key_data.name,
         key_hash=key_hash,

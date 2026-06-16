@@ -75,6 +75,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 config = ConfigDict(validate_assignment=True, extra="ignore")
 
+
 NODE_TYPES = [
     "cloud",
     "nat",
@@ -191,6 +192,10 @@ class Gns3Connector:
         Creates the requests.Session object and applies the necessary parameters
         """
         self.session = requests.Session()  # pragma: no cover
+        # Increase connection pool size to support concurrent MCP batch operations
+        adapter = requests.adapters.HTTPAdapter(pool_connections=500, pool_maxsize=1000)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.session.headers["Accept"] = "application/json"  # pragma: no cover
 
         # Set authentication based on API version
@@ -291,6 +296,7 @@ class Gns3Connector:
         """
         Executes HTTP operations and handles GNS3-specific error logic.
         """
+
         # Handle JWT authentication
         if (
             self.auth_type == "jwt"
@@ -308,7 +314,7 @@ class Gns3Connector:
             "headers": headers,
             "params": params,
             "verify": verify,
-            "timeout": 10.0,  # Fixed 10-second timeout for all GNS3 API requests
+            "timeout": 30.0,  # Main request timeout (auth call uses 10s)
         }
         if data is not None:
             kwargs["data"] = data
@@ -319,6 +325,7 @@ class Gns3Connector:
         _response: requests.Response = caller(url, **kwargs)
 
         self.api_calls += 1
+
 
         try:
             _response.raise_for_status()

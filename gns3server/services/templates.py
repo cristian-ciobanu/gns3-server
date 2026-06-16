@@ -33,6 +33,7 @@ from gns3server.controller.controller_error import (
     ControllerForbiddenError,
 )
 
+
 TEMPLATE_TYPE_TO_SCHEMA = {
     "cloud": schemas.CloudTemplate,
     "ethernet_hub": schemas.EthernetHubTemplate,
@@ -259,6 +260,7 @@ class TemplatesService:
     async def get_template(self, template_id: UUID) -> dict:
 
         db_template = await self._templates_repo.get_template(template_id)
+
         if db_template:
             template = db_template.asjson()
         else:
