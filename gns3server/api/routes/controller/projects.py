@@ -616,7 +616,7 @@ async def create_node_from_template(
     project = controller.get_project(str(project_id))
 
     node = await project.add_node_from_template(
-        template, x=template_usage.x, y=template_usage.y, compute_id=template_usage.compute_id
+        template, x=template_usage.x, y=template_usage.y, name=template_usage.name, compute_id=template_usage.compute_id
     )
 
     result = node.asdict()
