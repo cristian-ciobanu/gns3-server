@@ -22,7 +22,6 @@ import socket
 import json
 import sys
 import io
-import time
 
 from fastapi import HTTPException
 from aiohttp import web
