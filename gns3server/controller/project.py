@@ -838,7 +838,7 @@ class Project:
         """
         ports = self._preallocated_udp_ports.get(compute_id, [])
         if ports:
-            return ports.pop(0)
+            return ports.pop()
         return None
 
     @open_required
