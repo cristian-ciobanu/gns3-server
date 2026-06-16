@@ -122,7 +122,7 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 |------|-------------|
 | `node_list` | List all nodes (`fields` to filter columns, e.g. `["name","status"]`) |
 | `node_get` | Get node details (`fields` to filter columns) |
-| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array. Supports `fields` to filter response. Top-level `template_id` applies as default in batch mode. Pass `name` to override template naming. |
+| `node_create` | Create node(s) — single via `template_id` or batch via `nodes` array. Supports `fields` to filter response. Top-level `template_id` applies as default in batch mode. Pass `name` to override template naming. Coordinates: left-handed Cartesian (origin at canvas center, X right-positive, Y down-positive). |
 | `node_delete` | Delete a node |
 | `node_update` | Update node properties |
 | `node_start` | Start node(s) — `node_id` or `node_ids` array |
