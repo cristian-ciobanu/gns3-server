@@ -80,5 +80,10 @@ def install_appliance_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
     if not appliance_id:
         return {"error": "appliance_id is required"}
     conn = _get_connector(gns3_ctx)
-    result = conn.http_call("post", f"{conn.base_url}/appliances/{appliance_id}/install").json()
+    url = f"{conn.base_url}/appliances/{appliance_id}/install"
+    request_params = {}
+    version = params.get("version")
+    if version:
+        request_params["version"] = version
+    result = conn.http_call("post", url, params=request_params).json()
     return {"message": f"Appliance {appliance_id} installation requested", "result": result}
