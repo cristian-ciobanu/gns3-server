@@ -1284,6 +1284,7 @@ async def appliance_get(
 @mcp.tool()
 async def appliance_install(
     appliance_id: Annotated[str, Field(description="UUID of the appliance to install")],
+    version: Annotated[str | None, Field(description="Version to install (e.g. '2.7.0.356'). Required if the appliance has multiple versions. Use appliance_get to see available versions.")] = None,
 ) -> list[dict[str, Any]]:
     """Create a template from a GNS3 appliance definition.
 
@@ -1294,6 +1295,7 @@ async def appliance_install(
     """
     return await asyncio.to_thread(_run_handler_sync, install_appliance_handler, {
         "appliance_id": appliance_id,
+        "version": version,
     })
 
 
