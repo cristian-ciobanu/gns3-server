@@ -35,6 +35,7 @@ class ControllerSettings(BaseModel):
     jwt_secret_key: str = None
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 1440  # 24 hours
+    jwt_refresh_token_expire_minutes: int = 43200  # 30 days
     default_admin_username: str = "admin"
     default_admin_password: SecretStr = SecretStr("admin")
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)

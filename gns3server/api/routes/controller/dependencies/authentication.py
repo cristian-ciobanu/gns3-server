@@ -35,6 +35,17 @@ log = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v3/access/users/login", auto_error=False)
 
 
+def _reject_refresh_token(token_data) -> None:
+    """Reject tokens with type == 'refresh' — they must not grant API access."""
+
+    if token_data.token_use == "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh tokens cannot be used for API access",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 async def get_user_from_token(
         bearer_token: str = Depends(oauth2_scheme),
         user_repo: UsersRepository = Depends(get_repository(UsersRepository)),
@@ -82,6 +93,7 @@ async def get_user_from_token(
 
     # JWT authentication
     token_data = auth_service.get_token_data(token)
+    _reject_refresh_token(token_data)
     user = await user_repo.get_user_by_username(token_data.username)
     if user is None:
         raise HTTPException(
@@ -137,6 +149,7 @@ async def get_current_active_user_from_websocket(
 
     try:
         token_data = auth_service.get_token_data(token)
+        _reject_refresh_token(token_data)
         user = await user_repo.get_user_by_username(token_data.username)
 
         if user is None:

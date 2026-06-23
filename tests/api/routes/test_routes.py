@@ -38,6 +38,7 @@ ALLOWED_CONTROLLER_ENDPOINTS = [
     ("/v3/version", "POST"),
     ("/v3/access/users/login", "POST"),
     ("/v3/access/users/authenticate", "POST"),
+    ("/v3/access/users/refresh", "POST"),
     ("/v3/symbols", "GET"),
     ("/v3/symbols/{symbol_id:path}/raw", "GET"),
     ("/v3/symbols/{symbol_id:path}/dimensions", "GET"),

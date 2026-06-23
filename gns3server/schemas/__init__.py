@@ -57,7 +57,7 @@ except ImportError:
 
 from .controller.rbac import RoleCreate, RoleUpdate, Role, Privilege, ACECreate, ACEUpdate, ACE
 from .controller.pools import Resource, ResourceCreate, ResourcePoolCreate, ResourcePoolUpdate, ResourcePool
-from .controller.tokens import Token, ApiKeyCreate
+from .controller.tokens import Token, ApiKeyCreate, RefreshTokenRequest
 from .controller.snapshots import SnapshotCreate, Snapshot
 from .controller.iou_license import IOULicense
 from .controller.capabilities import Capabilities
