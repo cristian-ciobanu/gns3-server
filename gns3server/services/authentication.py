@@ -46,12 +46,11 @@ class AuthService:
 
         return bcrypt.checkpw(password=password.encode('utf-8'), hashed_password=hashed_password.encode('utf-8'))
 
-    def create_access_token(self, username, token_version: int = 0, secret_key: str = None, expires_in: int = 0) -> str:
+    def _create_token(self, username, token_version, token_type, expires_in, secret_key=None) -> str:
+        """Shared helper to create any kind of signed JWT token."""
 
-        if not expires_in:
-            expires_in = Config.instance().settings.Controller.jwt_access_token_expire_minutes
         expire = datetime.now(timezone.utc) + timedelta(minutes=expires_in)
-        to_encode = {"sub": username, "exp": expire, "ver": token_version}
+        to_encode = {"sub": username, "exp": expire, "ver": token_version, "type": token_type}
         if secret_key is None:
             secret_key = Config.instance().settings.Controller.jwt_secret_key
         if secret_key is None:
@@ -61,6 +60,18 @@ class AuthService:
         key = OctKey.import_key(secret_key)
         encoded_jwt = jwt.encode({"alg": algorithm}, to_encode, key)
         return encoded_jwt
+
+    def create_access_token(self, username, token_version: int = 0, secret_key: str = None, expires_in: int = 0) -> str:
+
+        if not expires_in:
+            expires_in = Config.instance().settings.Controller.jwt_access_token_expire_minutes
+        return self._create_token(username, token_version, "access", expires_in, secret_key)
+
+    def create_refresh_token(self, username, token_version: int = 0, secret_key: str = None, expires_in: int = 0) -> str:
+
+        if not expires_in:
+            expires_in = Config.instance().settings.Controller.jwt_refresh_token_expire_minutes
+        return self._create_token(username, token_version, "refresh", expires_in, secret_key)
 
     def get_token_data(self, token: str, secret_key: str = None) -> TokenData:
 
@@ -86,7 +97,8 @@ class AuthService:
             if token_exp and time.time() > token_exp:
                 raise credentials_exception
             token_version: int = payload.claims.get("ver", 0)
-            token_data = TokenData(username=username, token_version=token_version)
+            token_use: str = payload.claims.get("type", "access")
+            token_data = TokenData(username=username, token_version=token_version, token_use=token_use)
         except (JoseError, ValidationError, ValueError):
             raise credentials_exception
         return token_data
