@@ -58,11 +58,11 @@ python3 -m pip install gns3-server
 
 GNS3 server supports optional features that can be installed as needed:
 
-**AI Copilot** (Optional):
+**AI Features** (Optional — includes AI Copilot and MCP):
 ```shell
-python3 -m pip install gns3-server[ai-copilot]
+python3 -m pip install gns3-server[ai-features]
 ```
-AI-powered assistant for network topology design and automation.
+AI-powered assistant for network topology design, automation, and MCP protocol support for AI agent integration.
 
 **Development** (For contributors):
 ```shell
@@ -78,7 +78,7 @@ Browser-based packet capture analysis using Wireshark in a Docker container.
 **Combination Installation**:
 You can install multiple optional features together:
 ```shell
-python3 -m pip install gns3-server[ai-copilot,dev]
+python3 -m pip install gns3-server[ai-features,dev]
 ```
 
 **Why optional?**
@@ -89,17 +89,15 @@ python3 -m pip install gns3-server[ai-copilot,dev]
 
 **Note:** If you install without optional extras, the server will work normally but optional features will be disabled. You can add features later by running the appropriate install command.
 
-**Uninstalling AI Copilot:**
+**Uninstalling AI Features:**
 
-To remove AI Copilot dependencies:
+To remove AI Features dependencies (AI Copilot + MCP):
 
 ```shell
-gns3server-uninstall-ai-copilot
+gns3server-uninstall-ai-features
 ```
 
-This will remove all AI Copilot dependencies while keeping the core functionality intact. The server will continue to work, but AI features will return a 501 (Not Implemented) status code.
-
-The downside of this method is you will have to manually install all dependencies (see below).
+This will remove all AI Copilot and MCP dependencies while keeping the core functionality intact. The server will continue to work, but AI features will be disabled.
 
 Please see our [documentation](https://docs.gns3.com/docs/getting-started/installation/linux) for more details.
 
@@ -137,7 +135,7 @@ python3 -m gns3server
 **For AI Copilot development**, install with additional dependencies:
 
 ```shell
-python3 -m pip install .[ai-copilot,dev]
+python3 -m pip install .[ai-features,dev]
 ```
 
 **For development (tests and linting)**:

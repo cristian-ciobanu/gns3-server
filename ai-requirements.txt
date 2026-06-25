@@ -1,7 +1,7 @@
 # ==============================================================================
 # GNS3 Copilot AI Agent Dependencies
 # ==============================================================================
-# Install with: pip install gns3-server[ai-copilot]
+# Install with: pip install gns3-server[ai-features]
 # Or directly: pip install -r ai-requirements.txt
 # ==============================================================================
 
