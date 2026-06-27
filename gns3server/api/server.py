@@ -45,8 +45,25 @@ from gns3server.controller.controller_error import (
 
 from gns3server.api.routes import controller, index
 from gns3server.api.routes.compute import compute_api
-from gns3server.api.routes import mcp
 from gns3server.core import tasks
+
+# MCP is an optional feature — import only if dependencies are installed
+from gns3server.agent import MCP_AVAILABLE
+
+if MCP_AVAILABLE:
+    from gns3server.api.routes import mcp
+    _mcp_router = mcp.router
+else:
+    from fastapi import APIRouter
+
+    _mcp_router = APIRouter(prefix="/mcp", tags=["MCP"])
+
+    @_mcp_router.api_route("/{path:path}", methods=["GET", "POST", "DELETE", "PATCH", "PUT"])
+    async def mcp_not_available(path: str = ""):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="MCP is not available. Install AI dependencies with: pip install gns3-server[ai-features]"
+        )
 
 import logging
 
@@ -76,7 +93,9 @@ def get_application() -> FastAPI:
     application.include_router(controller.router, prefix="/v3")
     application.mount("/static", StaticFiles(packages=[('gns3server', 'static')], html=True), name="static")
     application.mount("/v3/compute", compute_api, name="compute")
-    application.include_router(mcp.router, prefix="/v3", tags=["MCP"])
+
+    # Register MCP routes (stub returns 501 if MCP dependencies are not installed)
+    application.include_router(_mcp_router, prefix="/v3", tags=["MCP"])
 
     return application
 
@@ -84,7 +103,8 @@ def get_application() -> FastAPI:
 app = get_application()
 
 # Register MCP SSE transport routes (Starlette-level, for raw ASGI access)
-mcp.register_starlette_routes(app)
+if MCP_AVAILABLE:
+    mcp.register_starlette_routes(app)
 
 # Monkey Patch uvicorn signal handler to detect the application is shutting down
 app.state.exiting = False

@@ -84,9 +84,12 @@ async def startup(app: FastAPI) -> None:
         m = module.instance()
         m.port_manager = PortManager.instance()
 
-    # Mark MCP server as ready to accept connections
-    from gns3server.api.routes.mcp import set_mcp_server_ready
-    set_mcp_server_ready(True)
+    # Mark MCP server as ready to accept connections (if MCP is available)
+    from gns3server.agent import MCP_AVAILABLE
+
+    if MCP_AVAILABLE:
+        from gns3server.api.routes.mcp import set_mcp_server_ready
+        set_mcp_server_ready(True)
     log.info("GNS3 server startup completed")
 
 

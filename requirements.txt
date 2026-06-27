@@ -31,19 +31,17 @@ typing-extensions>=4.15.0
 requests>=2.34.2
 urllib3>=2.7.0
 
-# MCP (Model Context Protocol) dependencies
-fastmcp>=3.4.0
-
 # ==============================================================================
 # File type detection
 python-magic>=0.4.27
 
-# AI Copilot Optional Dependencies
+# Optional AI Features (AI Copilot + MCP)
 # ==============================================================================
-# AI Copilot features are now optional. Install with:
-#   pip install gns3-server[ai-copilot]
+# AI Copilot and MCP features are now optional. Install with:
+#   pip install gns3-server[ai-features]
 # Or:
 #   pip install -r ai-requirements.txt
+#   pip install -r mcp-requirements.txt
 #
 # This reduces installation size and supports restricted environments where
 # AI dependencies may not be allowed.
