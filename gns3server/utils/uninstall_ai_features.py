@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Uninstall AI Copilot dependencies.
+Uninstall AI Features dependencies (AI Copilot + MCP).
 
 Usage:
-    gns3server-uninstall-ai-copilot
-    gns3server-uninstall-ai-copilot -y
+    gns3server-uninstall-ai-features
+    gns3server-uninstall-ai-features -y
 """
 
 import os
@@ -13,29 +13,41 @@ import subprocess
 import argparse
 
 
-def get_ai_packages():
-    """Read packages from ai-requirements.txt."""
-    # Find the requirements file
+def _find_base_dir():
+    """Find the project root directory."""
     if hasattr(sys, '_MEIPASS'):
-        # PyInstaller bundle
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        # __file__ = gns3server/utils/uninstall_ai_copilot.py
-        # Need to go up 2 levels to reach project root
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    requirements_file = os.path.join(base_dir, "ai-requirements.txt")
 
+def _read_requirements(filename):
+    """Read packages from a requirements file."""
+    base_dir = _find_base_dir()
+    filepath = os.path.join(base_dir, filename)
     packages = []
-    with open(requirements_file, "r") as f:
+    with open(filepath, "r") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            # Remove version specifiers
             package = line.split(">=")[0].split("==")[0].split("~=")[0]
             packages.append(package)
     return packages
+
+
+def get_ai_packages():
+    """Read packages from all AI features requirements files."""
+    packages = []
+    packages.extend(_read_requirements("ai-requirements.txt"))
+    packages.extend(_read_requirements("mcp-requirements.txt"))
+    # Remove duplicates while preserving order
+    seen = set()
+    unique = []
+    for pkg in packages:
+        if pkg not in seen:
+            seen.add(pkg)
+            unique.append(pkg)
+    return unique
 
 
 def uninstall(packages, yes=False):
@@ -44,7 +56,7 @@ def uninstall(packages, yes=False):
         print("No packages found to uninstall.")
         return
 
-    print(f"Found {len(packages)} AI Copilot dependencies:")
+    print(f"Found {len(packages)} AI Features dependencies:")
     for pkg in packages:
         print(f"  - {pkg}")
     print()
@@ -70,13 +82,13 @@ def uninstall(packages, yes=False):
         except Exception as e:
             print(f"  Error removing {package}: {e}")
 
-    print("\nAI Copilot dependencies have been uninstalled.")
-    print("You can reinstall them with: pip install gns3-server[ai-copilot]")
+    print("\nAI Features dependencies have been uninstalled.")
+    print("You can reinstall them with: pip install gns3-server[ai-features]")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Uninstall AI Copilot dependencies"
+        description="Uninstall AI Features dependencies (AI Copilot + MCP)"
     )
     parser.add_argument(
         "-y", "--yes", action="store_true",

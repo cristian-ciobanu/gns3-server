@@ -39,7 +39,7 @@ else:
     async def ai_not_available(path: str = ""):
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="AI Copilot is not available. Install AI dependencies with: pip install gns3-server[ai-copilot]"
+            detail="AI Copilot is not available. Install AI dependencies with: pip install gns3-server[ai-features]"
         )
 
 from . import controller
