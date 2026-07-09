@@ -82,6 +82,7 @@ fi
 echo "Removing: $GNS3SERVER_DIR/gns3server/static/web-ui/*"
 
 rm -rf $GNS3SERVER_DIR/gns3server/static/web-ui/*
+git rm -rf gns3server/static/web-ui/*
 
 echo "Re-create: $GNS3SERVER_DIR/gns3server/static/web-ui"
 
