@@ -1,5 +1,142 @@
 # Change Log
 
+## 3.1.0a4 09/07/2026
+
+* Bundle web-ui v3.1.0a4
+* Add jwt_refresh_token_expire_minutes to sample configuration
+* Remove deleted web-ui files from git
+* .dockerignore ignore .dockerignore
+* typo made me reconsider and move out to env
+* defaulted DOCKERHUB_ORG repository variable
+* Remove API docs from 2.2 after merging
+* Update GitHub Actions workflows
+* Fix web-wireshark docker build broken by xpra 6.5 release
+* Update CI to install [ai-features,dev] instead of [ai-copilot,dev]
+* Make AI features (AI Copilot + MCP) optional via [ai-features] extra
+* Add refresh token mechanism documentation under docs/features/
+* Add /refresh to allowed public endpoints list in route auth test
+* Add stateless JWT refresh token mechanism
+* Add project/node/link handler tests: 39 total, covering list/get/create/delete/start/stop/suspend/reload/console/update/fields
+* Add MCP tool parameter consistency tests
+* Fix appliance_install: add version parameter
+* Add coordinate system note to docs
+* Document canvas coordinate system in node_create x/y params
+* Update docstring: batch concurrency from 10 to 100
+* Remove unused import time
+* Add list type check before nodes[0] access in _normalize_link_nodes
+* Add fields type validation in create handlers
+* Use pop() instead of pop(0) for O(1) port removal
+* Fix review issues: key_prefix length, count validation, WAL log, timeout comment, pointless temp var
+* Fix: pass name from TemplateUsage to add_node_from_template
+* Remove unused imports (logging, log, select)
+* Add warning for unconsumed pre-allocated UDP ports after link creation
+* Remove FIXME comment about middleware in server.py
+* Rename device_command_run_handler → device_show_run_handler to match tool name
+* Rename device_command_run → device_show_run for clarity
+* Fix device_command_run KeyError('commands'): tool desc said show_commands but backend expects commands
+* Fix template_list return type annotation to match _run_handler_sync envelope
+* Add performance optimization documentation
+* Update MCP service docs: API key format, auth flow, tool parameters, concurrency
+* Increase HTTP connection pool to 500/1000
+* Increase BATCH_MAX_WORKERS and Pool concurrency from 20 to 100
+* Remove final timing artifact in projects.py
+* Remove remaining dead timing variables and imports
+* Remove database warmup (proven ineffective - real bottleneck was bcrypt blocking event loop)
+* Clean up all timing/debug logs
+* Add memory: import validation best practice
+* Fix: add missing UUID imports
+* Generate fresh JWT on API key auth instead of returning raw key
+* Optimize API key auth: O(1) lookup via UUID-embedded key format
+* Fix: offload bcrypt.checkpw to thread pool to prevent blocking event loop
+* Add timing to API key auth path and log api_keys count
+* Replace SELECT 1 warmup with full database file read to warm OS page cache
+* Add timing logs to auth dependency chain to identify 6s pre-handler delay
+* Add granular timing to get_template: separate execute vs fetch time
+* Warm up database connection pool on startup to avoid 8s cold-start penalty on first API request
+* Fix: register WAL PRAGMA on sync_engine instead of Engine class for async compat
+* Add timing logs to get_template to identify DB query bottleneck
+* Add timing middleware to log slow requests (>1s) with [CTRL-TIMING] prefix
+* Fix: _time → time in compute.py timing log
+* Add [CTRL-TIMING] logs to controller create_node flow
+* Fix: pass template_id to batch mode handler so top-level template_id works as default
+* Add detailed timing logs to MCP node creation and HTTP client
+* Add fields filter to template_list tool with description for AI
+* Fix: add missing _filter_link_response function
+* Pass name parameter through to controller API when creating node from template
+* Add validation to compact link format with clear error messages
+* Add compact array format for link node entries to reduce token usage
+* Add fields filter to link_create tool
+* Reduce md5sum cache write failure log level from error to warning
+* Add fields filter to node_create tool description for AI
+* Optimize MCP create_node: support inherited template_id and default fields filter
+* Increase MCP HTTP client timeout from 10s to 30s
+* Enable SQLite WAL mode to fix 'database is locked' errors under concurrent API requests
+* Cache IOU image default values per image path to avoid redundant subprocess calls
+* Increase node and link creation concurrency from 5 to 20
+* Fix: revert IOU lock optimization, serialize IOU node creation for correct application_id assignment
+* Performance: accelerate project opening with parallel link creation and batch UDP port allocation
+* feat: Add batch link_ids to link_delete/link_reset, fields filter to link_list
+* feat: Add fields filter to link_list
+* feat: Add batch node_ids to node_delete
+* fix: Convert http to ws scheme in node_console WebSocket URL
+* feat: Add batch link_ids to link_capture_download
+* feat: Add batch link_ids to link_capture_start/stop
+* fix: Store username in gns3_ctx during auth, use for short-lived download JWTs
+* fix: Generate independent short-lived JWT for pcap download
+* revert: Remove _configs_map changes in tools_v2 (handled by template renderer now)
+* fix: Merge commands for duplicate device_names in _configs_map
+* fix: Actually pass template param to device_config/command handlers
+* fix: Correct Jinja2 template commands_field per tool type
+* feat: Jinja2 template support in device_command_run
+* feat: Jinja2 template support in device_config_send
+* feat: Add batch node_ids support to node_start/stop/reload/suspend
+* feat: Add fields filter to appliance_list
+* feat: Add fields filter to node_list
+* feat: node_get fields filter — match controller Node schema fields
+* fix: Set auto_close=False on project_create so projects stay open when clients disconnect
+* feat: Add batch mode to node_create and link_create (parallel, max 10 workers)
+* fix: Pass API key directly instead of generating short-lived JWT
+* feat: API key lifecycle — revoke/restore/delete
+* fix: Rename revoke_api_key → delete_api_key
+* fix: Hard-delete API keys instead of soft delete (revoked flag)
+* feat: Support API keys in REST API authentication (reuse gns3_ prefix keys)
+* fix: Lazily access db engine for API key validation
+* fix: Add missing updated_at column to api_keys table
+* fix: Export ApiKeyCreate from schemas package
+* feat: Add API Key support for MCP authentication
+* fix: Validate JWT token exp claim — was silently ignored after migration to joserfc
+* fix: Add image field to template_create, document type-specific params in description
+* fix: Remove .json() calls on 204 responses for prune/install images
+* fix: Skip always-running nodes in start_all/stop_all
+* fix: Add missing rotation parameter to drawing_update MCP tool
+* fix: Map MCP device_command_run parameter to tool's expected field name
+* fix: Update link_reset description to match actual behavior (delete + recreate)
+* fix: Remove unsupported description param from project_create
+* fix: Fix symbol_get/upload/delete handlers for correct API paths
+* feat: Log registered MCP tools at startup
+* fix: Type compute_id as uuid.UUID to reject non-UUID values at MCP input layer
+* fix: Require UUID for compute_get/images, remove 'local' string default
+* feat: Add device configuration MCP tools (config_send, command_run, vpcs_config_set)
+* refactor: unify MCP tool naming to <module>_<action> convention
+* feat: Add symbol upload/delete, project load, and locked check MCP tools
+* feat: Add image management MCP tools
+* feat: Add symbol and appliance MCP tools
+* feat: Add node bulk ops, project lock, and server info MCP tools
+* feat: Add snapshot and drawing MCP tools
+* refactor: unify MCP handlers to use http_call directly, relocate node file ops to Node class
+* feat: Add node file operations as MCP tools (list, get, write, delete)
+* Add comment about rootful Docker permissions at container start
+* Fix _fix_permissions test: set process.returncode=0 and update assertion
+* Fix list_node_files PermissionError on os.scandir
+* Fix _fix_permissions error handling and list_node_files PermissionError
+* Add async_iterable_to_stream utility to avoid aiohttp compatibility issues
+* Add descriptive detail to 403 errors in compute file endpoints
+* Fix silent file write failure in write_compute_project_file
+* feat: Node file streaming, recursive listing, file type detection, and file delete
+* Update README tool descriptions: .txt → .md
+* Update README tool descriptions to mention Markdown format
+* Add MCP project tools: update, duplicate, and README operations
+
 ## 3.1.0a3 06/06/2026
 
 * Bundle web-ui v3.1.0a3
