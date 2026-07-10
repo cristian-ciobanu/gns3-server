@@ -233,6 +233,10 @@ def interfaces():
         # Operational state and link attributes (speed/mtu/flags) come from
         # psutil.net_if_stats(). An interface present in net_if_addrs is normally
         # also present here; fall back to neutral defaults when it is not.
+        status = "down"
+        speed = 0
+        mtu = 0
+        flags = []
         stats = net_if_stats.get(interface)
         if stats is not None:
             status = "up" if stats.isup else "down"
@@ -240,14 +244,11 @@ def interfaces():
             mtu = stats.mtu
             # psutil returns flags either as a comma-separated string (>= 6.0) or
             # as a list (older versions); normalize to a list for a stable shape.
-            flags = stats.flags
-            if isinstance(flags, str):
-                flags = [flag for flag in flags.split(",") if flag]
-        else:
-            status = "down"
-            speed = 0
-            mtu = 0
-            flags = []
+            f = stats.flags
+            if isinstance(f, str):
+                flags = [flag for flag in f.split(",") if flag]
+            else:
+                flags = f
         results.append(
             {
                 "id": interface,

@@ -34,6 +34,12 @@ class IPAddressFamily(str, Enum):
     ipv6 = "ipv6"
 
 
+class InterfaceStatus(str, Enum):
+
+    up = "up"
+    down = "down"
+
+
 class HostInterfaceIPAddress(BaseModel):
     """
     An IP address (with optional netmask) bound to a host interface.
@@ -55,7 +61,7 @@ class HostInterface(BaseModel):
     ip_addresses: List[HostInterfaceIPAddress] = Field(
         default_factory=list, description="All IPv4 and IPv6 addresses on this interface"
     )
-    status: str = Field("down", description="Interface status (up or down)")
+    status: InterfaceStatus = Field(InterfaceStatus.down, description="Interface status (up or down)")
     speed: int = Field(0, description="Interface speed in Mbit/s (0 if unknown)")
     mtu: int = Field(0, description="Interface MTU")
     flags: List[str] = Field(default_factory=list, description="Interface flags")
