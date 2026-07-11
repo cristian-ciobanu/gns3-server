@@ -158,7 +158,7 @@ class ServerSettings(BaseModel):
     # defaults to loopback because ubridge runs on the same host as the compute.
     # port=0 lets the OS choose a free port (read back and handed to ubridge).
     marker_listen_host: str = "127.0.0.1"
-    marker_listen_port: int = Field(0, ge=0, le=65535)
+    marker_listen_port: int = Field(3070, ge=0, le=65535)
     compute_username: str = "gns3"
     compute_password: SecretStr = SecretStr("")
     allowed_interfaces: List[str] = Field(default_factory=list)
