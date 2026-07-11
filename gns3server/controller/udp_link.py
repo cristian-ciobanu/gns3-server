@@ -19,6 +19,7 @@
 from .controller_error import ControllerError, ControllerNotFoundError
 from .link import Link
 from .node_types import BUILTIN_NODE_TYPES
+from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
 
 class UDPLink(Link):
@@ -26,6 +27,8 @@ class UDPLink(Link):
         super().__init__(project, link_id=link_id)
         self._created = False
         self._link_data = []
+        # Runtime-only Node references for marker commands (not serialized).
+        self._marker_capture_nodes = {}
 
     @property
     def debug_link_data(self):
@@ -251,3 +254,132 @@ class UDPLink(Link):
         """
         if self._capture_node and node == self._capture_node["node"] and node.status != "started":
             await self.stop_capture()
+        # Tear down any marker whose capture-side node just stopped.
+        for name, marker_info in list(self._markers.items()):
+            if marker_info.get("capture_node_id") == node.id and node.status != "started":
+                await self.stop_marker(name)
+
+    def _capture_node_for_marker(self, name):
+        """Return the stored (node, adapter_number, port_number) for a marker's capture side."""
+        return self._marker_capture_nodes.get(name)
+
+    def _store_capture_node_for_marker(self, name, capture_side):
+        """Persist the capture-side identity (serializable refs) + runtime Node."""
+        self._markers[name] = {
+            **self._markers.get(name, {}),
+            "capture_node_id": capture_side["node"].id,
+            "capture_adapter": capture_side["adapter_number"],
+            "capture_port": capture_side["port_number"],
+        }
+        self._marker_capture_nodes[name] = capture_side
+
+    async def start_marker(self, name, bpf, tag=None):
+        """
+        Attach a traffic-insight marker to this link.
+
+        :param name: stable filter name — echoed in MARK signals + pcap identity
+        :param bpf: libpcap BPF expression
+        :param tag: optional correlation id
+        """
+
+        if name in self._markers:
+            raise ControllerError(f"Marker '{name}' already exists on link {self._id}")
+
+        # Pre-validate BPF on the controller side before reaching ubridge.
+        result = validate_bpf_syntax(bpf)
+        if not result.get("valid"):
+            raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+
+        capture_side = self._choose_capture_side()
+        data = {"name": name, "bpf": bpf, "tag": tag, "link_id": self._id}
+        await capture_side["node"].post(
+            "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
+                adapter_number=capture_side["adapter_number"], port_number=capture_side["port_number"]
+            ),
+            data=data,
+        )
+        self._store_capture_node_for_marker(name, capture_side)
+        self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True})
+        self._project.emit_notification("link.updated", self.asdict())
+        self._project.dump()
+
+    async def stop_marker(self, name):
+        """
+        Remove a traffic-insight marker from this link.
+
+        :param name: filter name to remove
+        """
+
+        if name not in self._markers:
+            raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
+
+        capture_side = self._marker_capture_nodes.get(name)
+        if capture_side:
+            await capture_side["node"].post(
+                "/adapters/{adapter_number}/ports/{port_number}/markers/stop".format(
+                    adapter_number=capture_side["adapter_number"],
+                    port_number=capture_side["port_number"],
+                ),
+                data={"name": name},
+            )
+        self._markers.pop(name, None)
+        self._marker_capture_nodes.pop(name, None)
+        self._project.emit_notification("link.updated", self.asdict())
+        self._project.dump()
+
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None):
+        """
+        Update an existing marker. A BPF change requires delete+re-add so the
+        ubridge side flushes the pcap and the new filter takes effect.
+
+        :param name: filter name to update
+        :param bpf: new BPF expression (None = keep existing)
+        :param tag: new tag id (None = keep existing)
+        :param enabled: toggle (None = keep existing)
+        """
+
+        marker_info = self._markers.get(name)
+        if not marker_info:
+            raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
+
+        new_bpf = bpf if bpf is not None else marker_info["bpf"]
+        new_tag = tag if tag is not None else marker_info.get("tag")
+        new_enabled = enabled if enabled is not None else marker_info.get("enabled", True)
+
+        if not new_enabled and marker_info.get("enabled", True):
+            # Toggle off: remove from ubridge but keep state.
+            await self.stop_marker(name)
+            self._markers[name] = {**marker_info, "bpf": new_bpf, "tag": new_tag, "enabled": False}
+            self._project.emit_notification("link.updated", self.asdict())
+            self._project.dump()
+            return
+
+        capture_side = self._marker_capture_nodes.get(name)
+        if new_bpf != marker_info.get("bpf") or new_tag != marker_info.get("tag"):
+            # BPF or tag changed — re-validate, delete, re-add.
+            if new_bpf != marker_info.get("bpf"):
+                result = validate_bpf_syntax(new_bpf)
+                if not result.get("valid"):
+                    raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+            if capture_side:
+                # Delete old filter from ubridge.
+                await capture_side["node"].post(
+                    "/adapters/{adapter_number}/ports/{port_number}/markers/stop".format(
+                        adapter_number=capture_side["adapter_number"],
+                        port_number=capture_side["port_number"],
+                    ),
+                    data={"name": name},
+                )
+                # Re-add with new params.
+                data = {"name": name, "bpf": new_bpf, "tag": new_tag, "link_id": self._id}
+                await capture_side["node"].post(
+                    "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
+                        adapter_number=capture_side["adapter_number"],
+                        port_number=capture_side["port_number"],
+                    ),
+                    data=data,
+                )
+            self._markers[name] = {**marker_info, "bpf": new_bpf, "tag": new_tag, "enabled": True}
+
+        self._project.emit_notification("link.updated", self.asdict())
+        self._project.dump()

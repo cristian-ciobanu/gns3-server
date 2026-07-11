@@ -1440,6 +1440,44 @@ class DockerVM(BaseNode):
             )
         )
 
+    async def start_marker(self, adapter_number, name, bpf, pcap_path, tag=None):
+        """
+        Attach a traffic-insight ``mark`` filter to this adapter's uBridge bridge.
+        On BPF match uBridge emits a MARK signal and appends the packet to the pcap.
+
+        :param adapter_number: adapter number
+        :param name: stable filter name — pcap identity and echoed in MARK signals
+        :param bpf: libpcap BPF expression
+        :param pcap_path: absolute path ubridge appends matched packets to
+        :param tag: optional correlation id echoed in MARK signals
+        """
+
+        if self.status == "started" and self.ubridge:
+            adapter = f"bridge{adapter_number}"
+            await self._ubridge_add_marker_filter(adapter, name, bpf, pcap_path, tag)
+        log.info(
+            "Docker VM '{name}' [{id}]: starting marker '{marker}' on adapter {adapter_number}".format(
+                name=self.name, id=self.id, marker=name, adapter_number=adapter_number
+            )
+        )
+
+    async def stop_marker(self, adapter_number, name):
+        """
+        Remove a traffic-insight ``mark`` filter from this adapter's uBridge bridge.
+
+        :param adapter_number: adapter number
+        :param name: filter name previously passed to start_marker
+        """
+
+        if self.status == "started" and self.ubridge:
+            adapter = f"bridge{adapter_number}"
+            await self._ubridge_delete_marker_filter(adapter, name)
+        log.info(
+            "Docker VM '{name}' [{id}]: stopping marker '{marker}' on adapter {adapter_number}".format(
+                name=self.name, id=self.id, marker=name, adapter_number=adapter_number
+            )
+        )
+
     async def _get_log(self):
         """
         Returns the log from the container

@@ -62,6 +62,10 @@ class LinkBase(BaseModel):
     suspend: Optional[bool] = None
     link_style: Optional[LinkStyle] = None
     filters: Optional[dict] = None
+    markers: Optional[dict] = Field(
+        None,
+        description="Traffic-insight markers on this link: name → {bpf, tag, enabled}"
+    )
     show_filters_icon: Optional[bool] = Field(
         True,
         description="Show filters icon in Web UI"
@@ -135,3 +139,25 @@ class LinkCapture(BaseModel):
     data_link_type: str = "DLT_EN10MB"
     capture_file_name: Optional[str] = None
     wireshark: bool = False
+
+
+class MarkerCreate(BaseModel):
+    """
+    Body for attaching a traffic-insight marker to a link.
+
+    ``name`` is optional at the controller REST layer (auto-generated when
+    absent) but always set when the controller forwards to the compute.
+    """
+
+    name: Optional[str] = None
+    bpf: str
+    tag: Optional[int] = None
+    link_id: Optional[str] = None
+
+
+class MarkerDelete(BaseModel):
+    """
+    Body for removing a traffic-insight marker from a link.
+    """
+
+    name: str

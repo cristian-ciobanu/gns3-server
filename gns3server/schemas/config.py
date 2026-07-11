@@ -153,6 +153,12 @@ class ServerSettings(BaseModel):
     udp_start_port_range: int = Field(10000, gt=0, le=65535)
     udp_end_port_range: int = Field(30000, gt=0, le=65535)
     ubridge_path: str = "ubridge"
+    # Marker (traffic-insight) UDP sink: one listener per compute process that
+    # receives ubridge MARK signals from every ubridge on this host. The host
+    # defaults to loopback because ubridge runs on the same host as the compute.
+    # port=0 lets the OS choose a free port (read back and handed to ubridge).
+    marker_listen_host: str = "127.0.0.1"
+    marker_listen_port: int = Field(0, ge=0, le=65535)
     compute_username: str = "gns3"
     compute_password: SecretStr = SecretStr("")
     allowed_interfaces: List[str] = Field(default_factory=list)

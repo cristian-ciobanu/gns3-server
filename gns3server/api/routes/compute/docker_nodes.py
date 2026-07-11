@@ -29,6 +29,7 @@ from typing import Union
 from gns3server import schemas
 from gns3server.compute.docker import Docker
 from gns3server.compute.docker.docker_vm import DockerVM
+from gns3server.compute.marker.marker_manager import MarkerManager
 
 from .dependencies.authentication import compute_authentication, ws_compute_authentication
 
@@ -351,6 +352,52 @@ async def stop_docker_node_capture(
     """
 
     await node.stop_capture(adapter_number)
+
+
+@router.post(
+    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/start",
+    dependencies=[Depends(compute_authentication)]
+)
+async def start_docker_node_marker(
+    *,
+    project_id: UUID,
+    adapter_number: int,
+    port_number: int,
+    marker_data: schemas.MarkerCreate,
+    node: DockerVM = Depends(dep_node)
+) -> dict:
+    """
+    Attach a traffic-insight ``mark`` filter to the Docker node's uBridge bridge.
+    """
+
+    pcap_path = os.path.join(
+        node.project.markers_working_directory(),
+        f"{node.id}_{marker_data.link_id}_{marker_data.name}.pcap"
+    )
+    await node.start_marker(adapter_number, marker_data.name, marker_data.bpf, pcap_path, marker_data.tag)
+    MarkerManager.instance().register(
+        str(project_id), node.id, marker_data.name, marker_data.link_id, marker_data.tag
+    )
+    return {"pcap_file_path": str(pcap_path)}
+
+
+@router.post(
+    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/stop",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(compute_authentication)]
+)
+async def stop_docker_node_marker(
+    adapter_number: int,
+    port_number: int,
+    marker_data: schemas.MarkerDelete,
+    node: DockerVM = Depends(dep_node)
+) -> None:
+    """
+    Remove a traffic-insight ``mark`` filter from the Docker node's uBridge bridge.
+    """
+
+    await node.stop_marker(adapter_number, marker_data.name)
+    MarkerManager.instance().unregister(node.id, marker_data.name)
 
 
 @router.get(

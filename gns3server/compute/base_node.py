@@ -935,8 +935,37 @@ class BaseNode:
                 f"Hypervisor {self._ubridge_hypervisor.host}:{self._ubridge_hypervisor.port} has successfully started"
             )
             await self._ubridge_hypervisor.connect()
+            # Tell this uBridge where to send MARK signals and which node id to
+            # tag them with. Marker is opt-in and inert until a `mark` filter is
+            # added, so this never disturbs the data plane.
+            await self._ubridge_configure_marker_sink()
         # save if privileged are required in case uBridge needs to be restarted in self._ubridge_send()
         self._ubridge_require_privileged_access = require_privileged_access
+
+    async def _ubridge_configure_marker_sink(self):
+        """
+        Point this node's uBridge at the compute's marker UDP sink and tag its
+        signals with this node's id. Safe to call before any marker filter
+        exists — uBridge stays inert until a ``mark`` filter is configured.
+
+        Old uBridge builds without the marker module are tolerated: the failure
+        is downgraded to a warning so node start is not blocked by an opt-in
+        observability feature.
+        """
+
+        from gns3server.compute.marker.marker_manager import MarkerManager
+
+        manager = MarkerManager.instance()
+        if not manager.running or not manager.host or not manager.port:
+            return
+        try:
+            await self._ubridge_send(f"marker sink {manager.host} {manager.port}")
+            await self._ubridge_send(f"marker node {self._id}")
+        except UbridgeError:
+            log.warning(
+                "uBridge does not support the marker module; traffic insight disabled for node %r",
+                self.name,
+            )
 
     async def _stop_ubridge(self):
         """
@@ -1041,6 +1070,47 @@ class BaseNode:
                     filter_value=" ".join([str(v) for v in values]),
                 )
                 i += 1
+
+    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None):
+        """
+        Attach a `mark` packet filter to a uBridge bridge for traffic insight.
+
+        On BPF match uBridge (a) emits a UDP MARK signal to the configured sink
+        and (b) appends the packet to ``pcap_path``. Unlike the impairment
+        filters, this is an observability tap: it never drops or alters traffic,
+        and it is added/removed on its own (not via reset_packet_filters) so the
+        pcap is not closed/reopened on unrelated filter changes.
+
+        :param bridge_name: uBridge bridge carrying the link's traffic
+        :param name: stable, gns3server-chosen filter name (pcap identity + echoed in signals)
+        :param bpf: libpcap BPF expression
+        :param pcap_path: absolute path ubridge appends matched packets to
+        :param tag: optional correlation id echoed in MARK signals
+        """
+
+        # mark <bpf> [tag <id>] [pcap <path>] — tag/pcap keyword pairs, any order.
+        cmd = 'bridge add_packet_filter {bridge} {name} mark "{bpf}"'.format(
+            bridge=bridge_name, name=name, bpf=bpf
+        )
+        if tag is not None:
+            cmd += f" tag {tag}"
+        cmd += ' pcap "{path}"'.format(path=pcap_path)
+        # Let BPF compile errors propagate — the marker is the user's intent, so a
+        # bad expression must surface instead of being silently dropped.
+        await self._ubridge_send(cmd)
+
+    async def _ubridge_delete_marker_filter(self, bridge_name, name):
+        """
+        Remove a `mark` filter from a uBridge bridge.
+
+        uBridge closes and flushes the filter's pcap on delete; the file itself
+        persists on disk for later replay.
+
+        :param bridge_name: uBridge bridge the filter is attached to
+        :param name: filter name previously passed to _ubridge_add_marker_filter
+        """
+
+        await self._ubridge_send(f"bridge delete_packet_filter {bridge_name} {name}")
 
     async def _add_ubridge_ethernet_connection(self, bridge_name, ethernet_interface, block_host_traffic=False):
         """

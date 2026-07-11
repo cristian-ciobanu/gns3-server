@@ -425,6 +425,85 @@ async def web_wireshark_websocket(
 
 
 @router.get(
+    "/{link_id}/markers",
+    dependencies=[Depends(has_privilege("Link.Audit"))]
+)
+async def get_markers(link: Link = Depends(dep_link)) -> dict:
+    """
+    Return all traffic-insight markers configured on this link.
+
+    Required privilege: Link.Audit
+    """
+
+    return link.markers
+
+
+@router.post(
+    "/{link_id}/markers",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def create_marker(
+    marker_data: schemas.MarkerCreate,
+    link: Link = Depends(dep_link)
+) -> dict:
+    """
+    Attach a traffic-insight marker to the link.
+    On BPF match uBridge emits MARK signals and appends packets to a pcap.
+
+    Required privilege: Link.Modify
+    """
+
+    await link.start_marker(
+        name=marker_data.name or f"marker-{link.id[:8]}",
+        bpf=marker_data.bpf,
+        tag=marker_data.tag,
+    )
+    return link.markers.get(marker_data.name, {})
+
+
+@router.delete(
+    "/{link_id}/markers/{marker_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def delete_marker(
+    marker_name: str,
+    link: Link = Depends(dep_link)
+) -> None:
+    """
+    Remove a traffic-insight marker from the link.
+
+    Required privilege: Link.Modify
+    """
+
+    await link.stop_marker(marker_name)
+
+
+@router.put(
+    "/{link_id}/markers/{marker_name}",
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def update_marker(
+    marker_name: str,
+    marker_data: schemas.MarkerCreate,
+    link: Link = Depends(dep_link)
+) -> dict:
+    """
+    Update a traffic-insight marker (change BPF, tag, or enabled).
+
+    Required privilege: Link.Modify
+    """
+
+    await link.update_marker(
+        name=marker_name,
+        bpf=marker_data.bpf if marker_data.bpf else None,
+        tag=marker_data.tag,
+    )
+    return link.markers.get(marker_name, {})
+
+
+@router.get(
     "/{link_id}/iface",
     response_model=Union[schemas.UDPPortInfo, schemas.EthernetPortInfo],
     dependencies=[Depends(has_privilege("Link.Audit"))]

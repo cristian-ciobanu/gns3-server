@@ -1697,6 +1697,44 @@ class QemuVM(BaseNode):
             )
         )
 
+    async def start_marker(self, adapter_number, name, bpf, pcap_path, tag=None):
+        """
+        Attach a traffic-insight ``mark`` filter to this adapter's uBridge bridge.
+        On BPF match uBridge emits a MARK signal and appends the packet to the pcap.
+
+        :param adapter_number: adapter number
+        :param name: stable filter name — pcap identity and echoed in MARK signals
+        :param bpf: libpcap BPF expression
+        :param pcap_path: absolute path ubridge appends matched packets to
+        :param tag: optional correlation id echoed in MARK signals
+        """
+
+        if self.ubridge:
+            await self._ubridge_add_marker_filter(
+                f"QEMU-{self._id}-{adapter_number}", name, bpf, pcap_path, tag
+            )
+        log.info(
+            "QEMU VM '{name}' [{id}]: starting marker '{marker}' on adapter {adapter_number}".format(
+                name=self.name, id=self.id, marker=name, adapter_number=adapter_number
+            )
+        )
+
+    async def stop_marker(self, adapter_number, name):
+        """
+        Remove a traffic-insight ``mark`` filter from this adapter's uBridge bridge.
+
+        :param adapter_number: adapter number
+        :param name: filter name previously passed to start_marker
+        """
+
+        if self.ubridge:
+            await self._ubridge_delete_marker_filter(f"QEMU-{self._id}-{adapter_number}", name)
+        log.info(
+            "QEMU VM '{name}' [{id}]: stopping marker '{marker}' on adapter {adapter_number}".format(
+                name=self.name, id=self.id, marker=name, adapter_number=adapter_number
+            )
+        )
+
     async def create_disk_image(self, disk_name, options):
         """
         Create a Qemu disk

@@ -221,6 +221,7 @@ async def test_json(project, compute):
             }
         ],
         "filters": {},
+        "markers": {},
         "show_filters_icon": True,
         "link_style": {},
         "suspend": False,
@@ -255,6 +256,7 @@ async def test_json(project, compute):
         ],
         "link_style": {},
         "filters": {},
+        "markers": {},
         "show_filters_icon": True,
         "suspend": False
     }
