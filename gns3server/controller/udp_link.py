@@ -21,6 +21,11 @@ from .link import Link
 from .node_types import BUILTIN_NODE_TYPES
 from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
+# Node types without a uBridge bridge — a marker filter has nothing to attach to.
+_MARKER_UNSUPPORTED_TYPES = frozenset({
+    "ethernet_switch", "ethernet_hub", "frame_relay_switch", "atm_switch", "nat",
+})
+
 
 class UDPLink(Link):
     def __init__(self, project, link_id=None):
@@ -248,6 +253,42 @@ class UDPLink(Link):
 
         raise ControllerError("Cannot capture because there is no running device on this link")
 
+    def _choose_marker_side(self):
+        """
+        Pick a marker capture side, excluding node types without a uBridge bridge
+        (ethernet_switch, ethernet_hub, etc.). Falls through the same
+        preference tiers as ``_choose_capture_side``.
+        """
+
+        # Prefer local + non-switch + started.
+        for node in self._nodes:
+            if (
+                node["node"].compute.id == "local"
+                and node["node"].node_type not in _MARKER_UNSUPPORTED_TYPES
+                and node["node"].status == "started"
+            ):
+                return node
+
+        # Non-switch + started (any compute).
+        for node in self._nodes:
+            if (
+                node["node"].node_type not in _MARKER_UNSUPPORTED_TYPES
+                and node["node"].status == "started"
+            ):
+                return node
+
+        # Fallback: any local started.
+        for node in self._nodes:
+            if node["node"].compute.id == "local" and node["node"].status == "started":
+                return node
+
+        # Last resort: any started.
+        for node in self._nodes:
+            if node["node"].status == "started":
+                return node
+
+        raise ControllerError("Cannot add marker because there is no running device on this link")
+
     async def node_updated(self, node):
         """
         Called when a node member of the link is updated
@@ -290,15 +331,15 @@ class UDPLink(Link):
         if not result.get("valid"):
             raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
-        capture_side = self._choose_capture_side()
+        marker_side = self._choose_marker_side()
         data = {"name": name, "bpf": bpf, "tag": tag, "link_id": self._id}
-        await capture_side["node"].post(
+        await marker_side["node"].post(
             "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
-                adapter_number=capture_side["adapter_number"], port_number=capture_side["port_number"]
+                adapter_number=marker_side["adapter_number"], port_number=marker_side["port_number"]
             ),
             data=data,
         )
-        self._store_capture_node_for_marker(name, capture_side)
+        self._store_capture_node_for_marker(name, marker_side)
         self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True})
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
