@@ -35,8 +35,6 @@ class UDPLink(Link):
         super().__init__(project, link_id=link_id)
         self._created = False
         self._link_data = []
-        # Runtime-only Node references for marker commands (not serialized).
-        self._marker_capture_nodes = {}
 
     @property
     def debug_link_data(self):
@@ -321,23 +319,15 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    def _capture_node_for_marker(self, name):
-        """Return the stored (node, adapter_number, port_number) for a marker's capture side."""
-        return self._marker_capture_nodes.get(name)
-
-    def _store_capture_node_for_marker(self, name, capture_side):
-        """Persist the capture-side identity (serializable refs) + runtime Node."""
-        self._markers[name] = {
-            **self._markers.get(name, {}),
-            "capture_node_id": capture_side["node"].id,
-            "capture_adapter": capture_side["adapter_number"],
-            "capture_port": capture_side["port_number"],
-        }
-        self._marker_capture_nodes[name] = capture_side
-
     async def start_marker(self, name, bpf, tag=None, color=None):
         """
         Attach a traffic-insight marker to this link.
+
+        State-only model (mirrors ``update_filters``): record the marker in
+        ``_markers`` (with its capture-side node id for NIO routing), then push
+        via ``self.update()`` so it rides the NIO and is applied by
+        ``_ubridge_apply_markers``. No dedicated uBridge round-trip — exactly
+        how packet filters are applied.
 
         :param name: stable filter name — echoed in MARK signals + pcap identity
         :param bpf: libpcap BPF expression
@@ -349,28 +339,20 @@ class UDPLink(Link):
         if name in self._markers:
             raise ControllerError(f"Marker '{name}' already exists on link {self._id}")
 
-        # Pre-validate BPF on the controller side before reaching ubridge.
         result = validate_bpf_syntax(bpf)
         if not result.get("valid"):
             raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
         marker_side = self._choose_marker_side()
-        # Record state + runtime capture-side ref unconditionally (so stop/update
-        # work and the marker is persisted), but only push to uBridge when the
-        # link is already live. During project load the link is not yet created
-        # (self._created is False); the marker then rides the NIO via create()
-        # and is applied once by _ubridge_apply_markers — mirroring exactly how
-        # update_filters guards its update() call.
-        self._store_capture_node_for_marker(name, marker_side)
-        self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True, "color": color})
+        self._markers[name] = {
+            "bpf": bpf,
+            "tag": tag,
+            "enabled": True,
+            "color": color,
+            "capture_node_id": marker_side["node"].id,
+        }
         if self._created:
-            data = {"name": name, "bpf": bpf, "tag": tag, "link_id": self._id}
-            await marker_side["node"].post(
-                "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
-                    adapter_number=marker_side["adapter_number"], port_number=marker_side["port_number"]
-                ),
-                data=data,
-            )
+            await self.update()
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
@@ -378,30 +360,27 @@ class UDPLink(Link):
         """
         Remove a traffic-insight marker from this link.
 
+        Drop it from ``_markers`` and push via ``self.update()``: the NIO
+        reset+reapply in ``_ubridge_apply_filters``/``_ubridge_apply_markers``
+        drops it from uBridge. Mirrors how deleting a packet filter works.
+
         :param name: filter name to remove
         """
 
         if name not in self._markers:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
 
-        capture_side = self._marker_capture_nodes.get(name)
-        if capture_side:
-            await capture_side["node"].post(
-                "/adapters/{adapter_number}/ports/{port_number}/markers/stop".format(
-                    adapter_number=capture_side["adapter_number"],
-                    port_number=capture_side["port_number"],
-                ),
-                data={"name": name},
-            )
-        self._markers.pop(name, None)
-        self._marker_capture_nodes.pop(name, None)
+        del self._markers[name]
+        if self._created:
+            await self.update()
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
     async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None):
         """
-        Update an existing marker. A BPF change requires delete+re-add so the
-        ubridge side flushes the pcap and the new filter takes effect.
+        Update an existing marker's BPF/tag/enabled/color. Any change pushes via
+        ``self.update()``; uBridge picks up the new params on the next NIO
+        reset+reapply (same as packet filters).
 
         :param name: filter name to update
         :param bpf: new BPF expression (None = keep existing)
@@ -414,54 +393,19 @@ class UDPLink(Link):
         if not marker_info:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
 
-        new_bpf = bpf if bpf is not None else marker_info["bpf"]
-        new_tag = tag if tag is not None else marker_info.get("tag")
-        new_enabled = enabled if enabled is not None else marker_info.get("enabled", True)
-        new_color = color if color is not None else marker_info.get("color")
+        if bpf is not None and bpf != marker_info["bpf"]:
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+            marker_info["bpf"] = bpf
+        if tag is not None:
+            marker_info["tag"] = tag
+        if enabled is not None:
+            marker_info["enabled"] = enabled
+        if color is not None:
+            marker_info["color"] = color
 
-        if not new_enabled and marker_info.get("enabled", True):
-            # Toggle off: remove from ubridge but keep state.
-            await self.stop_marker(name)
-            self._markers[name] = {
-                **marker_info, "bpf": new_bpf, "tag": new_tag,
-                "enabled": False, "color": new_color,
-            }
-            self._project.emit_notification("link.updated", self.asdict())
-            self._project.dump()
-            return
-
-        capture_side = self._marker_capture_nodes.get(name)
-        if new_bpf != marker_info.get("bpf") or new_tag != marker_info.get("tag"):
-            # BPF or tag changed — re-validate, delete, re-add.
-            if new_bpf != marker_info.get("bpf"):
-                result = validate_bpf_syntax(new_bpf)
-                if not result.get("valid"):
-                    raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
-            if capture_side:
-                # Delete old filter from ubridge.
-                await capture_side["node"].post(
-                    "/adapters/{adapter_number}/ports/{port_number}/markers/stop".format(
-                        adapter_number=capture_side["adapter_number"],
-                        port_number=capture_side["port_number"],
-                    ),
-                    data={"name": name},
-                )
-                # Re-add with new params.
-                data = {"name": name, "bpf": new_bpf, "tag": new_tag, "link_id": self._id}
-                await capture_side["node"].post(
-                    "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
-                        adapter_number=capture_side["adapter_number"],
-                        port_number=capture_side["port_number"],
-                    ),
-                    data=data,
-                )
-            self._markers[name] = {
-                **marker_info, "bpf": new_bpf, "tag": new_tag,
-                "enabled": True, "color": new_color,
-            }
-        elif new_color != marker_info.get("color"):
-            # Color-only change: no ubridge round-trip, just update state.
-            self._markers[name] = {**marker_info, "color": new_color}
-
+        if self._created:
+            await self.update()
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()

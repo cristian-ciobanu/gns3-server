@@ -512,42 +512,6 @@ class VPCSVM(BaseNode):
             )
         )
 
-    async def start_marker(self, port_number, name, bpf, pcap_path, tag=None):
-        """
-        Attach a traffic-insight ``mark`` filter to this node's uBridge bridge.
-        On BPF match uBridge emits a MARK signal and appends the packet to the pcap.
-
-        :param port_number: port number (kept for API symmetry; VPCS has a single bridge)
-        :param name: stable filter name — pcap identity and echoed in MARK signals
-        :param bpf: libpcap BPF expression
-        :param pcap_path: absolute path ubridge appends matched packets to
-        :param tag: optional correlation id echoed in MARK signals
-        """
-
-        if self.ubridge:
-            await self._ubridge_add_marker_filter(f"VPCS-{self._id}", name, bpf, pcap_path, tag)
-        log.info(
-            "VPCS '{name}' [{id}]: starting marker '{marker}' on port {port_number}".format(
-                name=self.name, id=self.id, marker=name, port_number=port_number
-            )
-        )
-
-    async def stop_marker(self, port_number, name):
-        """
-        Remove a traffic-insight ``mark`` filter from this node's uBridge bridge.
-
-        :param port_number: port number (kept for API symmetry)
-        :param name: filter name previously passed to start_marker
-        """
-
-        if self.ubridge:
-            await self._ubridge_delete_marker_filter(f"VPCS-{self._id}", name)
-        log.info(
-            "VPCS '{name}' [{id}]: stopping marker '{marker}' on port {port_number}".format(
-                name=self.name, id=self.id, marker=name, port_number=port_number
-            )
-        )
-
     def _build_command(self):
         """
         Command to start the VPCS process.

@@ -29,8 +29,6 @@ from uuid import UUID
 from gns3server import schemas
 from gns3server.compute.vpcs import VPCS
 from gns3server.compute.vpcs.vpcs_vm import VPCSVM
-from gns3server.compute.marker.marker_manager import MarkerManager
-
 from .dependencies.authentication import compute_authentication, ws_compute_authentication
 
 responses = {404: {"model": schemas.ErrorMessage, "description": "Could not find project or VMware node"}}
@@ -304,65 +302,6 @@ async def stop_vpcs_node_capture(
 
     await node.stop_capture(port_number)
 
-
-@router.post(
-    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/start",
-    dependencies=[Depends(compute_authentication)]
-)
-async def start_vpcs_node_marker(
-    *,
-    project_id: UUID,
-    port_number: int,
-    marker_data: schemas.MarkerCreate,
-    adapter_number: int = Path(..., ge=0, le=0),
-    node: VPCSVM = Depends(dep_node)
-) -> dict:
-    """
-    Attach a traffic-insight ``mark`` filter to the VPCS node's uBridge bridge.
-    On BPF match uBridge emits a MARK signal and appends the packet to the pcap.
-    """
-
-    pcap_path = os.path.join(
-        node.project.markers_working_directory(),
-        f"{node.id}_{marker_data.link_id}_{marker_data.name}.pcap"
-    )
-    await node.start_marker(port_number, marker_data.name, marker_data.bpf, pcap_path, marker_data.tag)
-    MarkerManager.instance().register(
-        str(project_id), node.id, marker_data.name, marker_data.link_id, marker_data.tag
-    )
-    # Mirror the marker spec onto the NIO so it survives a node restart (the NIO
-    # persists across stop/start and _ubridge_apply_markers re-applies its markers).
-    nio = node.get_nio(port_number)
-    if nio:
-        nio.markers[marker_data.name] = {
-            "bpf": marker_data.bpf,
-            "tag": marker_data.tag,
-            "link_id": marker_data.link_id,
-        }
-    return {"pcap_file_path": pcap_path}
-
-
-@router.post(
-    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/stop",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(compute_authentication)]
-)
-async def stop_vpcs_node_marker(
-    *,
-    port_number: int,
-    marker_data: schemas.MarkerDelete,
-    adapter_number: int = Path(..., ge=0, le=0),
-    node: VPCSVM = Depends(dep_node)
-) -> None:
-    """
-    Remove a traffic-insight ``mark`` filter from the VPCS node's uBridge bridge.
-    """
-
-    await node.stop_marker(port_number, marker_data.name)
-    MarkerManager.instance().unregister(node.id, marker_data.name)
-    nio = node.get_nio(port_number)
-    if nio:
-        nio.markers.pop(marker_data.name, None)
 
 
 @router.get(

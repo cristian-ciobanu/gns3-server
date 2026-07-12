@@ -1101,19 +1101,6 @@ class BaseNode:
         # bad expression must surface instead of being silently dropped.
         await self._ubridge_send(cmd)
 
-    async def _ubridge_delete_marker_filter(self, bridge_name, name):
-        """
-        Remove a `mark` filter from a uBridge bridge.
-
-        uBridge closes and flushes the filter's pcap on delete; the file itself
-        persists on disk for later replay.
-
-        :param bridge_name: uBridge bridge the filter is attached to
-        :param name: filter name previously passed to _ubridge_add_marker_filter
-        """
-
-        await self._ubridge_send(f"bridge delete_packet_filter {bridge_name} {name}")
-
     async def _ubridge_apply_markers(self, bridge_name, nio):
         """
         (Re-)apply every traffic-insight marker carried by *nio* to the uBridge
@@ -1137,7 +1124,18 @@ class BaseNode:
             pcap_path = os.path.join(
                 markers_dir, f"{self._id}_{link_id}_{name}.pcap"
             )
-            await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag)
+            try:
+                await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag)
+            except UbridgeError as e:
+                # Swallow BPF compile errors (warn + skip) so a single bad
+                # expression can't break link creation / node restart — mirrors
+                # _ubridge_apply_filters, which does the same for packet filters.
+                if "syntax error" in str(e).lower() or "compile filter" in str(e).lower():
+                    message = f"Warning: ignoring marker '{name}' due to BPF syntax error: {e}"
+                    log.warning(message)
+                    self.project.emit("log.warning", {"message": message})
+                    continue
+                raise
             manager.register(
                 str(self.project.id), self._id, name, link_id, tag
             )

@@ -159,9 +159,3 @@ class MarkerCreate(BaseModel):
     )
 
 
-class MarkerDelete(BaseModel):
-    """
-    Body for removing a traffic-insight marker from a link.
-    """
-
-    name: str

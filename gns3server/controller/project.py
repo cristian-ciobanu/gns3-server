@@ -41,6 +41,7 @@ from ..config import Config
 from ..utils.path import check_path_allowed, get_default_project_directory
 from ..utils.application_id import get_next_application_id
 from ..utils.asyncio.pool import Pool
+from ..utils.packet_filter_validation import validate_bpf_syntax
 from ..utils.asyncio import locking
 from ..utils.asyncio import aiozipstream
 from ..utils.asyncio import wait_run_in_executor
@@ -765,22 +766,31 @@ class Project:
                     "Dropping invalid filters on link %s: %s",
                     link_data.get("link_id"), e
                 )
-        # Restore traffic-insight markers. Each marker's capture side is resolved
-        # when the link is (re)created and the marker is applied to uBridge via
-        # _ubridge_apply_markers in add_ubridge_udp_connection.
+        # Restore traffic-insight markers directly into link state (mirrors how
+        # filters are restored via update_filters). The capture_node_id persisted
+        # last time is reused for NIO routing; no side resolution is possible here
+        # because the link's nodes are added later. The marker is applied to
+        # uBridge by _ubridge_apply_markers when create() runs. Invalid BPF is
+        # dropped (like invalid filters).
         for name, marker in (link_data.get("markers") or {}).items():
-            try:
-                await link.start_marker(
-                    name=name,
-                    bpf=marker["bpf"],
-                    tag=marker.get("tag"),
-                    color=marker.get("color"),
-                )
-            except (ControllerError, KeyError) as e:
+            bpf = marker.get("bpf")
+            if not bpf:
+                log.warning("Dropping marker %s on link %s: missing bpf", name, link_data.get("link_id"))
+                continue
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
                 log.warning(
-                    "Dropping marker %s on link %s: %s",
-                    name, link_data.get("link_id"), e
+                    "Dropping marker %s on link %s: invalid BPF (%s)",
+                    name, link_data.get("link_id"), result.get("error")
                 )
+                continue
+            link._markers[name] = {
+                "bpf": bpf,
+                "tag": marker.get("tag"),
+                "enabled": marker.get("enabled", True),
+                "color": marker.get("color"),
+                "capture_node_id": marker.get("capture_node_id"),
+            }
         if "link_style" in link_data:
             await link.update_link_style(link_data["link_style"])
         if "show_filters_icon" in link_data:
