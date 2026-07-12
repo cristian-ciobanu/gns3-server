@@ -355,15 +355,22 @@ class UDPLink(Link):
             raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
         marker_side = self._choose_marker_side()
-        data = {"name": name, "bpf": bpf, "tag": tag, "link_id": self._id}
-        await marker_side["node"].post(
-            "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
-                adapter_number=marker_side["adapter_number"], port_number=marker_side["port_number"]
-            ),
-            data=data,
-        )
+        # Record state + runtime capture-side ref unconditionally (so stop/update
+        # work and the marker is persisted), but only push to uBridge when the
+        # link is already live. During project load the link is not yet created
+        # (self._created is False); the marker then rides the NIO via create()
+        # and is applied once by _ubridge_apply_markers — mirroring exactly how
+        # update_filters guards its update() call.
         self._store_capture_node_for_marker(name, marker_side)
         self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True, "color": color})
+        if self._created:
+            data = {"name": name, "bpf": bpf, "tag": tag, "link_id": self._id}
+            await marker_side["node"].post(
+                "/adapters/{adapter_number}/ports/{port_number}/markers/start".format(
+                    adapter_number=marker_side["adapter_number"], port_number=marker_side["port_number"]
+                ),
+                data=data,
+            )
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 

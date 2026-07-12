@@ -765,6 +765,22 @@ class Project:
                     "Dropping invalid filters on link %s: %s",
                     link_data.get("link_id"), e
                 )
+        # Restore traffic-insight markers. Each marker's capture side is resolved
+        # when the link is (re)created and the marker is applied to uBridge via
+        # _ubridge_apply_markers in add_ubridge_udp_connection.
+        for name, marker in (link_data.get("markers") or {}).items():
+            try:
+                await link.start_marker(
+                    name=name,
+                    bpf=marker["bpf"],
+                    tag=marker.get("tag"),
+                    color=marker.get("color"),
+                )
+            except (ControllerError, KeyError) as e:
+                log.warning(
+                    "Dropping marker %s on link %s: %s",
+                    name, link_data.get("link_id"), e
+                )
         if "link_style" in link_data:
             await link.update_link_style(link_data["link_style"])
         if "show_filters_icon" in link_data:
