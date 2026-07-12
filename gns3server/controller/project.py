@@ -965,7 +965,7 @@ class Project:
                 compute = self._controller.get_compute(compute_id)
                 if not compute.connected:
                     disconnected.append(compute)
-            except ControllerError:
+            except aiohttp.web.HTTPNotFound:
                 log.warning(f"Compute '{compute_id}' not found in controller")
         return disconnected
 
