@@ -321,10 +321,11 @@ class UDPLink(Link):
         """
         if self._capture_node and node == self._capture_node["node"] and node.status != "started":
             await self.stop_capture()
-        # Tear down any marker whose capture-side node just stopped.
-        for name, marker_info in list(self._markers.items()):
-            if marker_info.get("capture_node_id") == node.id and node.status != "started":
-                await self.stop_marker(name)
+        # Marker clean-up is *not* done on node stop — markers are a persistent
+        # link-scoped feature that recovers via NIO on restart (see
+        # _ubridge_apply_markers in add_ubridge_udp_connection).  The user
+        # explicitly deletes a marker via the REST API, and a marker is torn
+        # down automatically only when its link is deleted.
 
     def _capture_node_for_marker(self, name):
         """Return the stored (node, adapter_number, port_number) for a marker's capture side."""
