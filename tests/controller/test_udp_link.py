@@ -78,6 +78,7 @@ async def test_create(project):
         "rport": 2048,
         "type": "nio_udp",
         "filters": {"delay": [10, 0]},
+        "markers": {},
         "suspend": False,
     }, timeout=120)
 
@@ -87,6 +88,7 @@ async def test_create(project):
         "rport": 1024,
         "type": "nio_udp",
         "filters": {},
+        "markers": {},
         "suspend": False,
     }, timeout=120)
 
@@ -146,6 +148,7 @@ async def test_create_one_side_failure(project):
         "rport": 2048,
         "type": "nio_udp",
         "filters": {},
+        "markers": {},
         "suspend": False,
     }, timeout=120)
 
@@ -155,6 +158,7 @@ async def test_create_one_side_failure(project):
         "rport": 1024,
         "type": "nio_udp",
         "filters": {},
+        "markers": {},
         "suspend": False,
     }, timeout=120)
     # The link creation has failed we rollback the nio
@@ -345,6 +349,7 @@ async def test_update(project):
         "rport": 2048,
         "type": "nio_udp",
         "suspend": False,
+        "markers": {},
         "filters": {"delay": [10, 0]}
     }, timeout=120)
 
@@ -354,6 +359,7 @@ async def test_update(project):
         "rport": 1024,
         "type": "nio_udp",
         "suspend": False,
+        "markers": {},
         "filters": {}
     }, timeout=120)
 
@@ -365,6 +371,7 @@ async def test_update(project):
         "rport": 2048,
         "type": "nio_udp",
         "suspend": False,
+        "markers": {},
         "filters": {
             "frequency_drop": [5],
             "bpf": ["icmp[icmptype] == 8"]
@@ -425,6 +432,7 @@ async def test_update_suspend(project):
         "rport": 2048,
         "type": "nio_udp",
         "filters": {"frequency_drop": [-1]},
+        "markers": {},
         "suspend": True
     }, timeout=120)
 
@@ -434,5 +442,6 @@ async def test_update_suspend(project):
         "rport": 1024,
         "type": "nio_udp",
         "filters": {},
+        "markers": {},
         "suspend": True
     }, timeout=120)

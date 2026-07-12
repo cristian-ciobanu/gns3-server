@@ -322,6 +322,7 @@ async def update_qemu_node_nio(
     if nio_data.filters:
         nio.filters = nio_data.filters
     nio.suspend = nio_data.suspend
+    nio.markers = nio_data.markers or {}
     await node.adapter_update_nio_binding(adapter_number, nio)
     return nio.asdict()
 
@@ -407,6 +408,11 @@ async def start_qemu_node_marker(
     MarkerManager.instance().register(
         str(project_id), node.id, marker_data.name, marker_data.link_id, marker_data.tag
     )
+    nio = node.get_nio(adapter_number)
+    if nio:
+        nio.markers[marker_data.name] = {
+            "bpf": marker_data.bpf, "tag": marker_data.tag, "link_id": marker_data.link_id
+        }
     return {"pcap_file_path": str(pcap_path)}
 
 
@@ -427,6 +433,9 @@ async def stop_qemu_node_marker(
 
     await node.stop_marker(adapter_number, marker_data.name)
     MarkerManager.instance().unregister(node.id, marker_data.name)
+    nio = node.get_nio(adapter_number)
+    if nio:
+        nio.markers.pop(marker_data.name, None)
 
 
 @router.get(

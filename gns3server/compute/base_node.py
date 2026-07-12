@@ -1012,10 +1012,12 @@ class BaseNode:
 
         await self._ubridge_send(f"bridge start {bridge_name}")
         await self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+        await self._ubridge_apply_markers(bridge_name, destination_nio)
 
     async def update_ubridge_udp_connection(self, bridge_name, source_nio, destination_nio):
         if destination_nio:
             await self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+            await self._ubridge_apply_markers(bridge_name, destination_nio)
 
     async def ubridge_delete_bridge(self, name):
         """
@@ -1111,6 +1113,34 @@ class BaseNode:
         """
 
         await self._ubridge_send(f"bridge delete_packet_filter {bridge_name} {name}")
+
+    async def _ubridge_apply_markers(self, bridge_name, nio):
+        """
+        (Re-)apply every traffic-insight marker carried by *nio* to the uBridge
+        bridge *bridge_name*.  Called from ``add_ubridge_udp_connection`` (bridge
+        creation / node restart) and ``update_ubridge_udp_connection`` (NIO update
+        — the preceding ``_ubridge_apply_filters`` has already issued
+        ``reset_packet_filters``, so we must re-add markers to survive the reset).
+        """
+        from gns3server.compute.marker.marker_manager import MarkerManager
+
+        markers = nio.markers if hasattr(nio, 'markers') else {}
+        if not markers:
+            return
+
+        manager = MarkerManager.instance()
+        markers_dir = self.project.markers_working_directory()
+        for name, spec in markers.items():
+            bpf = spec.get("bpf", "")
+            tag = spec.get("tag")
+            link_id = spec.get("link_id", "")
+            pcap_path = os.path.join(
+                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
+            )
+            await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag)
+            manager.register(
+                str(self.project.id), self._id, name, link_id, tag
+            )
 
     async def _add_ubridge_ethernet_connection(self, bridge_name, ethernet_interface, block_host_traffic=False):
         """

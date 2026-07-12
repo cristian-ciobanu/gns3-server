@@ -45,7 +45,7 @@ class UDPLink(Link):
     def _get_node_filters(self, node1, node2):
         """
         Determine which node gets the active filters applied.
-        
+
         :returns: Tuple of (node1_filters, node2_filters)
         """
         filter_node = self._get_filter_node()
@@ -53,6 +53,26 @@ class UDPLink(Link):
             self.get_active_filters() if filter_node == node1 else {},
             self.get_active_filters() if filter_node == node2 else {},
         )
+
+    def _markers_for_node(self, node):
+        """
+        Marker specs (name -> {bpf, tag, link_id}) for the markers whose capture
+        side is ``node`` and that are enabled. Routed by capture_node_id so a
+        marker only rides the NIO of the node whose uBridge will host it.
+        """
+        return {
+            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id}
+            for name, m in self._markers.items()
+            if m.get("enabled", True) and m.get("capture_node_id") == node.id
+        }
+
+    def _get_node_markers(self, node1, node2):
+        """
+        Determine which node gets which markers applied.
+
+        :returns: Tuple of (node1_markers, node2_markers)
+        """
+        return self._markers_for_node(node1), self._markers_for_node(node2)
 
     async def create(self):
         """
@@ -88,6 +108,7 @@ class UDPLink(Link):
             self._node2_port = response.json["udp_port"]
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
+        node1_markers, node2_markers = self._get_node_markers(node1, node2)
 
         # Create the tunnel on both side
         self._link_data.append(
@@ -97,6 +118,7 @@ class UDPLink(Link):
                 "rport": self._node2_port,
                 "type": "nio_udp",
                 "filters": node1_filters,
+                "markers": node1_markers,
                 "suspend": self._suspended,
             }
         )
@@ -109,6 +131,7 @@ class UDPLink(Link):
                 "rport": self._node1_port,
                 "type": "nio_udp",
                 "filters": node2_filters,
+                "markers": node2_markers,
                 "suspend": self._suspended,
             }
         )
@@ -133,10 +156,12 @@ class UDPLink(Link):
         node2 = self._nodes[1]["node"]
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
+        node1_markers, node2_markers = self._get_node_markers(node1, node2)
 
         adapter_number1 = self._nodes[0]["adapter_number"]
         port_number1 = self._nodes[0]["port_number"]
         self._link_data[0]["filters"] = node1_filters
+        self._link_data[0]["markers"] = node1_markers
         self._link_data[0]["suspend"] = self._suspended
         if node1.node_type not in ("ethernet_switch", "ethernet_hub"):
             await node1.put(
@@ -146,6 +171,7 @@ class UDPLink(Link):
         adapter_number2 = self._nodes[1]["adapter_number"]
         port_number2 = self._nodes[1]["port_number"]
         self._link_data[1]["filters"] = node2_filters
+        self._link_data[1]["markers"] = node2_markers
         self._link_data[1]["suspend"] = self._suspended
         if node2.node_type not in ("ethernet_switch", "ethernet_hub"):
             await node2.put(
