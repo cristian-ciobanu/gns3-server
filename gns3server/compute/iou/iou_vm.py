@@ -746,6 +746,7 @@ class IOUVM(BaseNode):
                         )
 
                     await self._ubridge_apply_filters(bay_id, unit_id, nio.filters)
+                    await self._ubridge_apply_markers(bay_id, unit_id, nio)
                 unit_id += 1
             bay_id += 1
 
@@ -1067,6 +1068,7 @@ class IOUVM(BaseNode):
                 )
             )
             await self._ubridge_apply_filters(adapter_number, port_number, nio.filters)
+            await self._ubridge_apply_markers(adapter_number, port_number, nio)
 
     async def adapter_update_nio_binding(self, adapter_number, port_number, nio):
         """
@@ -1079,6 +1081,7 @@ class IOUVM(BaseNode):
 
         if self.ubridge:
             await self._ubridge_apply_filters(adapter_number, port_number, nio.filters)
+            await self._ubridge_apply_markers(adapter_number, port_number, nio)
 
     async def _ubridge_apply_filters(self, adapter_number, port_number, filters):
         """
@@ -1094,6 +1097,59 @@ class IOUVM(BaseNode):
         for filter in self._build_filter_list(filters):
             cmd = "iol_bridge add_packet_filter {} {}".format(location, filter)
             await self._ubridge_send(cmd)
+
+    async def _ubridge_apply_markers(self, adapter_number, port_number, nio):
+        """
+        (Re-)apply traffic-insight markers to the IOL bridge.
+
+        IOU uses ``iol_bridge`` (not ``bridge``) and the ``add_packet_filter``
+        command carries extra ``{bay} {unit}`` positional arguments between the
+        bridge name and the filter name — this override mirrors the pattern in
+        ``_ubridge_apply_filters`` above.
+
+        :param adapter_number: bay id
+        :param port_number: unit id
+        :param nio: NIO instance carrying ``nio.markers``
+        """
+        from gns3server.compute.marker.marker_manager import MarkerManager
+
+        markers = nio.markers if hasattr(nio, 'markers') else {}
+        if not markers:
+            return
+
+        manager = MarkerManager.instance()
+        markers_dir = self.project.markers_working_directory()
+        bridge_name = f"IOL-BRIDGE-{self.application_id + 512}"
+        location = "{bridge_name} {bay} {unit}".format(
+            bridge_name=bridge_name, bay=adapter_number, unit=port_number
+        )
+        for name, spec in markers.items():
+            bpf = spec.get("bpf", "")
+            tag = spec.get("tag")
+            link_id = spec.get("link_id", "")
+            pcap_path = os.path.join(
+                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
+            )
+            # Build the iol_bridge marker filter command:
+            #   iol_bridge add_packet_filter {br} {bay} {unit} {name} mark "{bpf}" [tag {id}] pcap "{path}"
+            cmd = 'iol_bridge add_packet_filter {loc} {name} mark "{bpf}"'.format(
+                loc=location, name=name, bpf=bpf
+            )
+            if tag is not None:
+                cmd += f" tag {tag}"
+            cmd += ' pcap "{path}"'.format(path=pcap_path)
+            try:
+                await self._ubridge_send(cmd)
+            except UbridgeError as e:
+                if "syntax error" in str(e).lower() or "compile filter" in str(e).lower():
+                    message = f"Warning: ignoring marker '{name}' due to BPF syntax error: {e}"
+                    log.warning(message)
+                    self.project.emit("log.warning", {"message": message})
+                    continue
+                raise
+            manager.register(
+                str(self.project.id), self._id, name, link_id, tag
+            )
 
     async def adapter_remove_nio_binding(self, adapter_number, port_number):
         """
