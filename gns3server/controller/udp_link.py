@@ -22,8 +22,11 @@ from .node_types import BUILTIN_NODE_TYPES
 from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
 # Node types without a uBridge bridge — a marker filter has nothing to attach to.
-_MARKER_UNSUPPORTED_TYPES = frozenset({
-    "ethernet_switch", "ethernet_hub", "frame_relay_switch", "atm_switch", "nat",
+# Node types that can host a marker (have a uBridge bridge to attach the
+# `mark` filter to).  Mirrors _get_filter_node in link.py, minus "nat"
+# (which has no uBridge).
+_MARKER_CAPABLE_TYPES = frozenset({
+    "vpcs", "qemu", "docker", "iou", "virtualbox", "vmware", "dynamips", "cloud",
 })
 
 
@@ -281,39 +284,30 @@ class UDPLink(Link):
 
     def _choose_marker_side(self):
         """
-        Pick a marker capture side, excluding node types without a uBridge bridge
-        (ethernet_switch, ethernet_hub, etc.). Falls through the same
-        preference tiers as ``_choose_capture_side``.
+        Pick the node that will host the marker, mirroring ``_get_filter_node``
+        in link.py.  Only types with a uBridge bridge (``_MARKER_CAPABLE_TYPES``)
+        are eligible.  A running node is preferred, but a stopped one is
+        accepted — like packet filters, the marker is stored on the NIO and
+        applied when the node starts.
         """
 
-        # Prefer local + non-switch + started.
+        # Prefer started.
         for node in self._nodes:
             if (
-                node["node"].compute.id == "local"
-                and node["node"].node_type not in _MARKER_UNSUPPORTED_TYPES
+                node["node"].node_type in _MARKER_CAPABLE_TYPES
                 and node["node"].status == "started"
             ):
                 return node
 
-        # Non-switch + started (any compute).
+        # Accept stopped but capable (marker rides NIO, applied at start).
         for node in self._nodes:
-            if (
-                node["node"].node_type not in _MARKER_UNSUPPORTED_TYPES
-                and node["node"].status == "started"
-            ):
+            if node["node"].node_type in _MARKER_CAPABLE_TYPES:
                 return node
 
-        # Fallback: any local started.
-        for node in self._nodes:
-            if node["node"].compute.id == "local" and node["node"].status == "started":
-                return node
-
-        # Last resort: any started.
-        for node in self._nodes:
-            if node["node"].status == "started":
-                return node
-
-        raise ControllerError("Cannot add marker because there is no running device on this link")
+        raise ControllerError(
+            "Cannot add marker because no device on this link supports "
+            "traffic insight"
+        )
 
     async def node_updated(self, node):
         """
