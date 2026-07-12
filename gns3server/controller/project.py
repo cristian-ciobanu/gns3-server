@@ -910,7 +910,7 @@ class Project:
         disconnected = self._get_disconnected_computes()
         if disconnected:
             compute_names = ", ".join([f"'{c.name}'" for c in disconnected])
-            raise ControllerForbiddenError(
+            raise aiohttp.web.HTTPForbidden(
                 f"Cannot delete project '{self.name}': {len(disconnected)} compute(s) are disconnected: {compute_names}. "
                 f"Please fix the connection or delete the project manually on those computes."
             )
