@@ -335,13 +335,15 @@ class UDPLink(Link):
         }
         self._marker_capture_nodes[name] = capture_side
 
-    async def start_marker(self, name, bpf, tag=None):
+    async def start_marker(self, name, bpf, tag=None, color=None):
         """
         Attach a traffic-insight marker to this link.
 
         :param name: stable filter name — echoed in MARK signals + pcap identity
         :param bpf: libpcap BPF expression
         :param tag: optional correlation id
+        :param color: optional hex color for the Web UI (e.g. '#ff5722'); stored
+            with the link and persisted in the topology, never sent to uBridge
         """
 
         if name in self._markers:
@@ -361,7 +363,7 @@ class UDPLink(Link):
             data=data,
         )
         self._store_capture_node_for_marker(name, marker_side)
-        self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True})
+        self._markers[name].update({"bpf": bpf, "tag": tag, "enabled": True, "color": color})
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
@@ -389,7 +391,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None):
         """
         Update an existing marker. A BPF change requires delete+re-add so the
         ubridge side flushes the pcap and the new filter takes effect.
@@ -398,6 +400,7 @@ class UDPLink(Link):
         :param bpf: new BPF expression (None = keep existing)
         :param tag: new tag id (None = keep existing)
         :param enabled: toggle (None = keep existing)
+        :param color: new hex color (None = keep existing)
         """
 
         marker_info = self._markers.get(name)
@@ -407,11 +410,15 @@ class UDPLink(Link):
         new_bpf = bpf if bpf is not None else marker_info["bpf"]
         new_tag = tag if tag is not None else marker_info.get("tag")
         new_enabled = enabled if enabled is not None else marker_info.get("enabled", True)
+        new_color = color if color is not None else marker_info.get("color")
 
         if not new_enabled and marker_info.get("enabled", True):
             # Toggle off: remove from ubridge but keep state.
             await self.stop_marker(name)
-            self._markers[name] = {**marker_info, "bpf": new_bpf, "tag": new_tag, "enabled": False}
+            self._markers[name] = {
+                **marker_info, "bpf": new_bpf, "tag": new_tag,
+                "enabled": False, "color": new_color,
+            }
             self._project.emit_notification("link.updated", self.asdict())
             self._project.dump()
             return
@@ -441,7 +448,13 @@ class UDPLink(Link):
                     ),
                     data=data,
                 )
-            self._markers[name] = {**marker_info, "bpf": new_bpf, "tag": new_tag, "enabled": True}
+            self._markers[name] = {
+                **marker_info, "bpf": new_bpf, "tag": new_tag,
+                "enabled": True, "color": new_color,
+            }
+        elif new_color != marker_info.get("color"):
+            # Color-only change: no ubridge round-trip, just update state.
+            self._markers[name] = {**marker_info, "color": new_color}
 
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()

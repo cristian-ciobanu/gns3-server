@@ -454,12 +454,14 @@ async def create_marker(
     Required privilege: Link.Modify
     """
 
+    name = marker_data.name or f"marker-{link.id[:8]}"
     await link.start_marker(
-        name=marker_data.name or f"marker-{link.id[:8]}",
+        name=name,
         bpf=marker_data.bpf,
         tag=marker_data.tag,
+        color=marker_data.color,
     )
-    return link.markers.get(marker_data.name, {})
+    return link.markers.get(name, {})
 
 
 @router.delete(
@@ -499,6 +501,7 @@ async def update_marker(
         name=marker_name,
         bpf=marker_data.bpf if marker_data.bpf else None,
         tag=marker_data.tag,
+        color=marker_data.color,
     )
     return link.markers.get(marker_name, {})
 

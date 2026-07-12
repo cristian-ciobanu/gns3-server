@@ -153,6 +153,10 @@ class MarkerCreate(BaseModel):
     bpf: str
     tag: Optional[int] = None
     link_id: Optional[str] = None
+    color: Optional[str] = Field(
+        None,
+        description="User-chosen hex color for this marker in the Web UI, e.g. '#ff5722'"
+    )
 
 
 class MarkerDelete(BaseModel):
