@@ -149,13 +149,22 @@ class MarkerCreate(BaseModel):
     absent) but always set when the controller forwards to the compute.
     """
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(
+        None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        max_length=128,
+        description="Unique marker name on the link. Auto-generated when absent.",
+    )
     bpf: str
     tag: Optional[int] = None
     link_id: Optional[str] = None
     color: Optional[str] = Field(
         None,
-        description="User-chosen hex color for this marker in the Web UI, e.g. '#ff5722'"
+        description="User-chosen hex color for this marker in the Web UI, e.g. '#ff5722'",
+    )
+    enabled: Optional[bool] = Field(
+        None,
+        description="Whether the marker is active. Defaults to true on creation.",
     )
 
 

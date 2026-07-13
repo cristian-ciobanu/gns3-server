@@ -506,6 +506,7 @@ async def update_marker(
         bpf=marker_data.bpf if marker_data.bpf else None,
         tag=marker_data.tag,
         color=marker_data.color,
+        enabled=marker_data.enabled,
     )
     return link.markers.get(marker_name, {})
 
