@@ -1228,6 +1228,7 @@ class DockerVM(BaseNode):
             )
         await self._ubridge_send(f"bridge start {bridge_name}")
         await self._ubridge_apply_filters(bridge_name, nio.filters)
+        await self._ubridge_apply_markers(bridge_name, nio)
 
     async def adapter_add_nio_binding(self, adapter_number, nio):
         """
@@ -1268,7 +1269,7 @@ class DockerVM(BaseNode):
             bridge_name = f"bridge{adapter_number}"
             if bridge_name in self._bridges:
                 await self._ubridge_apply_filters(bridge_name, nio.filters)
-
+                await self._ubridge_apply_markers(bridge_name, nio)
     async def adapter_remove_nio_binding(self, adapter_number):
         """
         Removes an adapter NIO binding.

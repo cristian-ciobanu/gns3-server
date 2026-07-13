@@ -26,7 +26,7 @@ from gns3server.utils.packet_filter_validation import validate_bpf_syntax, Filte
 # `mark` filter to).  Mirrors _get_filter_node in link.py, minus "nat"
 # (which has no uBridge).
 _MARKER_CAPABLE_TYPES = frozenset({
-    "vpcs", "qemu", "docker", "iou", "virtualbox", "vmware", "dynamips", "cloud",
+    "vpcs", "qemu", "docker", "iou",
 })
 
 
