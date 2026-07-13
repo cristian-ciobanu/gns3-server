@@ -168,3 +168,26 @@ class MarkerCreate(BaseModel):
     )
 
 
+class MarkerDefinitionCreate(BaseModel):
+    """
+    Body for creating / updating a project-level marker definition.
+
+    The definition is a template — when applied to a link the marker name is
+    prefixed with ``global-`` (e.g. ``arp`` → ``global-arp``) so it can never
+    collide with a per-link private marker.
+    """
+
+    name: Optional[str] = Field(
+        None,
+        pattern=r"^(?i)(?!global)[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        max_length=128,
+        description="Unique definition name. Auto-generated when absent.",
+    )
+    bpf: str
+    tag: Optional[int] = None
+    color: Optional[str] = Field(
+        None,
+        description="User-chosen hex color for the marker in the Web UI, e.g. '#ff5722'",
+    )
+
+

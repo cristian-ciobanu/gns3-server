@@ -145,6 +145,9 @@ class UDPLink(Link):
             await node1.delete(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", timeout=120)
             raise e
         self._created = True
+        # New links automatically inherit every active project-level marker
+        # definition so the user doesn't have to reconfigure.
+        self._project.apply_defs_to_new_link(self)
 
     async def update(self):
         """
@@ -319,7 +322,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, color=None):
+    async def start_marker(self, name, bpf, tag=None, color=None, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -334,6 +337,8 @@ class UDPLink(Link):
         :param tag: optional correlation id
         :param color: optional hex color for the Web UI (e.g. '#ff5722'); stored
             with the link and persisted in the topology, never sent to uBridge
+        :param inherited_from: def name when this marker is a project-level
+            inheritance copy; set automatically, never exposed to REST callers
         """
 
         if name in self._markers:
@@ -344,13 +349,16 @@ class UDPLink(Link):
             raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
         marker_side = self._choose_marker_side()
-        self._markers[name] = {
+        marker_entry = {
             "bpf": bpf,
             "tag": tag,
             "enabled": True,
             "color": color,
             "capture_node_id": marker_side["node"].id,
         }
+        if inherited_from:
+            marker_entry["inherited_from"] = inherited_from
+        self._markers[name] = marker_entry
         if self._created:
             await self.update()
         self._project.emit_notification("link.updated", self.asdict())
@@ -369,6 +377,13 @@ class UDPLink(Link):
 
         if name not in self._markers:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
+
+        if self._markers[name].get("inherited_from"):
+            raise ControllerError(
+                f"Marker '{name}' is inherited from the project-level "
+                f"definition '{self._markers[name]['inherited_from']}'. "
+                "Delete or update it via the marker-definitions API instead."
+            )
 
         del self._markers[name]
         if self._created:
@@ -392,6 +407,13 @@ class UDPLink(Link):
         marker_info = self._markers.get(name)
         if not marker_info:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
+
+        if marker_info.get("inherited_from"):
+            raise ControllerError(
+                f"Marker '{name}' is inherited from the project-level "
+                f"definition '{marker_info['inherited_from']}'. "
+                "Update it via the marker-definitions API instead."
+            )
 
         if bpf is not None and bpf != marker_info["bpf"]:
             result = validate_bpf_syntax(bpf)

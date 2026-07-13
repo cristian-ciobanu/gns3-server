@@ -218,6 +218,100 @@ def get_project_markers(project: Project = Depends(dep_project)) -> dict:
     return project.markers
 
 
+# ---------------------------------------------------------------------------
+# Project-level marker definitions (global rules inherited by every link)
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{project_id}/marker-definitions",
+    dependencies=[Depends(has_privilege("Project.Audit"))]
+)
+def get_marker_definitions(project: Project = Depends(dep_project)) -> dict:
+    """
+    Return all project-level marker definitions with their bound link IDs.
+
+    Required privilege: Project.Audit
+    """
+
+    result = {}
+    for name, d in project.marker_definitions.items():
+        # Collect which links currently carry an inherited copy.
+        bound = [
+            lid for lid, link in project.links.items()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+        result[name] = {**d, "link_ids": bound}
+    return result
+
+
+@router.post(
+    "/{project_id}/marker-definitions",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def create_marker_definition(
+    def_data: schemas.MarkerDefinitionCreate,
+    project: Project = Depends(dep_project)
+) -> dict:
+    """
+    Create a project-level marker definition and fan out to every link.
+
+    Required privilege: Project.Modify
+    """
+
+    name = def_data.name or f"def-{project.id[:8]}"
+    await project.create_marker_definition(
+        name=name,
+        bpf=def_data.bpf,
+        tag=def_data.tag,
+        color=def_data.color,
+    )
+    return project.marker_definitions.get(name, {})
+
+
+@router.put(
+    "/{project_id}/marker-definitions/{def_name}",
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def update_marker_definition(
+    def_name: str,
+    def_data: schemas.MarkerDefinitionCreate,
+    project: Project = Depends(dep_project)
+) -> dict:
+    """
+    Update a marker definition and sync all inherited copies on every link.
+
+    Required privilege: Project.Modify
+    """
+
+    await project.update_marker_definition(
+        name=def_name,
+        bpf=def_data.bpf if def_data.bpf else None,
+        tag=def_data.tag,
+        color=def_data.color,
+    )
+    return project.marker_definitions.get(def_name, {})
+
+
+@router.delete(
+    "/{project_id}/marker-definitions/{def_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def delete_marker_definition(
+    def_name: str,
+    project: Project = Depends(dep_project)
+) -> None:
+    """
+    Delete a marker definition and remove all inherited copies from every link.
+
+    Required privilege: Project.Modify
+    """
+
+    await project.delete_marker_definition(def_name)
+
+
 @router.post(
     "/{project_id}/close",
     status_code=status.HTTP_204_NO_CONTENT,

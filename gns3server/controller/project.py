@@ -212,6 +212,7 @@ class Project:
         self._allocated_node_names = set()
         self._nodes = {}
         self._links = {}
+        self._marker_definitions = {}  # name → {bpf, tag, color}
         self._drawings = {}
         self._snapshots = {}
         self._computes = []
@@ -923,6 +924,119 @@ class Project:
         return result
 
     @property
+    def marker_definitions(self):
+        """
+        :returns: dict of project-level marker definitions (name → {bpf, tag, color})
+        """
+        return self._marker_definitions
+
+    async def create_marker_definition(self, name, bpf, tag=None, color=None):
+        """
+        Create a project-level marker definition and fan out to every existing
+        link that has a capable node.  Links without a capable node are silently
+        skipped.
+        """
+
+        if name in self._marker_definitions:
+            raise ControllerError(
+                f"Marker definition '{name}' already exists in this project"
+            )
+
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "color": color}
+        await self._apply_def_to_all_links(name)
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def update_marker_definition(self, name, bpf=None, tag=None, color=None):
+        """
+        Update a marker definition and sync every inherited copy on every link.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerNotFoundError(
+                f"Marker definition '{name}' not found in this project"
+            )
+
+        d = self._marker_definitions[name]
+        if bpf is not None:
+            d["bpf"] = bpf
+        if tag is not None:
+            d["tag"] = tag
+        if color is not None:
+            d["color"] = color
+
+        # Sync: update every inherited copy across all links.
+        for link in list(self._links.values()):
+            marker_name = f"global-{name}"
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                await link.update_marker(
+                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color")
+                )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def delete_marker_definition(self, name):
+        """
+        Delete a marker definition and remove every inherited copy from every link.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerNotFoundError(
+                f"Marker definition '{name}' not found in this project"
+            )
+
+        del self._marker_definitions[name]
+
+        for link in list(self._links.values()):
+            marker_name = f"global-{name}"
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                try:
+                    await link.stop_marker(marker_name)
+                except ControllerError:
+                    # A missing compute or broken link shouldn't block the delete.
+                    log.warning(
+                        "Failed to remove inherited marker %s from link %s",
+                        marker_name, link.id
+                    )
+
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def _apply_def_to_all_links(self, def_name):
+        """
+        Fan out a single marker definition to every existing link in the project.
+        Links that have no capable node (``_MARKER_CAPABLE_TYPES``) are silently
+        skipped — the marker can only live on a uBridge bridge.
+        """
+
+        d = self._marker_definitions[def_name]
+        for link in list(self._links.values()):
+            try:
+                await link.inherit_marker(def_name, d)
+            except ControllerError as e:
+                # Per-link failures (e.g. no capable node) shouldn't block the
+                # definition from serving the rest.
+                log.warning(
+                    "Marker definition '%s' could not be applied to link %s: %s",
+                    def_name, link.id, e
+                )
+
+    async def apply_defs_to_new_link(self, link):
+        """
+        Apply every active marker definition to a newly created link so it
+        inherits project-level rules automatically.
+        """
+
+        for def_name, d in self._marker_definitions.items():
+            try:
+                await link.inherit_marker(def_name, d)
+            except ControllerError as e:
+                log.warning(
+                    "Marker definition '%s' could not be applied to new link %s: %s",
+                    def_name, link.id, e
+                )
+
+    @property
     def snapshots(self):
         """
         :returns: Dictionary of snapshots
@@ -1296,6 +1410,7 @@ class Project:
                 "auto_start",
                 "auto_close",
                 "auto_open",
+                "marker_definitions",
                 "scene_height",
                 "scene_width",
                 "zoom",
@@ -1377,6 +1492,11 @@ class Project:
             self._preallocated_udp_ports.clear()
             for drawing_data in topology.get("drawings", []):
                 await self.add_drawing(dump=False, **drawing_data)
+
+            # After every link is loaded, apply project-level marker definitions
+            # so inherited markers are present from the start.
+            for link in list(self._links.values()):
+                await self.apply_defs_to_new_link(link)
 
             self.dump()
         # We catch all error to be able to roll back the .gns3 to the previous state
@@ -1759,6 +1879,7 @@ class Project:
             "supplier": self._supplier,
             "variables": self._variables,
             "created_by": self._created_by,
+            "marker_definitions": self._marker_definitions,
         }
 
     def __repr__(self):
