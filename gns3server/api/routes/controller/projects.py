@@ -260,6 +260,8 @@ async def create_marker_definition(
     Required privilege: Project.Modify
     """
 
+    if def_data.name and def_data.name.lower().startswith("global"):
+        raise ControllerError('Names starting with "global" are reserved for inherited markers')
     name = def_data.name or f"def-{project.id[:8]}"
     await project.create_marker_definition(
         name=name,

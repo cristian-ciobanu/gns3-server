@@ -458,6 +458,8 @@ async def create_marker(
     # uuid suffix avoids the collision that `marker-{link.id[:8]}` alone would
     # cause on the second anonymous marker on the same link (start_marker
     # rejects duplicate names).
+    if marker_data.name and marker_data.name.lower().startswith("global"):
+        raise ControllerError('Names starting with "global" are reserved for inherited markers')
     name = marker_data.name or f"marker-{link.id[:8]}-{uuid4().hex[:4]}"
     await link.start_marker(
         name=name,
