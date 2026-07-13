@@ -151,9 +151,9 @@ class MarkerCreate(BaseModel):
 
     name: Optional[str] = Field(
         None,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        pattern=r"^(?i)(?!global)[A-Za-z0-9][A-Za-z0-9_.-]*$",
         max_length=128,
-        description="Unique marker name on the link. Auto-generated when absent.",
+        description='Unique marker name on the link. Auto-generated when absent. Names starting with "global" are reserved.',
     )
     bpf: str
     tag: Optional[int] = None

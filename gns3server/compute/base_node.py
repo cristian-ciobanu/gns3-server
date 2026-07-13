@@ -1093,7 +1093,7 @@ class BaseNode:
         # mark <bpf> [tag <id>] [pcap <path>] — tag/pcap keyword pairs, any order.
         # name travels from the controller REST layer (MarkerCreate schema) but is
         # validated here too as defense-in-depth against hand-edited topology files.
-        _MARKER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+        _MARKER_NAME_RE = re.compile(r"^(?i)(?!global)[A-Za-z0-9][A-Za-z0-9_.-]*$")
         if not _MARKER_NAME_RE.match(name):
             raise UbridgeError(f"Invalid marker name: {name!r}")
         cmd = 'bridge add_packet_filter {bridge} {name} mark "{bpf}"'.format(
