@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Tuple
 from enum import Enum
 from uuid import UUID, uuid4
@@ -151,9 +151,9 @@ class MarkerCreate(BaseModel):
 
     name: Optional[str] = Field(
         None,
-        pattern=r"^(?i)(?!global)[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
         max_length=128,
-        description='Unique marker name on the link. Auto-generated when absent. Names starting with "global" are reserved.',
+        description='Unique marker name on the link. Auto-generated when absent.',
     )
     bpf: str
     tag: Optional[int] = None
@@ -167,6 +167,13 @@ class MarkerCreate(BaseModel):
         description="Whether the marker is active. Defaults to true on creation.",
     )
 
+    @field_validator("name")
+    @classmethod
+    def _check_name_not_reserved(cls, v):
+        if v is not None and v.lower().startswith("global"):
+            raise ValueError('Names starting with "global" are reserved')
+        return v
+
 
 class MarkerDefinitionCreate(BaseModel):
     """
@@ -179,7 +186,7 @@ class MarkerDefinitionCreate(BaseModel):
 
     name: Optional[str] = Field(
         None,
-        pattern=r"^(?i)(?!global)[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
         max_length=128,
         description="Unique definition name. Auto-generated when absent.",
     )
@@ -189,5 +196,12 @@ class MarkerDefinitionCreate(BaseModel):
         None,
         description="User-chosen hex color for the marker in the Web UI, e.g. '#ff5722'",
     )
+
+    @field_validator("name")
+    @classmethod
+    def _check_name_not_reserved(cls, v):
+        if v is not None and v.lower().startswith("global"):
+            raise ValueError('Names starting with "global" are reserved')
+        return v
 
 
