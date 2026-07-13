@@ -2066,7 +2066,13 @@ class QemuVM(BaseNode):
                 # the node has its own UEFI variables store already, we must also use the old UEFI firmware
                 ovmf_firmware_path = self.manager.get_abs_image_path("OVMF_CODE.fd")
             else:
-                system_ovmf_firmware_path = next(system_ovmf_firmware_dir.glob("OVMF_CODE_4M.fd", case_sensitive=False), None)
+                # Use a manual case-insensitive search instead
+                try:
+                    system_ovmf_firmware_path = next((f for f in system_ovmf_firmware_dir.glob("*.fd") 
+                                                      if f.name.lower() == "ovmf_code_4m.fd"), None)
+                except (FileNotFoundError, StopIteration):
+                    system_ovmf_firmware_path = None
+                
                 if system_ovmf_firmware_path:
                     ovmf_firmware_path = str(system_ovmf_firmware_path)
                 else:
@@ -2077,7 +2083,11 @@ class QemuVM(BaseNode):
             options.extend(["-drive", "if=pflash,format=raw,readonly,file={}".format(ovmf_firmware_path)])
 
             # try to use the UEFI variables store from the system first
-            system_ovmf_vars_path = next(system_ovmf_firmware_dir.glob("OVMF_VARS_4M.fd", case_sensitive=False), None)
+            try:
+                system_ovmf_vars_path = next((f for f in system_ovmf_firmware_dir.glob("*.fd") 
+                                              if f.name.lower() == "ovmf_vars_4m.fd"), None)
+            except (FileNotFoundError, StopIteration):
+                system_ovmf_vars_path = None
             if system_ovmf_vars_path:
                 ovmf_vars_path = str(system_ovmf_vars_path)
             else:
