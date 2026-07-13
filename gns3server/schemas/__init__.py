@@ -20,7 +20,7 @@ from .common import ErrorMessage
 from .version import Version
 
 # Controller schemas
-from .controller.links import LinkCreate, LinkUpdate, Link, UDPPortInfo, EthernetPortInfo, LinkCapture, MarkerCreate
+from .controller.links import LinkCreate, LinkUpdate, Link, UDPPortInfo, EthernetPortInfo, LinkCapture, MarkerCreate, MarkerDefinitionCreate
 from .controller.computes import ComputeCreate, ComputeUpdate, ComputeVirtualBoxVM, ComputeVMwareVM, ComputeDockerImage, AutoIdlePC, Compute
 from .controller.templates import TemplateCreate, TemplateUpdate, TemplateUsage, Template
 from .controller.images import Image, ImageType
