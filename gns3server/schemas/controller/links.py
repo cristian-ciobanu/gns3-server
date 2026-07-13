@@ -162,6 +162,15 @@ class MarkerCreate(BaseModel):
         None,
         description="User-chosen hex color for this marker in the Web UI, e.g. '#ff5722'",
     )
+    highlight_duration: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "How long (milliseconds) the Web UI keeps this marker highlighted "
+            "after a match. Omitted = use the UI default. Pure render hint — "
+            "stored on the link, never sent to uBridge."
+        ),
+    )
     enabled: Optional[bool] = Field(
         None,
         description="Whether the marker is active. Defaults to true on creation.",
@@ -195,6 +204,15 @@ class MarkerDefinitionCreate(BaseModel):
     color: Optional[str] = Field(
         None,
         description="User-chosen hex color for the marker in the Web UI, e.g. '#ff5722'",
+    )
+    highlight_duration: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "How long (milliseconds) the Web UI keeps this marker highlighted "
+            "after a match. Omitted = use the UI default. Pure render hint — "
+            "stored with the definition, never sent to uBridge."
+        ),
     )
 
     @field_validator("name")

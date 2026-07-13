@@ -322,7 +322,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, color=None, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, color=None, highlight_duration=None, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -337,6 +337,8 @@ class UDPLink(Link):
         :param tag: optional correlation id
         :param color: optional hex color for the Web UI (e.g. '#ff5722'); stored
             with the link and persisted in the topology, never sent to uBridge
+        :param highlight_duration: optional UI-only hint (milliseconds) for how
+            long a match keeps the marker highlighted; stored, never sent to uBridge
         :param inherited_from: def name when this marker is a project-level
             inheritance copy; set automatically, never exposed to REST callers
         """
@@ -354,6 +356,7 @@ class UDPLink(Link):
             "tag": tag,
             "enabled": True,
             "color": color,
+            "highlight_duration": highlight_duration,
             "capture_node_id": marker_side["node"].id,
         }
         if inherited_from:
@@ -391,7 +394,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None, inherited=False):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None, highlight_duration=None, inherited=False):
         """
         Update an existing marker's BPF/tag/enabled/color. Any change pushes via
         ``self.update()``; uBridge picks up the new params on the next NIO
@@ -402,6 +405,7 @@ class UDPLink(Link):
         :param tag: new tag id (None = keep existing)
         :param enabled: toggle (None = keep existing)
         :param color: new hex color (None = keep existing)
+        :param highlight_duration: new UI highlight duration in ms (None = keep existing)
         :param inherited: set by project-level sync to bypass the inheritance
             guard (the project layer is the legitimate editor)
         """
@@ -428,6 +432,8 @@ class UDPLink(Link):
             marker_info["enabled"] = enabled
         if color is not None:
             marker_info["color"] = color
+        if highlight_duration is not None:
+            marker_info["highlight_duration"] = highlight_duration
 
         if self._created:
             await self.update()

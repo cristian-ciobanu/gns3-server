@@ -122,6 +122,7 @@ class Link:
             bpf=marker_def["bpf"],
             tag=marker_def.get("tag"),
             color=marker_def.get("color"),
+            highlight_duration=marker_def.get("highlight_duration"),
             inherited_from=def_name,
         )
 

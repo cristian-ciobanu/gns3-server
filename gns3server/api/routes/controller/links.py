@@ -464,6 +464,7 @@ async def create_marker(
         bpf=marker_data.bpf,
         tag=marker_data.tag,
         color=marker_data.color,
+        highlight_duration=marker_data.highlight_duration,
     )
     return link.markers.get(name, {})
 
@@ -507,6 +508,7 @@ async def update_marker(
         tag=marker_data.tag,
         color=marker_data.color,
         enabled=marker_data.enabled,
+        highlight_duration=marker_data.highlight_duration,
     )
     return link.markers.get(marker_name, {})
 

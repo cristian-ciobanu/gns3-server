@@ -266,6 +266,7 @@ async def create_marker_definition(
         bpf=def_data.bpf,
         tag=def_data.tag,
         color=def_data.color,
+        highlight_duration=def_data.highlight_duration,
     )
     return project.marker_definitions.get(name, {})
 
@@ -290,6 +291,7 @@ async def update_marker_definition(
         bpf=def_data.bpf if def_data.bpf else None,
         tag=def_data.tag,
         color=def_data.color,
+        highlight_duration=def_data.highlight_duration,
     )
     return project.marker_definitions.get(def_name, {})
 

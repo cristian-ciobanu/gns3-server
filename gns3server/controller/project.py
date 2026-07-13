@@ -212,7 +212,7 @@ class Project:
         self._allocated_node_names = set()
         self._nodes = {}
         self._links = {}
-        self._marker_definitions = {}  # name → {bpf, tag, color}
+        self._marker_definitions = {}  # name → {bpf, tag, color, highlight_duration}
         self._drawings = {}
         self._snapshots = {}
         self._computes = []
@@ -926,11 +926,11 @@ class Project:
     @property
     def marker_definitions(self):
         """
-        :returns: dict of project-level marker definitions (name → {bpf, tag, color})
+        :returns: dict of project-level marker definitions (name → {bpf, tag, color, highlight_duration})
         """
         return self._marker_definitions
 
-    async def create_marker_definition(self, name, bpf, tag=None, color=None):
+    async def create_marker_definition(self, name, bpf, tag=None, color=None, highlight_duration=None):
         """
         Create a project-level marker definition and fan out to every existing
         link that has a capable node.  Links without a capable node are silently
@@ -942,12 +942,12 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
-        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "color": color}
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "color": color, "highlight_duration": highlight_duration}
         await self._apply_def_to_all_links(name)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
-    async def update_marker_definition(self, name, bpf=None, tag=None, color=None):
+    async def update_marker_definition(self, name, bpf=None, tag=None, color=None, highlight_duration=None):
         """
         Update a marker definition and sync every inherited copy on every link.
         """
@@ -964,13 +964,16 @@ class Project:
             d["tag"] = tag
         if color is not None:
             d["color"] = color
+        if highlight_duration is not None:
+            d["highlight_duration"] = highlight_duration
 
         # Sync: update every inherited copy across all links.
         for link in list(self._links.values()):
             marker_name = f"global-{name}"
             if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
                 await link.update_marker(
-                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color"), inherited=True
+                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color"),
+                    highlight_duration=d.get("highlight_duration"), inherited=True
                 )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
