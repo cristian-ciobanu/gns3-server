@@ -367,7 +367,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def stop_marker(self, name):
+    async def stop_marker(self, name, inherited=False):
         """
         Remove a traffic-insight marker from this link.
 
@@ -376,12 +376,14 @@ class UDPLink(Link):
         drops it from uBridge. Mirrors how deleting a packet filter works.
 
         :param name: filter name to remove
+        :param inherited: set by project-level def-delete to bypass the
+            inheritance guard (the project layer is the legitimate remover)
         """
 
         if name not in self._markers:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
 
-        if self._markers[name].get("inherited_from"):
+        if self._markers[name].get("inherited_from") and not inherited:
             raise ControllerError(
                 f"Marker '{name}' is inherited from the project-level "
                 f"definition '{self._markers[name]['inherited_from']}'. "

@@ -994,7 +994,7 @@ class Project:
             marker_name = f"global-{name}"
             if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
                 try:
-                    await link.stop_marker(marker_name)
+                    await link.stop_marker(marker_name, inherited=True)
                 except ControllerError:
                     # A missing compute or broken link shouldn't block the delete.
                     log.warning(
