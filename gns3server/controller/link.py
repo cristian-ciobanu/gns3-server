@@ -641,7 +641,7 @@ class Link:
             "capture_compute_id": self.capture_compute_id,
             "link_type": self._link_type,
             "filters": self._filters,
-            "markers": self._persist_markers(),
+            "markers": self._markers,
             "suspend": self._suspended,
             "link_style": self._link_style,
             "wireshark": self._wireshark,

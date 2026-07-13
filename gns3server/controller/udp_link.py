@@ -147,7 +147,7 @@ class UDPLink(Link):
         self._created = True
         # New links automatically inherit every active project-level marker
         # definition so the user doesn't have to reconfigure.
-        self._project.apply_defs_to_new_link(self)
+        await self._project.apply_defs_to_new_link(self)
 
     async def update(self):
         """
@@ -391,7 +391,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None, inherited=False):
         """
         Update an existing marker's BPF/tag/enabled/color. Any change pushes via
         ``self.update()``; uBridge picks up the new params on the next NIO
@@ -402,13 +402,15 @@ class UDPLink(Link):
         :param tag: new tag id (None = keep existing)
         :param enabled: toggle (None = keep existing)
         :param color: new hex color (None = keep existing)
+        :param inherited: set by project-level sync to bypass the inheritance
+            guard (the project layer is the legitimate editor)
         """
 
         marker_info = self._markers.get(name)
         if not marker_info:
             raise ControllerNotFoundError(f"Marker '{name}' not found on link {self._id}")
 
-        if marker_info.get("inherited_from"):
+        if marker_info.get("inherited_from") and not inherited:
             raise ControllerError(
                 f"Marker '{name}' is inherited from the project-level "
                 f"definition '{marker_info['inherited_from']}'. "

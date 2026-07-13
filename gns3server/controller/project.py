@@ -970,7 +970,7 @@ class Project:
             marker_name = f"global-{name}"
             if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
                 await link.update_marker(
-                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color")
+                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color"), inherited=True
                 )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
@@ -1410,7 +1410,6 @@ class Project:
                 "auto_start",
                 "auto_close",
                 "auto_open",
-                "marker_definitions",
                 "scene_height",
                 "scene_width",
                 "zoom",
@@ -1426,6 +1425,12 @@ class Project:
                 val = project_data.get(key, None)
                 if val is not None:
                     setattr(self, key, val)
+
+            # marker_definitions is loaded separately (it is not a __init__ kwarg
+            # nor a simple attribute — it backs a read-only property).
+            defs = project_data.get("marker_definitions")
+            if isinstance(defs, dict):
+                self._marker_definitions = defs
 
             topology = project_data["topology"]
             for compute in topology.get("computes", []):
@@ -1493,10 +1498,9 @@ class Project:
             for drawing_data in topology.get("drawings", []):
                 await self.add_drawing(dump=False, **drawing_data)
 
-            # After every link is loaded, apply project-level marker definitions
-            # so inherited markers are present from the start.
-            for link in list(self._links.values()):
-                await self.apply_defs_to_new_link(link)
+            # Note: project-level marker definitions are applied to each link
+            # inside UDPLink.create() (the inheritance hook), so they are
+            # already present once links are loaded — no separate fan-out here.
 
             self.dump()
         # We catch all error to be able to roll back the .gns3 to the previous state

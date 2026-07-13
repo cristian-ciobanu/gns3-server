@@ -741,6 +741,9 @@ class Controller:
         topo_data.pop("version")
         topo_data.pop("revision")
         topo_data.pop("type")
+        # marker_definitions is restored by Project.open() from the topology
+        # file; it must not be passed to Project.__init__.
+        topo_data.pop("marker_definitions", None)
 
         if topo_data["project_id"] in self._projects:
             project = self._projects[topo_data["project_id"]]
