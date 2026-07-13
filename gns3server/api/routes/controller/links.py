@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Request, status, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Union
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from gns3server.controller import Controller
 from gns3server.controller.controller_error import ControllerError
@@ -454,7 +454,11 @@ async def create_marker(
     Required privilege: Link.Modify
     """
 
-    name = marker_data.name or f"marker-{link.id[:8]}"
+    # Auto-generate a link-unique name when the caller omits one. The short
+    # uuid suffix avoids the collision that `marker-{link.id[:8]}` alone would
+    # cause on the second anonymous marker on the same link (start_marker
+    # rejects duplicate names).
+    name = marker_data.name or f"marker-{link.id[:8]}-{uuid4().hex[:4]}"
     await link.start_marker(
         name=name,
         bpf=marker_data.bpf,
