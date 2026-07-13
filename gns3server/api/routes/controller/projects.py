@@ -203,6 +203,21 @@ def get_project_stats(project: Project = Depends(dep_project)) -> dict:
     return project.stats()
 
 
+@router.get("/{project_id}/markers", dependencies=[Depends(has_privilege("Project.Audit"))])
+def get_project_markers(project: Project = Depends(dep_project)) -> dict:
+    """
+    Return all traffic-insight markers across every link in the project.
+
+    Each entry is keyed ``"{link_id}/{marker_name}"`` and carries the
+    marker's BPF, tag, color, enabled flag, plus its parent ``link_id``
+    and capture-side ``node_id`` for frontend filtering / grouping.
+
+    Required privilege: Project.Audit
+    """
+
+    return project.markers
+
+
 @router.post(
     "/{project_id}/close",
     status_code=status.HTTP_204_NO_CONTENT,

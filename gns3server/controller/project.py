@@ -899,6 +899,30 @@ class Project:
         return self._links
 
     @property
+    def markers(self):
+        """
+        Project-level read-only aggregation of all markers across every link.
+
+        Each entry is keyed ``"{link_id}/{marker_name}"`` so the flat dict is
+        globally unique within the project.  The value is a clone of the link's
+        per-marker dict plus ``link_id`` and ``node_id`` (the capture-side node)
+        for convenience — the frontend can filter/group by link or node without
+        extra round-trips.
+
+        :returns: dict[str, dict] — keyed by "{link_id}/{marker_name}"
+        """
+        result = {}
+        for link_id, link in self._links.items():
+            for name, info in link.markers.items():
+                key = f"{link_id}/{name}"
+                result[key] = {
+                    **info,
+                    "link_id": link_id,
+                    "node_id": info.get("capture_node_id"),
+                }
+        return result
+
+    @property
     def snapshots(self):
         """
         :returns: Dictionary of snapshots
@@ -1710,6 +1734,7 @@ class Project:
             "links": len(self._links),
             "drawings": len(self._drawings),
             "snapshots": len(self._snapshots),
+            "markers": sum(len(link.markers) for link in self._links.values()),
         }
 
     def asdict(self):
