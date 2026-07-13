@@ -75,9 +75,31 @@ class MarkerManager:
             return
         loop = asyncio.get_running_loop()
         self._listener = MarkerListener(self)
-        self._transport, _ = await loop.create_datagram_endpoint(
-            lambda: self._listener, local_addr=(host, port)
-        )
+        try:
+            self._transport, _ = await loop.create_datagram_endpoint(
+                lambda: self._listener, local_addr=(host, port)
+            )
+        except OSError:
+            if port != 0:
+                log.warning(
+                    "Marker listener: port %s unavailable, falling back to OS-assigned port", port
+                )
+                try:
+                    self._transport, _ = await loop.create_datagram_endpoint(
+                        lambda: self._listener, local_addr=(host, 0)
+                    )
+                except OSError as e:
+                    log.error(
+                        "Marker listener startup failed: %s. Traffic insight signals are unavailable.", e
+                    )
+                    self._listener = None
+                    return
+            else:
+                log.error(
+                    "Marker listener startup failed on OS-assigned port. Traffic insight signals are unavailable."
+                )
+                self._listener = None
+                return
         sock = self._transport.get_extra_info("socket")
         self._host = host
         self._port = sock.getsockname()[1] if sock else port
