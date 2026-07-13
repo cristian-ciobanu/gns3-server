@@ -485,10 +485,6 @@ class DockerVM(BaseNode):
                 raise
         self._cid = result["Id"]
         log.info(f"Docker container '{self._name}' [{self._id}] created")
-        if self._cpus > 0:
-            log.info(f"CPU limit set to {self._cpus} CPUs")
-        if self._memory > 0:
-            log.info(f"Memory limit set to {self._memory} MB")
         return True
 
     def _format_env(self, variables, env):
