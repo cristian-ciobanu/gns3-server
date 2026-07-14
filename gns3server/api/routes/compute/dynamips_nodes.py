@@ -235,6 +235,7 @@ async def update_nio(
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
+    nio.markers = nio_data.markers or {}
     await node.slot_update_nio_binding(adapter_number, port_number, nio)
     return nio.asdict()
 

@@ -184,6 +184,8 @@ async def update_cloud_nio(
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
+    # NIO type is a Union (Ethernet/TAP/UDP); only UDPNIO carries markers.
+    nio.markers = getattr(nio_data, "markers", None) or {}
     await node.update_nio(port_number, nio)
     return nio.asdict()
 

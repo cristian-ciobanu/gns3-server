@@ -254,6 +254,8 @@ async def update_iou_node_nio(
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
+    # NIO type is a Union (Ethernet/TAP/UDP); only UDPNIO carries markers.
+    nio.markers = getattr(nio_data, "markers", None) or {}
     await node.adapter_update_nio_binding(adapter_number, port_number, nio)
     return nio.asdict()
 
