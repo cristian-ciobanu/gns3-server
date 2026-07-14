@@ -42,8 +42,9 @@ graph TB
 
 Inheritance is a controller-only fan-out: a definition CRUD loops over links and reuses the
 existing per-link marker operations, so the compute side sees an ordinary marker and is
-unchanged. Each compute process runs one UDP listener serving every uBridge on that host;
-the `node` field in each signal identifies the source.
+unchanged. Each compute process runs one UDP listener serving every uBridge on that host; the
+`node` and `link` fields in each signal together identify the source link (see
+[Per-link attribution](#per-link-attribution)).
 
 ## Business Process
 
@@ -70,6 +71,34 @@ sequenceDiagram
 Updating a definition syncs `bpf / tag / color / highlight_duration` to every inherited
 copy; deleting a definition removes every inherited copy. A newly created link inherits all
 existing definitions automatically.
+
+## Per-link attribution
+
+A uBridge `MARK` signal carries `node`, `filter`, `link`, `tag`, and `len` — but no bridge
+name. When one node is the capture side for several links — the common case for a project-level
+`global-{name}` marker on a multi-interface router — `node` + `filter` alone are identical
+across those links, so they cannot tell the signals (or pcap files) apart. The `link` field
+resolves this:
+
+1. At install time the controller stamps each filter with its link id
+   (`mark <bpf> [tag <id>] link <link_id> [pcap <path>]`).
+2. uBridge treats `link` as opaque and echoes it verbatim in the signal (`link=<link_id>`).
+3. The listener takes the signal's `link=` as the **authoritative** `link_id` of the
+   `marker.match` event, falling back to its registry only for legacy signals that carry no
+   `link=`.
+
+This is also why the pcap path is keyed on link —
+`<project>/markers/<node_id>_<link_id>_<filter>.pcap`, not on `bridge`+`filter`: a single
+uBridge bridge can serve several links, and only the link id keeps their captures distinct.
+
+### IOU: one bridge, many interfaces
+
+IOU runs a single `IOL-BRIDGE` per node shared by every interface, so `bridge`+`filter` are
+identical across that node's links. uBridge keeps a separate filter list **per port
+(bay/unit)** within the bridge, so each interface gets its own `global-{name}` filter, its own
+pcap file, and its own `link=`. The shared bridge name is irrelevant to attribution. Other
+capable node types (`qemu`, `docker`, `vpcs`, `cloud`) already use one bridge per link; `link`
+applies uniformly to all of them.
 
 ## API Endpoints
 
@@ -190,6 +219,9 @@ extra request.
 | `link.updated` | Link object (its `markers` field is the source of truth) | Project notification ws |
 | `marker.match` | `project_id`, `node_id`, `link_id`, `filter`, `tag`, `ts`, `len` | Project notification ws only |
 
+The `marker.match` `link_id` is taken from the signal's `link=` field (authoritative); see
+[Per-link attribution](#per-link-attribution).
+
 ## Error Responses
 
 | Status | Description |
@@ -215,7 +247,12 @@ extra request.
   default. A partial PUT (e.g. changing only `bpf`) leaves them untouched.
 - **Supported node types.** A marker needs a uBridge bridge: `vpcs`, `qemu`, `docker`,
   `iou`, `dynamips`, `cloud` (one capable endpoint suffices). Types without a uBridge are
-  silently skipped by the inheritance fan-out.
+  silently skipped by the inheritance fan-out. IOU uses one shared `IOL-BRIDGE` per node but
+  keeps filters, pcap files, and `link=` ids per port, so multi-interface nodes are handled
+  (see [Per-link attribution](#per-link-attribution)).
+- **Shared capture-side node.** When one node hosts markers for several links (typical for
+  `global-*` definitions on a router), each filter is stamped with its `link_id` so signals
+  and pcap files stay link-distinct; the controller never collapses them to a single link.
 - **Persistence.** Definitions and private markers persist in the topology; inherited
   markers are re-created from definitions on project load, so reopening a project restores
   the same configuration and stale inherited copies cannot survive on disk.
