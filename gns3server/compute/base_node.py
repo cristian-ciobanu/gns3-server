@@ -958,9 +958,17 @@ class BaseNode:
         manager = MarkerManager.instance()
         if not manager.running or not manager.host or not manager.port:
             return
+        if self._ubridge_hypervisor is None:
+            return
         try:
-            await self._ubridge_send(f"marker sink {manager.host} {manager.port}")
-            await self._ubridge_send(f"marker node {self._id}")
+            # Talk to the hypervisor directly, NOT via _ubridge_send: this runs
+            # inside _start_ubridge, which is reached THROUGH _ubridge_send when
+            # uBridge starts lazily (e.g. linking a stopped node). _ubridge_send's
+            # lock is non-reentrant, so calling it again here would deadlock on
+            # the held ___ubridge_send_lock. uBridge is already running and
+            # connected at this point, so the raw hypervisor send is safe.
+            await self._ubridge_hypervisor.send(f"marker sink {manager.host} {manager.port}")
+            await self._ubridge_hypervisor.send(f"marker node {self._id}")
         except UbridgeError:
             log.warning(
                 "uBridge does not support the marker module; traffic insight disabled for node %r",
