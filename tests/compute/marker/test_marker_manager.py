@@ -161,6 +161,28 @@ class TestMarkerListener:
         lis.datagram_received(b"MARK 2.0 node=n filter=f tag=- len=20\n", None)
         assert fmgr.events[0][1]["tag"] == 42
 
+    def test_link_in_signal_overrides_registry_link(self):
+        # Per-link attribution (contract §3.2/§3.3): the signal's `link=` is
+        # authoritative and must disambiguate links sharing a node+filter —
+        # e.g. several links on one IOU node under the same global marker name.
+        fmgr = FakeMarkerManager()
+        fmgr.register("p", "n", "f", "registry-link", tag=1)
+        lis = MarkerListener(fmgr)
+        lis.connection_made(None)
+        lis.datagram_received(
+            b"MARK 3.0 node=n filter=f link=signal-link tag=1 len=42\n", None
+        )
+        assert fmgr.events[0][1]["link_id"] == "signal-link"
+
+    def test_link_dash_falls_back_to_registry_link(self):
+        # Legacy signals that carry no link fall back to the registry's link_id.
+        fmgr = FakeMarkerManager()
+        fmgr.register("p", "n", "f", "registry-link", tag=1)
+        lis = MarkerListener(fmgr)
+        lis.connection_made(None)
+        lis.datagram_received(b"MARK 3.0 node=n filter=f link=- tag=1 len=42\n", None)
+        assert fmgr.events[0][1]["link_id"] == "registry-link"
+
     def test_exception_does_not_kill_listener(self):
         fmgr = FakeMarkerManager()
         lis = MarkerListener(fmgr)

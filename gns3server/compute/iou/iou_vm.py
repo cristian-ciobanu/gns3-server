@@ -1137,6 +1137,11 @@ class IOUVM(BaseNode):
             )
             if tag is not None:
                 cmd += f" tag {tag}"
+            # IOU uses one per-node IOL-BRIDGE for every link, so bridge+filter
+            # are identical across this node's links — `link` is the only way the
+            # controller can tell their signals apart (contract §3.2).
+            if link_id:
+                cmd += f" link {link_id}"
             cmd += ' pcap "{path}"'.format(path=pcap_path)
             try:
                 await self._ubridge_send(cmd)

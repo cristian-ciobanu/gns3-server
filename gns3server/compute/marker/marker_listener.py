@@ -79,6 +79,7 @@ class MarkerListener(asyncio.DatagramProtocol):
             return
 
         # "-" means the field was unset on the ubridge side (see contract §3.3).
+        link = kv.get("link")
         tag = kv.get("tag")
         length = kv.get("len")
 
@@ -89,10 +90,16 @@ class MarkerListener(asyncio.DatagramProtocol):
             )
             return
 
+        # `link=` is the authoritative per-link id (opaque, set by gns3server at
+        # filter install time). It disambiguates signals that share a node+filter
+        # across several links; fall back to the registry's link only for legacy
+        # signals that carry no `link=`.
+        signal_link = link if link and link != "-" else None
+
         event = {
             "project_id": project_id,
             "node_id": node_id,
-            "link_id": link_id,
+            "link_id": signal_link or link_id,
             "filter": filter_name,
             # Prefer the value carried in the signal; fall back to the one we registered.
             "tag": tag if tag and tag != "-" else registered_tag,
