@@ -33,7 +33,7 @@ from gns3server.config import Config
 from gns3server.utils.asyncio import locking
 from gns3server.compute.base_manager import BaseManager
 from gns3server.compute.docker.docker_vm import DockerVM
-from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error
+from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error, DockerHttp409Error
 
 log = logging.getLogger(__name__)
 
@@ -236,6 +236,8 @@ class Docker(BaseManager):
                 raise DockerHttp304Error("Docker has returned an error: {} {}".format(response.status, body))
             elif response.status == 404:
                 raise DockerHttp404Error("Docker has returned an error: {} {}".format(response.status, body))
+            elif response.status == 409:
+                raise DockerHttp409Error("Docker has returned an error: {} {}".format(response.status, body))
             else:
                 raise DockerError("Docker has returned an error: {} {}".format(response.status, body))
         return response

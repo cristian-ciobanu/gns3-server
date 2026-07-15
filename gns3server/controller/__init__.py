@@ -562,7 +562,15 @@ class Controller:
 
         for project in self._projects.values():
             if project.auto_open:
-                await project.open()
+                try:
+                    await project.open()
+                except aiohttp.web.HTTPClientError as e:
+                    details = e.text or e.reason or str(e)
+                    log.warning(
+                        "Failed to auto-open project '%s': %s",
+                        project.name,
+                        details,
+                    )
 
     def get_free_project_name(self, base_name):
         """
