@@ -571,16 +571,18 @@ async def node_console(
     Complete workflow:
       1. Call this tool with project_id and node_id to get the WebSocket URL
       2. Connect to the returned URL using websocat in text mode (-t):
-         > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
+         > websocat -t --no-close "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
       3. Send device commands with \\r\\n line endings via heredoc:
-         > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
+         > websocat -t --no-close "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
       4. Receive response: websocat receives and displays device output
          Use 'timeout' to avoid connection hanging:
-         > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
+         > timeout 10 websocat -t --no-close "ws://..." <<< $'commands\\r\\n'
 
     Key points:
       - Use \\r\\n (not \\n) to match console protocol line endings
       - Use $'...' format for escape sequences in bash
+      - --no-close keeps the WebSocket open after stdin (heredoc) hits EOF, so
+        device output is not cut off before it arrives
       - Set a timeout to prevent hanging connections
     """
     return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {

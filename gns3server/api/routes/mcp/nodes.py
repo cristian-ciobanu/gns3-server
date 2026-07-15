@@ -328,7 +328,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "node_name": node.get("name"),
         "console_type": console_type,
         "ws_url": ws_url,
-        "command": f"websocat {ws_url}",
+        "command": f"websocat -t --no-close {ws_url}",
     }
     if console_type in ("vnc",):
         result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
