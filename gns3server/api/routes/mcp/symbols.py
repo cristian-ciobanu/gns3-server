@@ -54,7 +54,7 @@ def get_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict
         return {"error": "symbol_id is required"}
     download_url = f"{gns3_ctx['server_url']}/v3/symbols/{symbol_id}/raw"
     username = gns3_ctx.get("jwt_username")
-    download_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    download_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
     result = {
         "symbol_id": symbol_id,
         "download_url": download_url,

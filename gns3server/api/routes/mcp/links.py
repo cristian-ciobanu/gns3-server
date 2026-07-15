@@ -336,7 +336,7 @@ def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if not project_id:
         return {"error": "project_id is required"}
     username = gns3_ctx.get("jwt_username")
-    download_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    download_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
 
     link_ids = params.get("link_ids")
     if link_ids:

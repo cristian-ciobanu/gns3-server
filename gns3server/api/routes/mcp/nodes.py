@@ -316,7 +316,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     console_type = node.get("console_type", "unknown")
     # Short-lived JWT for the WebSocket URL (10 min)
     username = gns3_ctx.get("jwt_username")
-    ws_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    ws_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
     raw_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
     if ws_token:
         raw_url += f"?token={ws_token}"
@@ -328,7 +328,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "node_name": node.get("name"),
         "console_type": console_type,
         "ws_url": ws_url,
-        "command": f"websocat {ws_url}",
+        "command": f"websocat -t --no-close {ws_url}",
     }
     if console_type in ("vnc",):
         result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"

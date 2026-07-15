@@ -194,6 +194,12 @@ _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _jwt_username_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "mcp_jwt_username", default=None
 )
+# token_version extracted during token validation — short-lived JWTs minted for
+# download/console URLs must carry the same version, or the revocation check
+# (token_data.token_version != user.token_version) rejects them as "revoked".
+_jwt_token_version_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "mcp_jwt_token_version", default=0
+)
 
 
 # ── Token validation ──────────────────────────────────────────────────
@@ -208,8 +214,9 @@ async def _resolve_token(token: str) -> str | None:
     """
     # Try JWT first
     try:
-        username = auth_service.get_username_from_token(token)
-        _jwt_username_var.set(username)
+        token_data = auth_service.get_token_data(token)
+        _jwt_username_var.set(token_data.username)
+        _jwt_token_version_var.set(token_data.token_version)
         return token
     except Exception:
         pass
@@ -233,7 +240,8 @@ async def _resolve_token(token: str) -> str | None:
                                 user = await user_repo.get_user(db_key.user_id)
                                 if user:
                                     _jwt_username_var.set(user.username)
-                                    fresh_token = auth_service.create_access_token(user.username)
+                                    _jwt_token_version_var.set(user.token_version)
+                                    fresh_token = auth_service.create_access_token(user.username, token_version=user.token_version)
                                     return fresh_token
             except Exception:
                 pass
@@ -292,6 +300,7 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
         "server_url": _server_url(),
         "jwt_token": _jwt_token_var.get(),
         "jwt_username": _jwt_username_var.get(),
+        "jwt_token_version": _jwt_token_version_var.get(),
     }
     result = handler(params, ctx)
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
@@ -562,16 +571,18 @@ async def node_console(
     Complete workflow:
       1. Call this tool with project_id and node_id to get the WebSocket URL
       2. Connect to the returned URL using websocat in text mode (-t):
-         > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
+         > websocat -t --no-close "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
       3. Send device commands with \\r\\n line endings via heredoc:
-         > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
+         > websocat -t --no-close "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
       4. Receive response: websocat receives and displays device output
          Use 'timeout' to avoid connection hanging:
-         > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
+         > timeout 10 websocat -t --no-close "ws://..." <<< $'commands\\r\\n'
 
     Key points:
       - Use \\r\\n (not \\n) to match console protocol line endings
       - Use $'...' format for escape sequences in bash
+      - --no-close keeps the WebSocket open after stdin (heredoc) hits EOF, so
+        device output is not cut off before it arrives
       - Set a timeout to prevent hanging connections
     """
     return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
