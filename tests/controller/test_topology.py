@@ -60,6 +60,7 @@ async def test_project_to_topology_empty(tmpdir):
             "supplier": None,
             "variables": None,
             "version": __version__,
+            "marker_definitions": {},
             "created_by": None
         }
 

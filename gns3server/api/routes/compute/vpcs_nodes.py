@@ -29,7 +29,6 @@ from uuid import UUID
 from gns3server import schemas
 from gns3server.compute.vpcs import VPCS
 from gns3server.compute.vpcs.vpcs_vm import VPCSVM
-
 from .dependencies.authentication import compute_authentication, ws_compute_authentication
 
 responses = {404: {"model": schemas.ErrorMessage, "description": "Could not find project or VMware node"}}
@@ -240,6 +239,7 @@ async def update_vpcs_node_nio(
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
+    nio.markers = nio_data.markers or {}
     await node.port_update_nio_binding(port_number, nio)
     return nio.asdict()
 
@@ -301,6 +301,7 @@ async def stop_vpcs_node_capture(
     """
 
     await node.stop_capture(port_number)
+
 
 
 @router.get(

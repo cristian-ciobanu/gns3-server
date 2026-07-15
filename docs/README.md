@@ -72,6 +72,9 @@ Unified error response format across all GNS3 API endpoints. Documents HTTP stat
 ### Web Wireshark (`features/web-wireshark-business-process.md`)
 Web-based packet capture analysis using Docker + xpra HTML5 client. Zero-install Wireshark experience directly in the browser, integrated with GNS3 topologies.
 
+### Marker (Traffic Insight) (`features/marker-traffic-insight.md`)
+Real-time traffic insight via per-link BPF markers and project-level inherited definitions. A marker taps a link in uBridge, emitting match notifications and pcap capture on BPF hit; definitions fan out to every capable link automatically.
+
 ---
 
 ## GNS3 AI Copilot (`gns3-copilot/`)

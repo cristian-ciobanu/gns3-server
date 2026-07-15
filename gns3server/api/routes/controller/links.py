@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Request, status, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Union
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from gns3server.controller import Controller
 from gns3server.controller.controller_error import ControllerError
@@ -422,6 +422,97 @@ async def web_wireshark_websocket(
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason=str(e))
         except:
             pass
+
+
+@router.get(
+    "/{link_id}/markers",
+    dependencies=[Depends(has_privilege("Link.Audit"))]
+)
+async def get_markers(link: Link = Depends(dep_link)) -> dict:
+    """
+    Return all traffic-insight markers configured on this link.
+
+    Required privilege: Link.Audit
+    """
+
+    return link.markers
+
+
+@router.post(
+    "/{link_id}/markers",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def create_marker(
+    marker_data: schemas.MarkerCreate,
+    link: Link = Depends(dep_link)
+) -> dict:
+    """
+    Attach a traffic-insight marker to the link.
+    On BPF match uBridge emits MARK signals and appends packets to a pcap.
+
+    Required privilege: Link.Modify
+    """
+
+    # Auto-generate a link-unique name when the caller omits one. The short
+    # uuid suffix avoids the collision that `marker-{link.id[:8]}` alone would
+    # cause on the second anonymous marker on the same link (start_marker
+    # rejects duplicate names).
+    if marker_data.name and marker_data.name.lower().startswith("global"):
+        raise ControllerError('Names starting with "global" are reserved for inherited markers')
+    name = marker_data.name or f"marker-{link.id[:8]}-{uuid4().hex[:4]}"
+    await link.start_marker(
+        name=name,
+        bpf=marker_data.bpf,
+        tag=marker_data.tag,
+        color=marker_data.color,
+        highlight_duration=marker_data.highlight_duration,
+    )
+    return link.markers.get(name, {})
+
+
+@router.delete(
+    "/{link_id}/markers/{marker_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def delete_marker(
+    marker_name: str,
+    link: Link = Depends(dep_link)
+) -> None:
+    """
+    Remove a traffic-insight marker from the link.
+
+    Required privilege: Link.Modify
+    """
+
+    await link.stop_marker(marker_name)
+
+
+@router.put(
+    "/{link_id}/markers/{marker_name}",
+    dependencies=[Depends(has_privilege("Link.Modify"))]
+)
+async def update_marker(
+    marker_name: str,
+    marker_data: schemas.MarkerCreate,
+    link: Link = Depends(dep_link)
+) -> dict:
+    """
+    Update a traffic-insight marker (change BPF, tag, or enabled).
+
+    Required privilege: Link.Modify
+    """
+
+    await link.update_marker(
+        name=marker_name,
+        bpf=marker_data.bpf if marker_data.bpf else None,
+        tag=marker_data.tag,
+        color=marker_data.color,
+        enabled=marker_data.enabled,
+        highlight_duration=marker_data.highlight_duration,
+    )
+    return link.markers.get(marker_name, {})
 
 
 @router.get(

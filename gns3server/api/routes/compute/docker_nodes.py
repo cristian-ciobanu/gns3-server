@@ -29,7 +29,6 @@ from typing import Union
 from gns3server import schemas
 from gns3server.compute.docker import Docker
 from gns3server.compute.docker.docker_vm import DockerVM
-
 from .dependencies.authentication import compute_authentication, ws_compute_authentication
 
 responses = {404: {"model": schemas.ErrorMessage, "description": "Could not find project or Docker node"}}
@@ -293,6 +292,7 @@ async def update_docker_node_nio(
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
+    nio.markers = nio_data.markers or {}
     await node.adapter_update_nio_binding(adapter_number, nio)
     return nio.asdict()
 

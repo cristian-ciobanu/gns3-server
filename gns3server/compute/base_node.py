@@ -935,8 +935,45 @@ class BaseNode:
                 f"Hypervisor {self._ubridge_hypervisor.host}:{self._ubridge_hypervisor.port} has successfully started"
             )
             await self._ubridge_hypervisor.connect()
+            # Tell this uBridge where to send MARK signals and which node id to
+            # tag them with. Marker is opt-in and inert until a `mark` filter is
+            # added, so this never disturbs the data plane.
+            await self._ubridge_configure_marker_sink()
         # save if privileged are required in case uBridge needs to be restarted in self._ubridge_send()
         self._ubridge_require_privileged_access = require_privileged_access
+
+    async def _ubridge_configure_marker_sink(self):
+        """
+        Point this node's uBridge at the compute's marker UDP sink and tag its
+        signals with this node's id. Safe to call before any marker filter
+        exists — uBridge stays inert until a ``mark`` filter is configured.
+
+        Old uBridge builds without the marker module are tolerated: the failure
+        is downgraded to a warning so node start is not blocked by an opt-in
+        observability feature.
+        """
+
+        from gns3server.compute.marker.marker_manager import MarkerManager
+
+        manager = MarkerManager.instance()
+        if not manager.running or not manager.host or not manager.port:
+            return
+        if self._ubridge_hypervisor is None:
+            return
+        try:
+            # Talk to the hypervisor directly, NOT via _ubridge_send: this runs
+            # inside _start_ubridge, which is reached THROUGH _ubridge_send when
+            # uBridge starts lazily (e.g. linking a stopped node). _ubridge_send's
+            # lock is non-reentrant, so calling it again here would deadlock on
+            # the held ___ubridge_send_lock. uBridge is already running and
+            # connected at this point, so the raw hypervisor send is safe.
+            await self._ubridge_hypervisor.send(f"marker sink {manager.host} {manager.port}")
+            await self._ubridge_hypervisor.send(f"marker node {self._id}")
+        except UbridgeError:
+            log.warning(
+                "uBridge does not support the marker module; traffic insight disabled for node %r",
+                self.name,
+            )
 
     async def _stop_ubridge(self):
         """
@@ -983,10 +1020,12 @@ class BaseNode:
 
         await self._ubridge_send(f"bridge start {bridge_name}")
         await self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+        await self._ubridge_apply_markers(bridge_name, destination_nio)
 
     async def update_ubridge_udp_connection(self, bridge_name, source_nio, destination_nio):
         if destination_nio:
             await self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+            await self._ubridge_apply_markers(bridge_name, destination_nio)
 
     async def ubridge_delete_bridge(self, name):
         """
@@ -1041,6 +1080,86 @@ class BaseNode:
                     filter_value=" ".join([str(v) for v in values]),
                 )
                 i += 1
+
+    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None, link_id=None):
+        """
+        Attach a `mark` packet filter to a uBridge bridge for traffic insight.
+
+        On BPF match uBridge (a) emits a UDP MARK signal to the configured sink
+        and (b) appends the packet to ``pcap_path``. Unlike the impairment
+        filters, this is an observability tap: it never drops or alters traffic,
+        and it is added/removed on its own (not via reset_packet_filters) so the
+        pcap is not closed/reopened on unrelated filter changes.
+
+        :param bridge_name: uBridge bridge carrying the link's traffic
+        :param name: stable, gns3server-chosen filter name (pcap identity + echoed in signals)
+        :param bpf: libpcap BPF expression
+        :param pcap_path: absolute path ubridge appends matched packets to
+        :param tag: optional correlation id echoed in MARK signals
+        """
+
+        # mark <bpf> [tag <id>] [pcap <path>] — tag/pcap keyword pairs, any order.
+        # name travels from the controller REST layer (MarkerCreate schema) but is
+        # validated here too as defense-in-depth against hand-edited topology files.
+        # Note: "global-*" names are legitimate here — they come from project-level
+        # marker definitions (inherit_marker). The prefix is only forbidden at the
+        # user-facing schema layer, not at the uBridge boundary.
+        _MARKER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+        if not _MARKER_NAME_RE.match(name):
+            raise UbridgeError(f"Invalid marker name: {name!r}")
+        cmd = 'bridge add_packet_filter {bridge} {name} mark "{bpf}"'.format(
+            bridge=bridge_name, name=name, bpf=bpf
+        )
+        if tag is not None:
+            cmd += f" tag {tag}"
+        # Per-link attribution (contract §3.2): when one ubridge bridge serves
+        # several GNS3 links (e.g. IOU's per-node bridge), bridge+filter collide,
+        # so the link id is the only way to tell signals — and pcap files — apart.
+        if link_id:
+            cmd += f" link {link_id}"
+        cmd += ' pcap "{path}"'.format(path=pcap_path)
+        # Let BPF compile errors propagate — the marker is the user's intent, so a
+        # bad expression must surface instead of being silently dropped.
+        await self._ubridge_send(cmd)
+
+    async def _ubridge_apply_markers(self, bridge_name, nio):
+        """
+        (Re-)apply every traffic-insight marker carried by *nio* to the uBridge
+        bridge *bridge_name*.  Called from ``add_ubridge_udp_connection`` (bridge
+        creation / node restart) and ``update_ubridge_udp_connection`` (NIO update
+        — the preceding ``_ubridge_apply_filters`` has already issued
+        ``reset_packet_filters``, so we must re-add markers to survive the reset).
+        """
+        from gns3server.compute.marker.marker_manager import MarkerManager
+
+        markers = nio.markers if hasattr(nio, 'markers') else {}
+        if not markers:
+            return
+
+        manager = MarkerManager.instance()
+        markers_dir = self.project.markers_working_directory()
+        for name, spec in markers.items():
+            bpf = spec.get("bpf", "")
+            tag = spec.get("tag")
+            link_id = spec.get("link_id", "")
+            pcap_path = os.path.join(
+                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
+            )
+            try:
+                await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id)
+            except UbridgeError as e:
+                # Swallow BPF compile errors (warn + skip) so a single bad
+                # expression can't break link creation / node restart — mirrors
+                # _ubridge_apply_filters, which does the same for packet filters.
+                if "syntax error" in str(e).lower() or "compile filter" in str(e).lower():
+                    message = f"Warning: ignoring marker '{name}' due to BPF syntax error: {e}"
+                    log.warning(message)
+                    self.project.emit("log.warning", {"message": message})
+                    continue
+                raise
+            manager.register(
+                str(self.project.id), self._id, name, link_id, tag
+            )
 
     async def _add_ubridge_ethernet_connection(self, bridge_name, ethernet_interface, block_host_traffic=False):
         """
