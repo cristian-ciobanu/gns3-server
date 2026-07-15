@@ -271,7 +271,7 @@ async def _upload_file(compute, project_id, file_path, path):
 
 async def _import_images(controller, images_path):
     """
-    Copy images to the images directory or delete them if they already exists.
+    Copy images to the images directory or delete them if they already exist.
     """
 
     image_dir = controller.images_path()
@@ -279,12 +279,19 @@ async def _import_images(controller, images_path):
     for (dirpath, dirnames, filenames) in os.walk(root, followlinks=False):
         for filename in filenames:
             path = os.path.join(dirpath, filename)
-            if os.path.islink(path):
-                continue
             dst = os.path.join(image_dir, os.path.relpath(path, root))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            await wait_run_in_executor(shutil.move, path, dst)
-
+            if not os.path.exists(dst):
+                await wait_run_in_executor(shutil.move, path, dst)
+                try:
+                    with open(dst, "rb") as f:
+                        # read the first 7 bytes of the file.
+                        elf_header_start = f.read(7)
+                        # IOU images must start with the ELF magic number, be 32-bit or 64-bit, little endian and have an ELF version of 1
+                        if elf_header_start == b'\x7fELF\x01\x01\x01' or elf_header_start == b'\x7fELF\x02\x01\x01':
+                            os.chmod(dst, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+                except OSError as e:
+                    continue
 
 async def update_snapshots(snapshots_dir, project_path, project_name, project_id, reset_mac_addresses=True):
     """
