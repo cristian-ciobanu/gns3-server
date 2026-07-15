@@ -233,7 +233,7 @@ async def _resolve_token(token: str) -> str | None:
                                 user = await user_repo.get_user(db_key.user_id)
                                 if user:
                                     _jwt_username_var.set(user.username)
-                                    fresh_token = auth_service.create_access_token(user.username)
+                                    fresh_token = auth_service.create_access_token(user.username, token_version=user.token_version)
                                     return fresh_token
             except Exception:
                 pass
