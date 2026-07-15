@@ -194,6 +194,12 @@ _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _jwt_username_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "mcp_jwt_username", default=None
 )
+# token_version extracted during token validation — short-lived JWTs minted for
+# download/console URLs must carry the same version, or the revocation check
+# (token_data.token_version != user.token_version) rejects them as "revoked".
+_jwt_token_version_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "mcp_jwt_token_version", default=0
+)
 
 
 # ── Token validation ──────────────────────────────────────────────────
@@ -208,8 +214,9 @@ async def _resolve_token(token: str) -> str | None:
     """
     # Try JWT first
     try:
-        username = auth_service.get_username_from_token(token)
-        _jwt_username_var.set(username)
+        token_data = auth_service.get_token_data(token)
+        _jwt_username_var.set(token_data.username)
+        _jwt_token_version_var.set(token_data.token_version)
         return token
     except Exception:
         pass
@@ -233,6 +240,7 @@ async def _resolve_token(token: str) -> str | None:
                                 user = await user_repo.get_user(db_key.user_id)
                                 if user:
                                     _jwt_username_var.set(user.username)
+                                    _jwt_token_version_var.set(user.token_version)
                                     fresh_token = auth_service.create_access_token(user.username, token_version=user.token_version)
                                     return fresh_token
             except Exception:
@@ -292,6 +300,7 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
         "server_url": _server_url(),
         "jwt_token": _jwt_token_var.get(),
         "jwt_username": _jwt_username_var.get(),
+        "jwt_token_version": _jwt_token_version_var.get(),
     }
     result = handler(params, ctx)
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
