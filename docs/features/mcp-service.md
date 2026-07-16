@@ -127,7 +127,6 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `node_update` | Update node properties |
 | `node_start` | Start node(s) — `node_id` or `node_ids` array |
 | `node_stop` | Stop node(s) — `node_id` or `node_ids` array |
-| `node_reload` | Reload node(s) — `node_id` or `node_ids` array |
 | `node_suspend` | Suspend node(s) — `node_id` or `node_ids` array |
 | `node_console` | Get WebSocket console URL |
 | `node_file_list` | List files in node directory |
@@ -137,7 +136,6 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `node_start_all` | Start all nodes |
 | `node_stop_all` | Stop all nodes |
 | `node_suspend_all` | Suspend all nodes |
-| `node_reload_all` | Reload all nodes |
 | `node_duplicate` | Duplicate a node |
 | `node_isolate` | Isolate a node (suspend links) |
 | `node_unisolate` | Un-isolate a node (resume links) |
@@ -288,7 +286,8 @@ device_show_run(project_id, device_configs=[
 config = node_file_get(project_id, node_id, "startup-config.cfg")
 # Restore if config breaks
 node_file_write(project_id, node_id, "startup-config.cfg", config)
-node_reload(project_id, node_id)
+node_stop(project_id, node_id)
+node_start(project_id, node_id)
 ```
 
 ### Device Config Workflow
