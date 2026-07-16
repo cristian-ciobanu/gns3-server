@@ -86,13 +86,13 @@ from .device_config import (
 )
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
-    stop_node_handler, reload_node_handler, suspend_node_handler,
+    stop_node_handler, suspend_node_handler,
     create_node_handler, delete_node_handler, update_node_handler,
     get_node_console_info_handler,
     list_node_files_handler, get_node_file_handler,
     write_node_file_handler, delete_node_file_handler,
     start_all_nodes_handler, stop_all_nodes_handler,
-    suspend_all_nodes_handler, reload_all_nodes_handler,
+    suspend_all_nodes_handler,
     duplicate_node_handler, isolate_node_handler,
     unisolate_node_handler, get_node_links_handler,
 )
@@ -469,20 +469,6 @@ async def node_stop(
     else:
         params["node_id"] = node_id
     return await asyncio.to_thread(_run_handler_sync, stop_node_handler, params)
-
-@mcp.tool()
-async def node_reload(
-    project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
-    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reload multiple nodes in parallel")] = None,
-) -> list[dict[str, Any]]:
-    """Reload (restart) one or more nodes. Provide node_id for single, or node_ids for batch."""
-    params = {"project_id": project_id}
-    if node_ids:
-        params["node_ids"] = node_ids
-    else:
-        params["node_id"] = node_id
-    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, params)
 
 @mcp.tool()
 async def node_suspend(
@@ -880,16 +866,6 @@ async def node_suspend_all(
 ) -> list[dict[str, Any]]:
     """Suspend all nodes in a project."""
     return await asyncio.to_thread(_run_handler_sync, suspend_all_nodes_handler, {
-        "project_id": project_id,
-    })
-
-
-@mcp.tool()
-async def node_reload_all(
-    project_id: Annotated[str, Field(description="UUID of the project")],
-) -> list[dict[str, Any]]:
-    """Reload (restart) all nodes in a project."""
-    return await asyncio.to_thread(_run_handler_sync, reload_all_nodes_handler, {
         "project_id": project_id,
     })
 

@@ -159,24 +159,6 @@ def stop_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
     return {"message": f"Node {node_id} stopped", "node_id": node_id}
 
 
-def reload_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    project_id = params.get("project_id")
-    if not project_id:
-        return {"error": "project_id is required"}
-    node_ids = params.get("node_ids")
-    if node_ids:
-        if not isinstance(node_ids, list):
-            return {"error": "node_ids must be a list"}
-        conn = _get_connector(gns3_ctx)
-        return _batch_lifecycle(project_id, node_ids, "reload", conn, "reloaded")
-    node_id = params.get("node_id")
-    if not node_id:
-        return {"error": "node_id or node_ids is required"}
-    conn = _get_connector(gns3_ctx)
-    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/reload")
-    return {"message": f"Node {node_id} reloaded", "node_id": node_id}
-
-
 def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
@@ -452,15 +434,6 @@ def suspend_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
     return {"message": "All nodes suspended", "project_id": project_id}
 
 
-def reload_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    project_id = params.get("project_id")
-    if not project_id:
-        return {"error": "project_id is required"}
-    conn = _get_connector(gns3_ctx)
-    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/reload")
-    return {"message": "All nodes reloaded", "project_id": project_id}
-
-
 def duplicate_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     node_id = params.get("node_id")
@@ -555,19 +528,6 @@ NODE_TOOLS = [
             "required": ["project_id", "node_id"],
         },
         "handler": stop_node_handler,
-    },
-    {
-        "name": "reload_node",
-        "description": "Reload (restart) a node in a project",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Project UUID"},
-                "node_id": {"type": "string", "description": "Node UUID"},
-            },
-            "required": ["project_id", "node_id"],
-        },
-        "handler": reload_node_handler,
     },
     {
         "name": "suspend_node",

@@ -200,13 +200,6 @@ class TestNode:
             result = suspend_node_handler({"project_id": "p1", "node_ids": ["n1"]}, ctx)
             assert result[0]["status"] == "success"
 
-    def test_reload_batch(self, ctx):
-        from gns3server.api.routes.mcp.nodes import reload_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
-            m.return_value = _mock_conn({"status": "started"})
-            result = reload_node_handler({"project_id": "p1", "node_ids": ["n1"]}, ctx)
-            assert result[0]["status"] == "success"
-
     def test_console(self, ctx):
         from gns3server.api.routes.mcp.nodes import get_node_console_info_handler
         with patch(f"{BASE}.{self.mod}._get_connector") as m:
