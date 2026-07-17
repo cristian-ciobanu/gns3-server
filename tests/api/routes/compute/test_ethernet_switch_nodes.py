@@ -84,6 +84,7 @@ class TestEthernetSwitchNodesRoutes:
         node = compute_project.get_node(response.json()["node_id"])
         br = node._bridge_name
         node._ubridge_send.assert_has_calls([
+            call(f'brctl delete "{br}"'),
             call(f'brctl create "{br}"'),
             call(f'link set "{br}" up'),
             call(f'brctl vlanfiltering "{br}" on'),

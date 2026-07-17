@@ -37,8 +37,6 @@ be the switch). ESW ``access``/``dot1q``/``qinq`` port modes are composed from
 the ``brctl`` VLAN primitives here -- see ``_apply_port_vlan``.
 """
 
-import psutil
-
 from ...base_node import BaseNode
 from ...nios.nio_udp import NIOUDP
 from ...error import NodeError
@@ -115,16 +113,6 @@ class EthernetSwitch(BaseNode):
     def _ubridge_bridge_name(self, port_number):
         """Name of the per-port uBridge relay bridge (not a kernel interface)."""
         return f"{self._id}-{port_number}"
-
-    @staticmethod
-    def _free_iface(prefix):
-        """First free kernel interface name ``prefix<i>`` (kernel names are <=15 chars)."""
-        existing = psutil.net_if_addrs()
-        for i in range(4096):
-            name = f"{prefix}{i}"
-            if name not in existing and len(name) <= 15:
-                return name
-        raise NodeError(f"Could not allocate a free interface name with prefix '{prefix}'")
 
     def _tap_name(self, port_number):
         """Kernel TAP name for a port: ``<bridge>-<port>`` (host-unique via the bridge)."""
@@ -221,11 +209,22 @@ class EthernetSwitch(BaseNode):
         """
         Creates the per-node kernel bridge once and enables VLAN filtering.
         Applies the bridge-level QinQ ethertype if any port needs it.
+
+        The bridge name is deterministic: ``gns3`` + the first 6 hex chars of
+        this switch's UUID (kernel interface names are ≤ 15 chars).  A stale
+        bridge from a previous crash is deleted first so ``brctl create`` never
+        hits EEXIST.
         """
 
         if self._bridge_created:
             return
-        self._bridge_name = self._free_iface("gns3br")
+        # deterministic short name — 10 chars, always fits the 15-char kernel cap
+        self._bridge_name = "gns3" + self._id.replace("-", "")[:6]
+        # crash recovery: best-effort delete any leftover bridge
+        try:
+            await self._ubridge_send(f'brctl delete "{self._bridge_name}"')
+        except UbridgeError:
+            pass  # not found = nothing to clean
         await self._ubridge_send(f'brctl create "{self._bridge_name}"')
         # ``brctl create`` leaves the bridge DOWN; bring it UP so it forwards.
         await self._ubridge_send(f'link set "{self._bridge_name}" up')
