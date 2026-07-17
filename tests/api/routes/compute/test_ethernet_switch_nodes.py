@@ -85,6 +85,7 @@ class TestEthernetSwitchNodesRoutes:
         br = node._bridge_name
         node._ubridge_send.assert_has_calls([
             call(f'brctl create "{br}"'),
+            call(f'link set "{br}" up'),
             call(f'brctl vlanfiltering "{br}" on'),
         ])
 

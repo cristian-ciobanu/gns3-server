@@ -227,6 +227,8 @@ class EthernetSwitch(BaseNode):
             return
         self._bridge_name = self._free_iface("gns3br")
         await self._ubridge_send(f'brctl create "{self._bridge_name}"')
+        # ``brctl create`` leaves the bridge DOWN; bring it UP so it forwards.
+        await self._ubridge_send(f'link set "{self._bridge_name}" up')
         await self._ubridge_send(f'brctl vlanfiltering "{self._bridge_name}" on')
         self._bridge_created = True
         await self._apply_bridge_proto_if_needed()
