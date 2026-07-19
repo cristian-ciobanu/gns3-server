@@ -82,6 +82,9 @@ class Cloud(BaseNode):
         host_interfaces = []
         network_interfaces = gns3server.utils.interfaces.interfaces()
         for interface in network_interfaces:
+            # Hide GNS3 internal bridges (e.g. EthernetSwitch kernel bridges)
+            if interface["name"].lower().startswith("gns3"):
+                continue
             host_interfaces.append(
                 {
                     "name": interface["name"],
