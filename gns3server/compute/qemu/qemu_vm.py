@@ -2293,7 +2293,7 @@ class QemuVM(BaseNode):
             options.extend(["-bios", self._bios_image.replace(",", ",,")])
 
         elif self._uefi:
-            system_ovmf_firmware_dir = Path(self.manager.config.settings.Qemu.ovmf_firware_dir)
+            system_ovmf_firmware_dir = Path(self.manager.config.settings.Qemu.ovmf_firmware_dir)
             log.info("Using OVMF firmware directory: {}".format(system_ovmf_firmware_dir))
             old_ovmf_vars_path = os.path.join(self.working_dir, "OVMF_VARS.fd")
             if os.path.exists(old_ovmf_vars_path):
