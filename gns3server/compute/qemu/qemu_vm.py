@@ -34,7 +34,8 @@ import json
 import shlex
 import psutil
 
-from gns3server.utils import parse_version
+from pathlib import Path
+from gns3server.utils import parse_version, shlex_quote
 from gns3server.utils.asyncio import subprocess_check_output, cancellable_wait_run_in_executor
 from .qemu_error import QemuError
 from .utils.qcow2 import Qcow2, Qcow2Error
@@ -2292,15 +2293,23 @@ class QemuVM(BaseNode):
             options.extend(["-bios", self._bios_image.replace(",", ",,")])
 
         elif self._uefi:
-
+            ovmf_firmware_dir = self._manager.config.get_section_config("Qemu").get("ovmf_firmware_dir", "/usr/share/OVMF")
+            system_ovmf_firmware_dir = Path(ovmf_firmware_dir)
+            log.info("Using OVMF firmware directory: {}".format(system_ovmf_firmware_dir))
             old_ovmf_vars_path = os.path.join(self.working_dir, "OVMF_VARS.fd")
             if os.path.exists(old_ovmf_vars_path):
                 # the node has its own UEFI variables store already, we must also use the old UEFI firmware
                 ovmf_firmware_path = self.manager.get_abs_image_path("OVMF_CODE.fd")
             else:
-                system_ovmf_firmware_path = "/usr/share/OVMF/OVMF_CODE_4M.fd"
-                if os.path.exists(system_ovmf_firmware_path):
-                    ovmf_firmware_path = system_ovmf_firmware_path
+                # Use a manual case-insensitive search instead
+                try:
+                    system_ovmf_firmware_path = next((f for f in system_ovmf_firmware_dir.glob("*.fd")
+                                                      if f.name.lower() == "ovmf_code_4m.fd"), None)
+                except (FileNotFoundError, StopIteration):
+                    system_ovmf_firmware_path = None
+
+                if system_ovmf_firmware_path:
+                    ovmf_firmware_path = str(system_ovmf_firmware_path)
                 else:
                     # otherwise, get the UEFI firmware from the images directory
                     ovmf_firmware_path = self.manager.get_abs_image_path("OVMF_CODE_4M.fd")
@@ -2309,9 +2318,13 @@ class QemuVM(BaseNode):
             options.extend(["-drive", "if=pflash,format=raw,readonly,file={}".format(ovmf_firmware_path)])
 
             # try to use the UEFI variables store from the system first
-            system_ovmf_vars_path = "/usr/share/OVMF/OVMF_VARS_4M.fd"
-            if os.path.exists(system_ovmf_vars_path):
-                ovmf_vars_path = system_ovmf_vars_path
+            try:
+                system_ovmf_vars_path = next((f for f in system_ovmf_firmware_dir.glob("*.fd")
+                                              if f.name.lower() == "ovmf_vars_4m.fd"), None)
+            except (FileNotFoundError, StopIteration):
+                system_ovmf_vars_path = None
+            if system_ovmf_vars_path:
+                ovmf_vars_path = str(system_ovmf_vars_path)
             else:
                 # otherwise, get the UEFI variables store from the images directory
                 ovmf_vars_path = self.manager.get_abs_image_path("OVMF_VARS_4M.fd")
@@ -2327,6 +2340,10 @@ class QemuVM(BaseNode):
                     except OSError as e:
                         raise QemuError("Cannot copy OVMF_VARS_4M.fd file to the node working directory: {}".format(e))
             options.extend(["-drive", "if=pflash,format=raw,file={}".format(ovmf_vars_node_path)])
+
+            # edk2 firmware requires a Random Number Generator (RNG) device in order to turn network adapters on
+            options.extend(["-object", "rng-random,filename=/dev/urandom,id=rng0 "])
+            options.extend(["-device", "virtio-rng-pci,rng=rng0"])
         return options
 
     def _linux_boot_options(self):

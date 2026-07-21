@@ -1,5 +1,19 @@
 # Change Log
 
+## 2.2.60 15/07/2026
+
+* Sync appliances
+* Only set IOU images to be executable when importing images
+* fix(import): project import does not move images symlinks into place
+* Search for system UEFI that is compatible with Python < 3.12
+* Add OVMF firmware directory configuration
+* Automatically add a Random Number Generator (RNG) device when using uefi option is enabled
+* fix(docker): handle container name conflict automatically
+* fix: gns3-server crashes on startup if "Open this project in the background" is active but there is a problem with that project
+* Handle HTTPNotFound exception when retrieving compute status
+* Fix: Check compute connectivity before open() during project deletion
+* API endpoints to manage base configuration files for templates
+
 ## 3.1.0a4 09/07/2026
 
 * Bundle web-ui v3.1.0a4
