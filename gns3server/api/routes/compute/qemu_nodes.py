@@ -30,7 +30,6 @@ from gns3server import schemas
 from gns3server.compute import qemu
 from gns3server.compute.qemu import Qemu
 from gns3server.compute.qemu.qemu_vm import QemuVM
-
 from .dependencies.authentication import compute_authentication, ws_compute_authentication
 
 import logging
@@ -321,6 +320,7 @@ async def update_qemu_node_nio(
     if nio_data.filters:
         nio.filters = nio_data.filters
     nio.suspend = nio_data.suspend
+    nio.markers = nio_data.markers or {}
     await node.adapter_update_nio_binding(adapter_number, nio)
     return nio.asdict()
 

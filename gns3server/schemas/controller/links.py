@@ -62,6 +62,10 @@ class LinkBase(BaseModel):
     suspend: Optional[bool] = None
     link_style: Optional[LinkStyle] = None
     filters: Optional[dict] = None
+    markers: Optional[dict] = Field(
+        None,
+        description="Traffic-insight markers on this link: name → {bpf, tag, enabled}"
+    )
     show_filters_icon: Optional[bool] = Field(
         True,
         description="Show filters icon in Web UI"
@@ -135,3 +139,73 @@ class LinkCapture(BaseModel):
     data_link_type: str = "DLT_EN10MB"
     capture_file_name: Optional[str] = None
     wireshark: bool = False
+
+
+class MarkerCreate(BaseModel):
+    """
+    Body for attaching a traffic-insight marker to a link.
+
+    ``name`` is optional at the controller REST layer (auto-generated when
+    absent) but always set when the controller forwards to the compute.
+    """
+
+    name: Optional[str] = Field(
+        None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        max_length=128,
+        description='Unique marker name on the link. Auto-generated when absent.',
+    )
+    bpf: str
+    tag: Optional[int] = None
+    link_id: Optional[str] = None
+    color: Optional[str] = Field(
+        None,
+        description="User-chosen hex color for this marker in the Web UI, e.g. '#ff5722'",
+    )
+    highlight_duration: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "How long (milliseconds) the Web UI keeps this marker highlighted "
+            "after a match. Omitted = use the UI default. Pure render hint — "
+            "stored on the link, never sent to uBridge."
+        ),
+    )
+    enabled: Optional[bool] = Field(
+        None,
+        description="Whether the marker is active. Defaults to true on creation.",
+    )
+
+
+class MarkerDefinitionCreate(BaseModel):
+    """
+    Body for creating / updating a project-level marker definition.
+
+    The definition is a template — when applied to a link the marker name is
+    prefixed with ``global-`` (e.g. ``arp`` → ``global-arp``) so it can never
+    collide with a per-link private marker.
+    """
+
+    name: Optional[str] = Field(
+        None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        max_length=128,
+        description="Unique definition name. Auto-generated when absent.",
+    )
+    bpf: str
+    tag: Optional[int] = None
+    color: Optional[str] = Field(
+        None,
+        description="User-chosen hex color for the marker in the Web UI, e.g. '#ff5722'",
+    )
+    highlight_duration: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "How long (milliseconds) the Web UI keeps this marker highlighted "
+            "after a match. Omitted = use the UI default. Pure render hint — "
+            "stored with the definition, never sent to uBridge."
+        ),
+    )
+
+

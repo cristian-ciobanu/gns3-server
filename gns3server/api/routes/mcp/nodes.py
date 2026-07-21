@@ -159,24 +159,6 @@ def stop_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[
     return {"message": f"Node {node_id} stopped", "node_id": node_id}
 
 
-def reload_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    project_id = params.get("project_id")
-    if not project_id:
-        return {"error": "project_id is required"}
-    node_ids = params.get("node_ids")
-    if node_ids:
-        if not isinstance(node_ids, list):
-            return {"error": "node_ids must be a list"}
-        conn = _get_connector(gns3_ctx)
-        return _batch_lifecycle(project_id, node_ids, "reload", conn, "reloaded")
-    node_id = params.get("node_id")
-    if not node_id:
-        return {"error": "node_id or node_ids is required"}
-    conn = _get_connector(gns3_ctx)
-    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}/reload")
-    return {"message": f"Node {node_id} reloaded", "node_id": node_id}
-
-
 def suspend_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     if not project_id:
@@ -316,7 +298,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     console_type = node.get("console_type", "unknown")
     # Short-lived JWT for the WebSocket URL (10 min)
     username = gns3_ctx.get("jwt_username")
-    ws_token = auth_service.create_access_token(username, expires_in=10) if username else None
+    ws_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
     raw_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
     if ws_token:
         raw_url += f"?token={ws_token}"
@@ -328,7 +310,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "node_name": node.get("name"),
         "console_type": console_type,
         "ws_url": ws_url,
-        "command": f"websocat {ws_url}",
+        "command": f"websocat -t --no-close {ws_url}",
     }
     if console_type in ("vnc",):
         result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
@@ -452,15 +434,6 @@ def suspend_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
     return {"message": "All nodes suspended", "project_id": project_id}
 
 
-def reload_all_nodes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    project_id = params.get("project_id")
-    if not project_id:
-        return {"error": "project_id is required"}
-    conn = _get_connector(gns3_ctx)
-    conn.http_call("post", f"{conn.base_url}/projects/{project_id}/nodes/reload")
-    return {"message": "All nodes reloaded", "project_id": project_id}
-
-
 def duplicate_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     project_id = params.get("project_id")
     node_id = params.get("node_id")
@@ -555,19 +528,6 @@ NODE_TOOLS = [
             "required": ["project_id", "node_id"],
         },
         "handler": stop_node_handler,
-    },
-    {
-        "name": "reload_node",
-        "description": "Reload (restart) a node in a project",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Project UUID"},
-                "node_id": {"type": "string", "description": "Node UUID"},
-            },
-            "required": ["project_id", "node_id"],
-        },
-        "handler": reload_node_handler,
     },
     {
         "name": "suspend_node",

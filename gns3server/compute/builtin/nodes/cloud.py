@@ -82,6 +82,9 @@ class Cloud(BaseNode):
         host_interfaces = []
         network_interfaces = gns3server.utils.interfaces.interfaces()
         for interface in network_interfaces:
+            # Hide GNS3 internal bridges (e.g. EthernetSwitch kernel bridges)
+            if interface["name"].lower().startswith("gns3"):
+                continue
             host_interfaces.append(
                 {
                     "name": interface["name"],
@@ -312,6 +315,7 @@ class Cloud(BaseNode):
         )
 
         await self._ubridge_apply_filters(bridge_name, nio.filters)
+        await self._ubridge_apply_markers(bridge_name, nio)
         if port_info["type"] in ("ethernet", "tap"):
 
             if not self.manager.has_privileged_access(self.ubridge_path):
@@ -452,6 +456,7 @@ class Cloud(BaseNode):
         bridge_name = f"{self._id}-{port_number}"
         if self._ubridge_hypervisor and self._ubridge_hypervisor.is_running():
             await self._ubridge_apply_filters(bridge_name, nio.filters)
+            await self._ubridge_apply_markers(bridge_name, nio)
 
     async def _delete_ubridge_connection(self, port_number):
         """

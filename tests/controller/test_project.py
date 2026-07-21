@@ -82,6 +82,7 @@ async def test_json():
         "drawing_grid_size": 25,
         "supplier": None,
         "variables": None,
+        "marker_definitions": {},
         "created_by": None
     }
 

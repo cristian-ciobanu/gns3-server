@@ -36,6 +36,7 @@ class UDPNIO(BaseModel):
     rport: int = Field(..., gt=0, le=65535, description="Remote port")
     suspend: Optional[bool] = Field(None, description="Suspend the NIO")
     filters: Optional[dict] = Field(None, description="Packet filters")
+    markers: Optional[dict] = Field(None, description="Traffic-insight markers")
 
 
 class EthernetNIOType(str, Enum):

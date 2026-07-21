@@ -24,6 +24,7 @@
 
 ### uBridge Permission
 - **[uBridge Permission Issue](./gns3-ubridge-permission.md)** - Docker containers fail to start due to missing CAP_NET_ADMIN/CAP_NET_RAW capabilities on uBridge
+- **[Docker iptables FORWARD blocks bridge](./docker-iptables-forward-bridge.md)** - Docker sets FORWARD chain to DROP, blocking kernel bridge forwarding; `sudo iptables -P FORWARD ACCEPT` to fix
 
 ### Docker Container Stop Delay
 - **[Docker Container Stop Delay](./docker-container-stop-delay.md)** - Some containers take ~5s to stop because they don't handle SIGTERM (AlpiNet, OstinatoWireshark)

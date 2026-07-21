@@ -88,6 +88,7 @@ class Link:
         self._link_type = "ethernet"
         self._suspended = False
         self._filters = {}
+        self._markers = {}
         self._link_style = {}
         self._wireshark = False
         self._show_filters_icon = True
@@ -98,6 +99,40 @@ class Link:
         Get an array of filters
         """
         return self._filters
+
+    @property
+    def markers(self):
+        """
+        Get the traffic insight markers dict: name → {bpf, tag, enabled}
+        """
+        return self._markers
+
+    async def inherit_marker(self, def_name, marker_def):
+        """
+        Apply a project-level marker definition to this link.
+
+        The marker is stored under ``global-{def_name}`` so it cannot collide
+        with a per-link private marker of the same name.  It carries an
+        ``inherited_from`` back-reference that (a) guards against per-link
+        edits and (b) lets the project sync changes to every copy at once.
+        """
+
+        await self.start_marker(
+            name=f"global-{def_name}",
+            bpf=marker_def["bpf"],
+            tag=marker_def.get("tag"),
+            color=marker_def.get("color"),
+            highlight_duration=marker_def.get("highlight_duration"),
+            inherited_from=def_name,
+        )
+
+    def _persist_markers(self):
+        """
+        Return only the per-link (non-inherited) markers suitable for
+        persistence in a topology dump.  Inherited markers are re-created from
+        ``project._marker_definitions`` on load so they do not need to be saved.
+        """
+        return {k: v for k, v in self._markers.items() if not v.get("inherited_from")}
 
     @property
     def show_filters_icon(self):
@@ -296,6 +331,27 @@ class Link:
         Reset a link
         """
 
+        raise NotImplementedError
+
+    async def start_marker(self, name, bpf, tag=None):
+        """
+        Attach a traffic-insight marker to this link (base — UDPLink overrides).
+        """
+        raise NotImplementedError
+
+    async def stop_marker(self, name):
+        """
+        Remove a traffic-insight marker from this link (base — UDPLink overrides).
+        """
+        raise NotImplementedError
+
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None):
+        """
+        Update an existing marker's BPF, tag, or enabled flag.
+
+        A BPF change is a delete+re-add on the ubridge side so the pcap is
+        flushed and the new filter takes effect.
+        """
         raise NotImplementedError
 
     async def start_capture(self, data_link_type="DLT_EN10MB", capture_file_name=None, wireshark=False, jwt_token=None):
@@ -571,6 +627,7 @@ class Link:
                 "nodes": res,
                 "link_id": self._id,
                 "filters": self._filters,
+                "markers": self._persist_markers(),
                 "link_style": self._link_style,
                 "suspend": self._suspended,
                 "show_filters_icon": getattr(self, '_show_filters_icon', True),
@@ -585,6 +642,7 @@ class Link:
             "capture_compute_id": self.capture_compute_id,
             "link_type": self._link_type,
             "filters": self._filters,
+            "markers": self._markers,
             "suspend": self._suspended,
             "link_style": self._link_style,
             "wireshark": self._wireshark,
