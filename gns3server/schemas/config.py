@@ -71,6 +71,7 @@ class QemuSettings(BaseModel):
     enable_hardware_acceleration: bool = True
     require_hardware_acceleration: bool = False
     allow_unsafe_options: bool = False
+    ovmf_firmware_dir: str = "/usr/share/OVMF"
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 
 

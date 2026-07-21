@@ -35,7 +35,7 @@ import shlex
 import psutil
 
 from pathlib import Path
-from gns3server.utils import parse_version, shlex_quote
+from gns3server.utils import parse_version
 from gns3server.utils.asyncio import subprocess_check_output, cancellable_wait_run_in_executor
 from .qemu_error import QemuError
 from .utils.qcow2 import Qcow2, Qcow2Error
@@ -2293,8 +2293,7 @@ class QemuVM(BaseNode):
             options.extend(["-bios", self._bios_image.replace(",", ",,")])
 
         elif self._uefi:
-            ovmf_firmware_dir = self._manager.config.get_section_config("Qemu").get("ovmf_firmware_dir", "/usr/share/OVMF")
-            system_ovmf_firmware_dir = Path(ovmf_firmware_dir)
+            system_ovmf_firmware_dir = Path(self.manager.config.settings.Qemu.ovmf_firware_dir)
             log.info("Using OVMF firmware directory: {}".format(system_ovmf_firmware_dir))
             old_ovmf_vars_path = os.path.join(self.working_dir, "OVMF_VARS.fd")
             if os.path.exists(old_ovmf_vars_path):
