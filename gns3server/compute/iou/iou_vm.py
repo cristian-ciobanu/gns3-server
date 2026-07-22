@@ -54,6 +54,85 @@ import sys
 log = logging.getLogger(__name__)
 
 
+class IOUL1KeepaliveProtocol(asyncio.DatagramProtocol):
+    """Handle IOU/IOL Layer 1 keepalives for connected interfaces."""
+
+    _header = struct.Struct("!HHBBBB")
+    _message_type = 3
+
+    def __init__(self, vm):
+        self._vm = vm
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    @staticmethod
+    def encode_interface(adapter_number, port_number):
+        """Encode an IOU bay/unit for the L1 keepalive protocol."""
+
+        # IOU stores the zero-based unit in the high nibble and the
+        # zero-based bay in the low nibble.
+        return (port_number << 4) | adapter_number
+
+    @staticmethod
+    def decode_interface(interface):
+        """Decode an L1 keepalive interface into an IOU bay/unit."""
+
+        return interface & 0x0F, interface >> 4
+
+    def datagram_received(self, data, address):
+        if len(data) != self._header.size:
+            log.debug('IOU "%s": ignored malformed L1 keepalive of %d bytes', self._vm.name, len(data))
+            return
+
+        destination, source, destination_interface, source_interface, message_type, channel = self._header.unpack(data)
+        if (
+            destination != self._vm.l1_bridge_id
+            or source != self._vm.application_id
+            or message_type != self._message_type
+            or not self._vm.has_nio_for_iou_interface(source_interface)
+        ):
+            return
+
+        response = self._header.pack(
+            source,
+            destination,
+            source_interface,
+            destination_interface,
+            message_type,
+            channel,
+        )
+        try:
+            self.transport.sendto(response, self._vm.l1_iou_socket_path)
+        except OSError as e:
+            # IOU creates its endpoint during startup and removes it on stop.
+            # Dropping a keepalive during either transition is harmless.
+            log.debug('IOU "%s": could not send an L1 keepalive response: %s', self._vm.name, e)
+
+    def send_keepalives(self):
+        """Tell IOU that every interface with an attached NIO has Layer 1 connectivity."""
+
+        for adapter_number, adapter in enumerate(self._vm.adapters):
+            for port_number, nio in adapter.ports.items():
+                if nio is None:
+                    continue
+                interface = self.encode_interface(adapter_number, port_number)
+                keepalive = self._header.pack(
+                    self._vm.application_id,
+                    self._vm.l1_bridge_id,
+                    interface,
+                    interface,
+                    self._message_type,
+                    0,
+                )
+                try:
+                    self.transport.sendto(keepalive, self._vm.l1_iou_socket_path)
+                except OSError as e:
+                    # The IOU endpoint does not exist until the image has started.
+                    log.debug('IOU "%s": could not send an L1 keepalive: %s', self._vm.name, e)
+
+
 class IOUVM(BaseNode):
     module_name = "iou"
 
@@ -98,6 +177,8 @@ class IOUVM(BaseNode):
         self._lib_base = self.manager.get_images_directory()
         self._loader = None
         self._license_check = True
+        self._l1_keepalive_transport = None
+        self._l1_keepalive_task = None
 
         # IOU settings
         self._ethernet_adapters = []
@@ -110,7 +191,7 @@ class IOUVM(BaseNode):
         self._private_config = ""
         self._ram = 1024  # Megabytes
         self._application_id = application_id
-        self._l1_keepalives = False  # used to overcome the always-up Ethernet interfaces (not supported by all IOSes).
+        self._l1_keepalives = False
 
     def _nvram_changed(self, path):
         """
@@ -637,6 +718,10 @@ class IOUVM(BaseNode):
                 raise IOUError(f"Could not create symbolic link: {e}")
 
             command = await self._build_command()
+            # Only start the responder when the capability probe actually
+            # enabled IOU's L1 protocol on the command line.
+            if "-l" in command:
+                await self._start_l1_keepalive_responder()
             try:
                 if self._loader:
                     log.info(f"Starting IOU: {command} with loader {self._loader}")
@@ -657,8 +742,10 @@ class IOUVM(BaseNode):
                 callback = functools.partial(self._termination_callback, "IOU")
                 gns3server.utils.asyncio.monitor_process(self._iou_process, callback)
             except FileNotFoundError as e:
+                self._stop_l1_keepalive_responder()
                 raise IOUError(f"Could not start IOU: {e}: 32-bit binary support is probably not installed, it is recommended to use a 64-bit image instead")
             except (OSError, subprocess.SubprocessError) as e:
+                self._stop_l1_keepalive_responder()
                 iou_stdout = self.read_iou_stdout()
                 log.error(f"Could not start IOU {self._path}: {e}\n{iou_stdout}")
                 raise IOUError(f"Could not start IOU {self._path}: {e}\n{iou_stdout}")
@@ -760,6 +847,7 @@ class IOUVM(BaseNode):
         """
 
         self._terminate_process_iou()
+        self._stop_l1_keepalive_responder()
         if returncode != 0:
             if returncode == -11:
                 message = 'IOU VM "{}" process has stopped with return code: {} (segfault). This could be an issue with the IOU image, using a different image may fix this.\n{}'.format(
@@ -792,6 +880,7 @@ class IOUVM(BaseNode):
         Stops the IOU process.
         """
 
+        self._stop_l1_keepalive_responder()
         await self._stop_ubridge()
         if self._nvram_watcher:
             self._nvram_watcher.close()
@@ -893,6 +982,83 @@ class IOUVM(BaseNode):
             log.info("IOU {name} [id={id}]: NETMAP file created".format(name=self._name, id=self._id))
         except OSError as e:
             raise IOUError(f"Could not create {netmap_path}: {e}")
+
+    @property
+    def l1_bridge_id(self):
+        return self.application_id + 512
+
+    @property
+    def l1_socket_directory(self):
+        # IOU hard-codes this directory independently from TMPDIR.
+        return os.path.join("/tmp", f"netl1{os.geteuid()}")
+
+    @property
+    def l1_bridge_socket_path(self):
+        return os.path.join(self.l1_socket_directory, f"L1{self.l1_bridge_id}")
+
+    @property
+    def l1_iou_socket_path(self):
+        return os.path.join(self.l1_socket_directory, f"L1{self.application_id}")
+
+    def has_nio_for_iou_interface(self, interface):
+        """Return whether the IOU bay/unit encoded in one byte is connected."""
+
+        adapter_number, port_number = IOUL1KeepaliveProtocol.decode_interface(interface)
+        if adapter_number >= len(self._adapters):
+            return False
+        adapter = self._adapters[adapter_number]
+        return adapter.port_exists(port_number) and adapter.get_nio(port_number) is not None
+
+    async def _start_l1_keepalive_responder(self):
+        """Create the bridge-side UNIX datagram endpoint used by IOU's ``-l`` option."""
+
+        if self._l1_keepalive_transport is not None:
+            return
+
+        socket_directory = self.l1_socket_directory
+        try:
+            os.makedirs(socket_directory, mode=0o755, exist_ok=True)
+            if os.path.islink(socket_directory) or os.stat(socket_directory).st_uid != os.geteuid():
+                raise IOUError(f"Unsafe IOU L1 keepalive directory '{socket_directory}'")
+            if os.path.lexists(self.l1_bridge_socket_path):
+                os.unlink(self.l1_bridge_socket_path)
+            loop = asyncio.get_running_loop()
+            transport, protocol = await loop.create_datagram_endpoint(
+                lambda: IOUL1KeepaliveProtocol(self),
+                local_addr=self.l1_bridge_socket_path,
+                family=socket.AF_UNIX,
+            )
+            self._l1_keepalive_transport = transport
+            self._l1_keepalive_task = asyncio.create_task(self._send_l1_keepalives(protocol))
+            log.info(
+                'IOU "%s" [%s]: L1 keepalive responder listening on %s',
+                self._name,
+                self._id,
+                self.l1_bridge_socket_path,
+            )
+        except (OSError, RuntimeError) as e:
+            self._stop_l1_keepalive_responder()
+            raise IOUError(f"Could not start IOU L1 keepalive responder: {e}")
+
+    async def _send_l1_keepalives(self, protocol):
+        while self._l1_keepalive_transport is not None:
+            protocol.send_keepalives()
+            await asyncio.sleep(1)
+
+    def _stop_l1_keepalive_responder(self):
+        """Stop the L1 endpoint and remove its bridge-side socket."""
+
+        if self._l1_keepalive_task is not None:
+            self._l1_keepalive_task.cancel()
+            self._l1_keepalive_task = None
+        if self._l1_keepalive_transport is not None:
+            self._l1_keepalive_transport.close()
+            self._l1_keepalive_transport = None
+        try:
+            if os.path.lexists(self.l1_bridge_socket_path):
+                os.unlink(self.l1_bridge_socket_path)
+        except OSError as e:
+            log.warning('Could not remove IOU L1 keepalive socket "%s": %s', self.l1_bridge_socket_path, e)
 
     async def _build_command(self):
         """
@@ -1268,8 +1434,9 @@ class IOUVM(BaseNode):
         """
 
         env = os.environ.copy()
-        if "IOURC" not in os.environ:
-            env["IOURC"] = self.iourc_path
+        iourc_path = self.iourc_path
+        if "IOURC" not in os.environ and iourc_path:
+            env["IOURC"] = iourc_path
         try:
             output = await gns3server.utils.asyncio.subprocess_check_output(
                 *self._loader, self._path, "-h", cwd=self.working_dir, env=env, stderr=True
