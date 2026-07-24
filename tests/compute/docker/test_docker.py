@@ -170,6 +170,92 @@ async def test_pull_image():
 
 
 @pytest.mark.asyncio
+async def test_pull_image_skips_image_available_locally():
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", return_value={"Id": "existing"}) as query_mock:
+        with asyncio_patch("gns3server.compute.docker.Docker.http_query") as pull_mock:
+            await Docker.instance().pull_image("ubuntu")
+            query_mock.assert_called_once_with("GET", "images/ubuntu/json")
+            pull_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_force_pull_image():
+
+    response = MagicMock()
+    response.content.read = AsyncioMagicMock(return_value=b"")
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query") as query_mock:
+        with asyncio_patch("gns3server.compute.docker.Docker.http_query", return_value=response) as pull_mock:
+            await Docker.instance().pull_image("ubuntu", force=True)
+            query_mock.assert_not_called()
+            pull_mock.assert_called_with("POST", "images/create", params={"fromImage": "ubuntu"}, timeout=None)
+
+
+@pytest.mark.asyncio
+async def test_pull_image_error():
+
+    class Content:
+
+        def __init__(self):
+            self._chunks = [b'{"error": "image not found"}', b""]
+
+        async def read(self, size):
+            return self._chunks.pop(0)
+
+    response = MagicMock()
+    response.content = Content()
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", side_effect=DockerHttp404Error("404")):
+        with asyncio_patch("gns3server.compute.docker.Docker.http_query", return_value=response):
+            with pytest.raises(DockerError, match="image not found"):
+                await Docker.instance().pull_image("missing")
+            response.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pull_image_rejects_incomplete_response():
+
+    class Content:
+
+        def __init__(self):
+            self._read = False
+
+        async def read(self, size):
+            if self._read:
+                return b""
+            self._read = True
+            return b'{"status": "Pulling"'
+
+    response = MagicMock()
+    response.content = Content()
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", side_effect=DockerHttp404Error("404")):
+        with asyncio_patch("gns3server.compute.docker.Docker.http_query", return_value=response):
+            with pytest.raises(DockerError, match="Invalid response"):
+                await Docker.instance().pull_image("ubuntu")
+            response.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pull_image_propagates_timeout():
+
+    class Content:
+
+        async def read(self, size):
+            raise asyncio.TimeoutError
+
+    response = MagicMock()
+    response.content = Content()
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", side_effect=DockerHttp404Error("404")):
+        with asyncio_patch("gns3server.compute.docker.Docker.http_query", return_value=response):
+            with pytest.raises(DockerError, match="Timeout while pulling"):
+                await Docker.instance().pull_image("ubuntu")
+            response.close.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_docker_check_connection_docker_minimum_version(vm):
 
     response = {
