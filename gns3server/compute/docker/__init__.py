@@ -260,19 +260,21 @@ class Docker(BaseManager):
         return connection
 
     @locking
-    async def pull_image(self, image, progress_callback=None):
+    async def pull_image(self, image, progress_callback=None, force=False):
         """
         Pulls an image from the Docker repository
 
         :params image: Image name
         :params progress_callback: A function that receive a log message about image download progress
+        :params force: Pull the image even if it is already available locally
         """
 
-        try:
-            await self.query("GET", f"images/{image}/json")
-            return  # We already have the image skip the download
-        except DockerHttp404Error:
-            pass
+        if not force:
+            try:
+                await self.query("GET", f"images/{image}/json")
+                return  # We already have the image skip the download
+            except DockerHttp404Error:
+                pass
 
         if progress_callback:
             progress_callback(f"Pulling '{image}' from Docker repository")
@@ -285,29 +287,45 @@ class Docker(BaseManager):
             )
         # The pull api will stream status via an HTTP JSON stream
         content = ""
-        while True:
-            try:
-                chunk = await response.content.read(CHUNK_SIZE)
-            except aiohttp.ServerDisconnectedError:
-                log.error(f"Disconnected from server while pulling Docker image '{image}' from Docker repository")
-                break
-            except asyncio.TimeoutError:
-                log.error("Timeout while pulling Docker image '{}' from Docker repository".format(image))
-                break
-            if not chunk:
-                break
-            content += chunk.decode("utf-8")
+        try:
+            while True:
+                try:
+                    chunk = await response.content.read(CHUNK_SIZE)
+                except aiohttp.ServerDisconnectedError as e:
+                    raise DockerError(
+                        f"Disconnected while pulling Docker image '{image}' from Docker repository"
+                    ) from e
+                except asyncio.TimeoutError as e:
+                    raise DockerError(
+                        f"Timeout while pulling Docker image '{image}' from Docker repository"
+                    ) from e
+                if not chunk:
+                    break
+                content += chunk.decode("utf-8")
 
-            try:
-                while True:
-                    content = content.lstrip(" \r\n\t")
-                    answer, index = json.JSONDecoder().raw_decode(content)
-                    if "progress" in answer and progress_callback:
-                        progress_callback("Pulling image {}:{}: {}".format(image, answer["id"], answer["progress"]))
-                    content = content[index:]
-            except ValueError:  # Partial JSON
-                pass
-        response.close()
+                try:
+                    while True:
+                        content = content.lstrip(" \r\n\t")
+                        answer, index = json.JSONDecoder().raw_decode(content)
+                        if not isinstance(answer, dict):
+                            raise DockerError(f"Invalid response while pulling Docker image '{image}'")
+                        error_detail = answer.get("errorDetail")
+                        error = answer.get("error")
+                        if not error and isinstance(error_detail, dict):
+                            error = error_detail.get("message")
+                        if error:
+                            raise DockerError(error)
+                        if "progress" in answer and progress_callback:
+                            progress_callback("Pulling image {}:{}: {}".format(image, answer["id"], answer["progress"]))
+                        content = content[index:]
+                except ValueError:  # Partial JSON
+                    pass
+
+            if content.strip():
+                raise DockerError(f"Invalid response while pulling Docker image '{image}'")
+        finally:
+            response.close()
+
         if progress_callback:
             progress_callback(f"Success pulling image {image}")
 
