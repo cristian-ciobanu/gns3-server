@@ -660,6 +660,14 @@ async def link_update(
       {"filters": {"delay": [100, 10]}}
       {"filters": {"packet_loss": [5]}}
       {"filters": {"delay": [50, 5], "packet_loss": [2]}}
+
+    To clear all filters: {"filters": {}}
+
+    Filters are applied **bidirectionally** — a packet crossing the link twice
+    (e.g. ping round-trip) is filtered in both directions independently.
+    For example, packet_loss: [50] gives ~75% observed loss (1 - 0.5²), not 50%.
+    ARP frames also pass through filters; at high loss/corrupt rates, pre-set
+    static ARP entries to avoid false "Destination Host Unreachable" errors.
     """
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
@@ -933,7 +941,9 @@ async def link_reset(
     - Force filter state (delay, packet loss, etc.) to restart fresh
     - Recover a stuck or abnormal link state
 
-    Filters are preserved but their internal application state resets.
+    This restarts the filter state machines (e.g. frequency_drop counters)
+    while keeping the filter configuration intact. Filters are preserved but
+    their internal application state resets.
     """
     params = {"project_id": project_id}
     if link_ids:
@@ -1389,7 +1399,13 @@ async def device_show_run(
 
     Use this to inspect device status, view configurations, or verify changes.
     For configuration changes use device_config_send instead.
-    Devices must be started first.
+
+    Prerequisites:
+    - Devices must be started first (use node_start or node_start_all).
+    - Each node must have a device_type:<type> tag set in GNS3
+      (e.g. device_type:cisco_ios_telnet, device_type:gns3_huawei_telnet_ce).
+      Nodes without this tag will fail with "device_type tag not found".
+      Docker/Linux nodes are not supported (use node_console instead).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
