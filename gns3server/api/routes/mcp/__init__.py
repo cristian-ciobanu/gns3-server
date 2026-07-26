@@ -101,6 +101,7 @@ from .links import (
     delete_link_handler, update_link_handler,
     reset_link_handler, start_capture_handler, stop_capture_handler,
     download_capture_file_handler,
+    link_marker_handler, marker_definition_handler,
 )
 from .templates import (
     list_templates_handler, get_template_handler, create_template_handler,
@@ -660,6 +661,14 @@ async def link_update(
       {"filters": {"delay": [100, 10]}}
       {"filters": {"packet_loss": [5]}}
       {"filters": {"delay": [50, 5], "packet_loss": [2]}}
+
+    To clear all filters: {"filters": {}}
+
+    Filters are applied **bidirectionally** — a packet crossing the link twice
+    (e.g. ping round-trip) is filtered in both directions independently.
+    For example, packet_loss: [50] gives ~75% observed loss (1 - 0.5²), not 50%.
+    ARP frames also pass through filters; at high loss/corrupt rates, pre-set
+    static ARP entries to avoid false "Destination Host Unreachable" errors.
     """
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
@@ -933,7 +942,9 @@ async def link_reset(
     - Force filter state (delay, packet loss, etc.) to restart fresh
     - Recover a stuck or abnormal link state
 
-    Filters are preserved but their internal application state resets.
+    This restarts the filter state machines (e.g. frequency_drop counters)
+    while keeping the filter configuration intact. Filters are preserved but
+    their internal application state resets.
     """
     params = {"project_id": project_id}
     if link_ids:
@@ -989,6 +1000,76 @@ async def link_capture_download(
     else:
         params["link_id"] = link_id
     return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, params)
+
+
+# ── Marker (traffic-insight) tools ─────────────────────────────────────
+
+
+@mcp.tool()
+async def link_marker(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+    action: Annotated[str, Field(description="Action: create, update, or delete")],
+    bpf: Annotated[str | None, Field(description="BPF expression, e.g. 'arp', 'icmp', 'tcp port 80' (required for create)")] = None,
+    marker_name: Annotated[str | None, Field(description="Marker name (required for update/delete actions)")] = None,
+    name: Annotated[str | None, Field(description="Custom marker name for create action (auto-generated if omitted)")] = None,
+    tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
+    enabled: Annotated[bool | None, Field(description="Enable or disable the marker (for update action)")] = None,
+    color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
+    highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+) -> list[dict[str, Any]]:
+    """Manage traffic-insight markers on a link.
+
+    A marker highlights packets matching a BPF expression as they cross the link.
+    Set action='create' to add a marker, 'update' to modify it, 'delete' to remove.
+
+    Create requires: project_id, link_id, action='create', bpf
+    Update requires: project_id, link_id, action='update', marker_name, and at least one of (bpf, tag, enabled, color, highlight_duration)
+    Delete requires: project_id, link_id, action='delete', marker_name
+
+    To read current markers, use link_get — the response includes a 'markers' dict.
+
+    NOTE: Markers named 'global-*' are inherited from project-level marker definitions
+    and cannot be modified or deleted via this tool.
+    """
+    params = {"project_id": project_id, "link_id": link_id, "action": action}
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "color", "highlight_duration"):
+        val = locals().get(opt)
+        if val is not None:
+            params[opt] = val
+    return await asyncio.to_thread(_run_handler_sync, link_marker_handler, params)
+
+
+@mcp.tool()
+async def marker_definition(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    action: Annotated[str, Field(description="Action: create, update, delete, or list")],
+    bpf: Annotated[str | None, Field(description="BPF expression, e.g. 'arp', 'ospf', 'tcp port 22' (required for create)")] = None,
+    def_name: Annotated[str | None, Field(description="Definition name (required for update/delete actions)")] = None,
+    name: Annotated[str | None, Field(description="Custom definition name for create action (auto-generated if omitted)")] = None,
+    tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
+    color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
+    highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+) -> list[dict[str, Any]]:
+    """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
+
+    A marker definition is a global BPF rule. On create, it auto-fans out to every
+    link in the project as 'global-{name}'. Updates sync to all inherited copies.
+    On delete, 'global-{name}' is removed from every link.
+
+    Create requires: project_id, action='create', bpf
+    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration)
+    Delete requires: project_id, action='delete', def_name
+    List requires:  project_id, action='list'
+
+    Common BPF examples: 'arp', 'icmp', 'ospf', 'tcp port 22', 'udp port 53'
+    """
+    params = {"project_id": project_id, "action": action}
+    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration"):
+        val = locals().get(opt)
+        if val is not None:
+            params[opt] = val
+    return await asyncio.to_thread(_run_handler_sync, marker_definition_handler, params)
 
 
 # ── Snapshot tools ─────────────────────────────────────────────────────
@@ -1389,7 +1470,13 @@ async def device_show_run(
 
     Use this to inspect device status, view configurations, or verify changes.
     For configuration changes use device_config_send instead.
-    Devices must be started first.
+
+    Prerequisites:
+    - Devices must be started first (use node_start or node_start_all).
+    - Each node must have a device_type:<type> tag set in GNS3
+      (e.g. device_type:cisco_ios_telnet, device_type:gns3_huawei_telnet_ce).
+      Nodes without this tag will fail with "device_type tag not found".
+      Docker/Linux nodes are not supported (use node_console instead).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
