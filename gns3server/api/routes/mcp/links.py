@@ -367,6 +367,112 @@ def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     return result
 
 
+# ── Marker (traffic-insight) handlers ──────────────────────────────────
+
+
+def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    """
+    Manage traffic-insight markers on a specific link.
+
+    Actions:
+      - create: POST /projects/{pid}/links/{lid}/markers
+      - update: PUT  /projects/{pid}/links/{lid}/markers/{name}
+      - delete: DELETE /projects/{pid}/links/{lid}/markers/{name}
+    """
+    project_id = params.get("project_id")
+    link_id = params.get("link_id")
+    action = params.get("action")
+    if not all([project_id, link_id, action]):
+        return {"error": "project_id, link_id and action are required"}
+    if action not in ("create", "update", "delete"):
+        return {"error": f"Unknown action: {action}. Supported: create, update, delete"}
+
+    conn = _get_connector(gns3_ctx)
+    base = f"{conn.base_url}/projects/{project_id}/links/{link_id}/markers"
+
+    if action == "create":
+        bpf = params.get("bpf")
+        if not bpf:
+            return {"error": "bpf is required for create action"}
+        body: dict[str, Any] = {"bpf": bpf}
+        for opt in ("name", "tag", "color", "highlight_duration"):
+            if params.get(opt) is not None:
+                body[opt] = params[opt]
+        return conn.http_call("post", base, json_data=body).json()
+
+    marker_name = params.get("marker_name")
+    if not marker_name:
+        return {"error": "marker_name is required for update/delete actions"}
+
+    url = f"{base}/{marker_name}"
+
+    if action == "update":
+        body = {}
+        for opt in ("bpf", "tag", "enabled", "color", "highlight_duration"):
+            if params.get(opt) is not None:
+                body[opt] = params[opt]
+        if not body:
+            return {"error": "At least one update field is required (bpf, tag, enabled, color, highlight_duration)"}
+        return conn.http_call("put", url, json_data=body).json()
+
+    # action == "delete"
+    conn.http_call("delete", url)
+    return {"message": f"Marker '{marker_name}' deleted from link {link_id}", "link_id": link_id, "marker_name": marker_name}
+
+
+def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
+    """
+    Manage project-level marker definitions (auto-fanout to all links).
+
+    Actions:
+      - create: POST   /projects/{pid}/marker-definitions  → fans out global-{name} to every link
+      - update: PUT    /projects/{pid}/marker-definitions/{name}
+      - delete: DELETE /projects/{pid}/marker-definitions/{name}
+      - list:   GET    /projects/{pid}/marker-definitions
+    """
+    project_id = params.get("project_id")
+    action = params.get("action")
+    if not all([project_id, action]):
+        return {"error": "project_id and action are required"}
+    if action not in ("create", "update", "delete", "list"):
+        return {"error": f"Unknown action: {action}. Supported: create, update, delete, list"}
+
+    conn = _get_connector(gns3_ctx)
+    base = f"{conn.base_url}/projects/{project_id}/marker-definitions"
+
+    if action == "list":
+        return conn.http_call("get", base).json()
+
+    if action == "create":
+        bpf = params.get("bpf")
+        if not bpf:
+            return {"error": "bpf is required for create action"}
+        body: dict[str, Any] = {"bpf": bpf}
+        for opt in ("name", "tag", "color", "highlight_duration"):
+            if params.get(opt) is not None:
+                body[opt] = params[opt]
+        return conn.http_call("post", base, json_data=body).json()
+
+    def_name = params.get("def_name")
+    if not def_name:
+        return {"error": "def_name is required for update/delete actions"}
+
+    url = f"{base}/{def_name}"
+
+    if action == "update":
+        body = {}
+        for opt in ("bpf", "tag", "color", "highlight_duration"):
+            if params.get(opt) is not None:
+                body[opt] = params[opt]
+        if not body:
+            return {"error": "At least one update field is required (bpf, tag, color, highlight_duration)"}
+        return conn.http_call("put", url, json_data=body).json()
+
+    # action == "delete"
+    conn.http_call("delete", url)
+    return {"message": f"Marker definition '{def_name}' deleted", "project_id": project_id, "def_name": def_name}
+
+
 # ── Tool definitions ───────────────────────────────────────────────────────
 
 LINK_TOOLS = [
