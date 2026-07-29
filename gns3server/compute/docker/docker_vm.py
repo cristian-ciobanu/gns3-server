@@ -869,7 +869,7 @@ class DockerVM(BaseNode):
                 await self._fix_permissions()
 
             state = await self._get_container_state()
-            if state != "stopped" or state != "exited":
+            if state != "stopped" and state != "exited":
                 # t=5 number of seconds to wait before killing the container
                 try:
                     await self.manager.query("POST", "containers/{}/stop".format(self._cid), params={"t": 5})

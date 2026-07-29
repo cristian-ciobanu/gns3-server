@@ -655,6 +655,19 @@ async def test_delete(project):
     assert not os.path.exists(project.path)
 
 
+async def test_delete_does_not_start_nodes(project):
+    """
+    Deleting a project must not start its nodes, even when auto_start is enabled.
+    """
+
+    project.auto_start = True
+    project.dump()
+    await project.close()
+    project.start_all = AsyncioMagicMock()
+    await project.delete()
+    assert not project.start_all.called
+
+
 async def test_dump(projects_dir):
 
     directory = projects_dir
