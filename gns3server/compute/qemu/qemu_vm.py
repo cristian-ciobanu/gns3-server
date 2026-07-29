@@ -2107,7 +2107,7 @@ class QemuVM(BaseNode):
             options.extend(["-drive", "if=pflash,format=raw,file={}".format(ovmf_vars_node_path)])
 
             # edk2 firmware requires a Random Number Generator (RNG) device in order to turn network adapters on
-            options.extend(["-object", "rng-random,filename=/dev/urandom,id=rng0 "])
+            options.extend(["-object", "rng-random,filename=/dev/urandom,id=rng0"])
             options.extend(["-device", "virtio-rng-pci,rng=rng0"])
         return options
 
