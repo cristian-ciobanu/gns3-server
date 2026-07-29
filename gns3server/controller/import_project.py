@@ -169,7 +169,11 @@ async def import_project(
 
 def _create_symbolic_links(zip_file, path):
     """
-    Materialise symlink entries, refusing any target that escapes `path`.
+    Manually create symbolic links (if any) because ZipFile does not support it.
+    Refuse any target that escapes `path`.
+
+    :param zip_file: ZipFile instance
+    :param path: project location
     """
 
     path_root = os.path.realpath(path) + os.sep
