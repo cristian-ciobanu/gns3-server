@@ -166,24 +166,48 @@ async def import_project(
     project = await controller.load_project(dot_gns3_path, load=False)
     return project
 
+
 def _create_symbolic_links(zip_file, path):
     """
-    Manually create symbolic links (if any) because ZipFile does not support it.
-
-    :param zip_file: ZipFile instance
-    :param path: project location
+    Materialise symlink entries, refusing any target that escapes `path`.
     """
 
+    path_root = os.path.realpath(path) + os.sep
     for zip_info in zip_file.infolist():
-        if stat.S_ISLNK(zip_info.external_attr >> 16):
-            symlink_target = zip_file.read(zip_info.filename).decode()
-            symlink_path = os.path.join(path, zip_info.filename)
-            try:
-                # remove the regular file and replace it by a symbolic link
-                os.remove(symlink_path)
-                os.symlink(symlink_target, symlink_path)
-            except OSError as e:
-                raise aiohttp.web.HTTPConflict(text=f"Cannot create symbolic link: {e}")
+        if not stat.S_ISLNK(zip_info.external_attr >> 16):
+            continue
+        symlink_target = zip_file.read(zip_info.filename).decode()
+        symlink_path = os.path.join(path, zip_info.filename)
+
+        # 1. Reject absolute targets outright.
+        if os.path.isabs(symlink_target):
+            raise aiohttp.web.HTTPConflict(
+                text=f"Symlink {zip_info.filename!r} has absolute target {symlink_target!r}, refusing"
+            )
+
+        # 2. Reject paths where the entry name itself escapes (defence in depth;
+        #    extractall normally would already have caught this).
+        member_abs = os.path.realpath(symlink_path)
+        if not (member_abs + os.sep).startswith(path_root) and member_abs + os.sep != path_root:
+            raise aiohttp.web.HTTPConflict(
+                text=f"Symlink entry {zip_info.filename!r} escapes project dir, refusing"
+            )
+
+        # 3. Resolve the symlink target relative to the entry's own parent
+        #    directory and verify the resolved real path stays inside `path`.
+        link_dir = os.path.realpath(os.path.dirname(symlink_path))
+        resolved_target = os.path.realpath(os.path.join(link_dir, symlink_target))
+        if not (resolved_target + os.sep).startswith(path_root) and resolved_target + os.sep != path_root:
+            raise aiohttp.web.HTTPConflict(
+                text=f"Symlink {zip_info.filename!r} -> {symlink_target!r} escapes project dir, refusing"
+            )
+
+        try:
+            os.remove(symlink_path)
+            os.symlink(symlink_target, symlink_path)
+        except OSError as e:
+            raise aiohttp.web.HTTPConflict(text=f"Cannot create symbolic link: {e}")
+
 
 def regenerate_topology_ids(topology, new_project_path, reset_mac_addresses=False):
     """
