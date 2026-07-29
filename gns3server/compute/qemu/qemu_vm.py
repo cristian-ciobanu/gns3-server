@@ -2480,9 +2480,6 @@ class QemuVM(BaseNode):
             elif sys.platform.startswith("win") or sys.platform.startswith("darwin"):
                 command.extend(["-enable-hax"])
         command.extend(["-boot", "order={}".format(self._boot_priority)])
-        # network options must be first to have predictable NIC numbering, see https://github.com/GNS3/gns3-server/issues/2838
-        command.extend((await self._network_options()))
-        command.extend(self._bios_option())
         command.extend(self._cdrom_option())
         command.extend((await self._disk_options()))
         command.extend(self._linux_boot_options())
@@ -2499,6 +2496,9 @@ class QemuVM(BaseNode):
         elif self._console_type != "none":
             raise QemuError("Console type {} is unknown".format(self._console_type))
         command.extend(self._monitor_options())
+        command.extend((await self._network_options()))
+        # bios options must be last to have predictable NIC numbering, see https://github.com/GNS3/gns3-server/issues/2838
+        command.extend(self._bios_option())
         if self.on_close != "save_vm_state":
             await self._clear_save_vm_stated()
         else:
