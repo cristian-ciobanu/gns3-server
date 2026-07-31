@@ -20,9 +20,10 @@ Represents a uBridge hypervisor and starts/stops the associated uBridge process.
 
 import sys
 import os
+import socket
 import subprocess
 import asyncio
-import socket
+import tempfile
 import re
 
 from gns3server.utils import parse_version
@@ -44,17 +45,36 @@ class Hypervisor(UBridgeHypervisor):
     :param project: Project instance
     :param path: path to uBridge executable
     :param working_dir: working directory
-    :param host: host/address for this hypervisor
-    :param port: port for this hypervisor
+    :param transport: control channel transport — "unix" (-U) or "tcp" (-H)
+    :param host: host/address for the TCP transport (unused for "unix")
     """
 
-    _instance_count = 1
+    _instance_count = 0
 
-    def __init__(self, project, path, working_dir, host, port=None):
+    def __init__(self, project, path, working_dir, transport, host=None):
 
-        if port is None:
+        self._project = project
+        self._path = path
+        self._working_dir = working_dir
+
+        if transport == "unix":
+            # AF_UNIX control socket (-U). sun_path is capped at 107 bytes, so
+            # keep it under a private runtime dir — never under the project tree
+            # (per-node UUIDs would overflow it).
+            Hypervisor._instance_count += 1
+            runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+            socket_dir = os.path.join(runtime_dir, "gns3")
             try:
-                port = None
+                os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+                os.chmod(socket_dir, 0o700)
+            except OSError as e:
+                raise UbridgeError(f"Could not create uBridge socket directory {socket_dir}: {e}")
+            socket_path = os.path.join(socket_dir, f"ubridge-{Hypervisor._instance_count}.sock")
+            super().__init__(socket_path=socket_path)
+        else:
+            # TCP control channel (-H): let the OS find an unused local port.
+            port = None
+            try:
                 info = socket.getaddrinfo(host, 0, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
                 if not info:
                     raise UbridgeError(f"getaddrinfo returns an empty list on {host}")
@@ -68,11 +88,8 @@ class Hypervisor(UBridgeHypervisor):
                         break
             except OSError as e:
                 raise UbridgeError(f"Could not find free port for the uBridge hypervisor: {e}")
+            super().__init__(host=host, port=port)
 
-        super().__init__(host, port)
-        self._project = project
-        self._path = path
-        self._working_dir = working_dir
         self._command = []
         self._process = None
         self._stdout_file = ""
@@ -214,6 +231,16 @@ class Hypervisor(UBridgeHypervisor):
                 os.remove(self._stdout_file)
             except OSError as e:
                 log.warning(f"could not delete temporary uBridge log file: {e}")
+
+        # ubridge unlinks its AF_UNIX control socket on a clean exit; for the
+        # unix transport remove it here too so a killed process leaves no stale
+        # socket behind. The TCP transport has no socket_path.
+        if self._socket_path:
+            try:
+                os.unlink(self._socket_path)
+            except OSError:
+                pass
+
         self._process = None
         self._started = False
 
@@ -250,7 +277,10 @@ class Hypervisor(UBridgeHypervisor):
         """
 
         command = [self._path]
-        command.extend(["-H", f"{self._host}:{self._port}"])
+        if self._socket_path:
+            command.extend(["-U", self._socket_path])
+        else:
+            command.extend(["-H", f"{self._host}:{self._port}"])
         if log.getEffectiveLevel() == logging.DEBUG:
             command.extend(["-d", "1"])
         return command

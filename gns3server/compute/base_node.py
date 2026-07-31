@@ -926,13 +926,16 @@ class BaseNode:
             raise NodeError("uBridge requires root access or the capability to interact with network adapters")
 
         server_host = self._manager.config.settings.Server.host
+        transport = self._manager.config.settings.Server.ubridge_control_transport
         if not self.ubridge:
-            self._ubridge_hypervisor = Hypervisor(self._project, self.ubridge_path, self.working_dir, server_host)
-        log.info(f"Starting new uBridge hypervisor {self._ubridge_hypervisor.host}:{self._ubridge_hypervisor.port}")
+            self._ubridge_hypervisor = Hypervisor(
+                self._project, self.ubridge_path, self.working_dir, transport, server_host
+            )
+        log.info(f"Starting new uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
         await self._ubridge_hypervisor.start()
         if self._ubridge_hypervisor:
             log.info(
-                f"Hypervisor {self._ubridge_hypervisor.host}:{self._ubridge_hypervisor.port} has successfully started"
+                f"Hypervisor at {self._ubridge_hypervisor.endpoint} has successfully started"
             )
             await self._ubridge_hypervisor.connect()
             # Tell this uBridge where to send MARK signals and which node id to
@@ -981,7 +984,7 @@ class BaseNode:
         """
 
         if self._ubridge_hypervisor and self._ubridge_hypervisor.is_running():
-            log.info(f"Stopping uBridge hypervisor {self._ubridge_hypervisor.host}:{self._ubridge_hypervisor.port}")
+            log.info(f"Stopping uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
             await self._ubridge_hypervisor.stop()
         self._ubridge_hypervisor = None
 
