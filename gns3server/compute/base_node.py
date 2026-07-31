@@ -929,7 +929,7 @@ class BaseNode:
         transport = self._manager.config.settings.Server.ubridge_control_transport
         if not self.ubridge:
             self._ubridge_hypervisor = Hypervisor(
-                self._project, self.ubridge_path, self.working_dir, transport, server_host
+                self._project, self.ubridge_path, self.working_dir, transport, server_host, self.id
             )
         log.info(f"Starting new uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
         await self._ubridge_hypervisor.start()

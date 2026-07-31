@@ -47,21 +47,27 @@ class Hypervisor(UBridgeHypervisor):
     :param working_dir: working directory
     :param transport: control channel transport — "unix" (-U) or "tcp" (-H)
     :param host: host/address for the TCP transport (unused for "unix")
+    :param node_id: node id used to name the AF_UNIX socket (unix transport)
     """
 
     _instance_count = 0
 
-    def __init__(self, project, path, working_dir, transport, host=None):
+    def __init__(self, project, path, working_dir, transport, host=None, node_id=None):
 
         self._project = project
         self._path = path
         self._working_dir = working_dir
 
         if transport == "unix":
-            # AF_UNIX control socket (-U). sun_path is capped at 107 bytes, so
-            # keep it under a private runtime dir — never under the project tree
-            # (per-node UUIDs would overflow it).
-            Hypervisor._instance_count += 1
+            # AF_UNIX control socket (-U). Name it after the node so the socket
+            # is self-describing (one ubridge per node => node_id is unique).
+            # sun_path is capped at 107 bytes; a single UUID fits comfortably
+            # (~69 bytes with this prefix), so no project_id is needed.
+            if node_id:
+                socket_name = f"ubridge-{node_id}.sock"
+            else:
+                Hypervisor._instance_count += 1
+                socket_name = f"ubridge-{Hypervisor._instance_count}.sock"
             runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
             socket_dir = os.path.join(runtime_dir, "gns3")
             try:
@@ -69,7 +75,7 @@ class Hypervisor(UBridgeHypervisor):
                 os.chmod(socket_dir, 0o700)
             except OSError as e:
                 raise UbridgeError(f"Could not create uBridge socket directory {socket_dir}: {e}")
-            socket_path = os.path.join(socket_dir, f"ubridge-{Hypervisor._instance_count}.sock")
+            socket_path = os.path.join(socket_dir, socket_name)
             super().__init__(socket_path=socket_path)
         else:
             # TCP control channel (-H): let the OS find an unused local port.
