@@ -186,6 +186,17 @@ class Hypervisor(UBridgeHypervisor):
                 )
 
             log.info(f"ubridge started PID={self._process.pid}")
+            # An unsupported flag (e.g. -U on an old ubridge build) makes ubridge exit
+            # immediately with a non-zero code. Detect that here and surface the real
+            # reason from ubridge.log instead of waiting for connect() to time out with
+            # a confusing "couldn't connect" error.
+            await asyncio.sleep(0.3)
+            if self._process.returncode is not None:
+                raise UbridgeError(
+                    f"uBridge exited immediately (code {self._process.returncode}); if "
+                    f"ubridge_control_transport is 'unix', the installed ubridge may not "
+                    f"support -U.\n{self.read_stdout()}"
+                )
             # recv: Bad address is received by uBridge when a docker image stops by itself
             # see https://github.com/GNS3/gns3-gui/issues/2957
             # monitor_process(self._process, self._termination_callback)
