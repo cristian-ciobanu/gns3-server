@@ -1308,6 +1308,9 @@ class IOUVM(BaseNode):
             # controller can tell their signals apart (contract §3.2).
             if link_id:
                 cmd += f" link {link_id}"
+            direction = spec.get("direction")
+            if direction is not None:
+                cmd += f" dir {direction}"
             cmd += ' pcap "{path}"'.format(path=pcap_path)
             try:
                 await self._ubridge_send(cmd)

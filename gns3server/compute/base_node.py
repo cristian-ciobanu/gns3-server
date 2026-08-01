@@ -1084,7 +1084,7 @@ class BaseNode:
                 )
                 i += 1
 
-    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None, link_id=None):
+    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None, link_id=None, direction=None):
         """
         Attach a `mark` packet filter to a uBridge bridge for traffic insight.
 
@@ -1120,6 +1120,8 @@ class BaseNode:
         # so the link id is the only way to tell signals — and pcap files — apart.
         if link_id:
             cmd += f" link {link_id}"
+        if direction is not None:
+            cmd += f" dir {direction}"
         cmd += ' pcap "{path}"'.format(path=pcap_path)
         # Let BPF compile errors propagate — the marker is the user's intent, so a
         # bad expression must surface instead of being silently dropped.
@@ -1149,7 +1151,8 @@ class BaseNode:
                 markers_dir, f"{self._id}_{link_id}_{name}.pcap"
             )
             try:
-                await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id)
+                await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id,
+                                                     direction=spec.get("direction"))
             except UbridgeError as e:
                 # Swallow BPF compile errors (warn + skip) so a single bad
                 # expression can't break link creation / node restart — mirrors

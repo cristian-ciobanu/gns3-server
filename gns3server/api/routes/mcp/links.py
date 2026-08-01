@@ -395,7 +395,7 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "color", "highlight_duration"):
+        for opt in ("name", "tag", "direction", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         return conn.http_call("post", base, json_data=body).json()
@@ -408,7 +408,7 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
 
     if action == "update":
         body = {}
-        for opt in ("bpf", "tag", "enabled", "color", "highlight_duration"):
+        for opt in ("bpf", "tag", "direction", "enabled", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         if not body:
@@ -448,7 +448,7 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "color", "highlight_duration"):
+        for opt in ("name", "tag", "direction", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         return conn.http_call("post", base, json_data=body).json()
@@ -461,7 +461,7 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
 
     if action == "update":
         body = {}
-        for opt in ("bpf", "tag", "color", "highlight_duration"):
+        for opt in ("bpf", "tag", "direction", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         if not body:

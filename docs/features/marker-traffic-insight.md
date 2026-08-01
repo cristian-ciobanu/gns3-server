@@ -100,6 +100,31 @@ pcap file, and its own `link=`. The shared bridge name is irrelevant to attribut
 capable node types (`qemu`, `docker`, `vpcs`, `cloud`) already use one bridge per link; `link`
 applies uniformly to all of them.
 
+## Direction
+
+A `MARK` signal optionally carries `dir=<tx|rx>` — the matched packet's travel direction
+**relative to the capture node** (the `node=<id>` in the same signal, i.e. the node whose
+uBridge hosts the marker):
+
+| `dir` | Ingress NIO | Meaning |
+|-------|-------------|---------|
+| `tx`  | device side (`source_nio` on a generic bridge; the IOL instance on an IOU `IOL-BRIDGE`) | capture node is **sending** |
+| `rx`  | link side (`destination_nio` on a generic bridge; the NIO side on an IOU `IOL-BRIDGE`) | capture node is **receiving** |
+
+A marker is single-sided: only the chosen capture node's uBridge installs the `mark` filter,
+yet both directions of the link transit that one bridge (it carries exactly two NIOs — the
+device side and the link side), so that single uBridge observes and classifies both
+directions. The `marker.match` event forwards `dir` through unchanged; the Web UI combines it
+with the link's two endpoints and the capture `node_id` to draw an arrow:
+
+- `dir=tx` → `capture_node → far_node`
+- `dir=rx` → `far_node → capture_node`
+- `dir` absent (older uBridge) → undirected highlight (current behaviour)
+
+Because the listener ignores unknown keys, `dir` is **additive**: an older server silently
+drops it and an older uBridge simply omits it — either way the system falls back to
+undirected rendering with no error.
+
 ## API Endpoints
 
 All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`). The
@@ -217,10 +242,11 @@ extra request.
 | Event | Payload | Delivered to |
 |-------|---------|--------------|
 | `link.updated` | Link object (its `markers` field is the source of truth) | Project notification ws |
-| `marker.match` | `project_id`, `node_id`, `link_id`, `filter`, `tag`, `ts`, `len` | Project notification ws only |
+| `marker.match` | `project_id`, `node_id`, `link_id`, `filter`, `tag`, `ts`, `len`, `dir` | Project notification ws only |
 
 The `marker.match` `link_id` is taken from the signal's `link=` field (authoritative); see
-[Per-link attribution](#per-link-attribution).
+[Per-link attribution](#per-link-attribution). The `dir` field is the matched packet's travel
+direction relative to the capture node; see [Direction](#direction).
 
 ## Error Responses
 

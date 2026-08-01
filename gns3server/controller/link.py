@@ -121,6 +121,7 @@ class Link:
             name=f"global-{def_name}",
             bpf=marker_def["bpf"],
             tag=marker_def.get("tag"),
+            direction=marker_def.get("direction"),
             color=marker_def.get("color"),
             highlight_duration=marker_def.get("highlight_duration"),
             inherited_from=def_name,
@@ -333,7 +334,7 @@ class Link:
 
         raise NotImplementedError
 
-    async def start_marker(self, name, bpf, tag=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None):
         """
         Attach a traffic-insight marker to this link (base — UDPLink overrides).
         """
@@ -345,7 +346,7 @@ class Link:
         """
         raise NotImplementedError
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=None):
         """
         Update an existing marker's BPF, tag, or enabled flag.
 

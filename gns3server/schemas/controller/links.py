@@ -175,6 +175,11 @@ class MarkerCreate(BaseModel):
         None,
         description="Whether the marker is active. Defaults to true on creation.",
     )
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only. Omitted or null = both directions.",
+    )
 
 
 class MarkerDefinitionCreate(BaseModel):
@@ -206,6 +211,11 @@ class MarkerDefinitionCreate(BaseModel):
             "after a match. Omitted = use the UI default. Pure render hint — "
             "stored with the definition, never sent to uBridge."
         ),
+    )
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only. Omitted or null = both directions.",
     )
 
 

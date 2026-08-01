@@ -930,7 +930,7 @@ class Project:
         """
         return self._marker_definitions
 
-    async def create_marker_definition(self, name, bpf, tag=None, color=None, highlight_duration=None):
+    async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None):
         """
         Create a project-level marker definition and fan out to every existing
         link that has a capable node.  Links without a capable node are silently
@@ -942,12 +942,12 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
-        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "color": color, "highlight_duration": highlight_duration}
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration}
         await self._apply_def_to_all_links(name)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
-    async def update_marker_definition(self, name, bpf=None, tag=None, color=None, highlight_duration=None):
+    async def update_marker_definition(self, name, bpf=None, tag=None, direction=None, color=None, highlight_duration=None):
         """
         Update a marker definition and sync every inherited copy on every link.
         """
@@ -966,13 +966,15 @@ class Project:
             d["color"] = color
         if highlight_duration is not None:
             d["highlight_duration"] = highlight_duration
+        if direction is not None:
+            d["direction"] = direction
 
         # Sync: update every inherited copy across all links.
         for link in list(self._links.values()):
             marker_name = f"global-{name}"
             if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
                 await link.update_marker(
-                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color"),
+                    marker_name, bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"), color=d.get("color"),
                     highlight_duration=d.get("highlight_duration"), inherited=True
                 )
         self.dump()

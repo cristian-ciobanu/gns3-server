@@ -465,6 +465,7 @@ async def create_marker(
         name=name,
         bpf=marker_data.bpf,
         tag=marker_data.tag,
+        direction=marker_data.direction,
         color=marker_data.color,
         highlight_duration=marker_data.highlight_duration,
     )
@@ -508,6 +509,7 @@ async def update_marker(
         name=marker_name,
         bpf=marker_data.bpf if marker_data.bpf else None,
         tag=marker_data.tag,
+        direction=marker_data.direction,
         color=marker_data.color,
         enabled=marker_data.enabled,
         highlight_duration=marker_data.highlight_duration,

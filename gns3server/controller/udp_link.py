@@ -62,7 +62,7 @@ class UDPLink(Link):
         marker only rides the NIO of the node whose uBridge will host it.
         """
         return {
-            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id}
+            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id, "direction": m.get("direction")}
             for name, m in self._markers.items()
             if m.get("enabled", True) and m.get("capture_node_id") == node.id
         }
@@ -322,7 +322,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, color=None, highlight_duration=None, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -358,6 +358,7 @@ class UDPLink(Link):
             "color": color,
             "highlight_duration": highlight_duration,
             "capture_node_id": marker_side["node"].id,
+            "direction": direction,
         }
         if inherited_from:
             marker_entry["inherited_from"] = inherited_from
@@ -396,7 +397,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None, highlight_duration=None, inherited=False):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=None, color=None, highlight_duration=None, inherited=False):
         """
         Update an existing marker's BPF/tag/enabled/color. Any change pushes via
         ``self.update()``; uBridge picks up the new params on the next NIO
@@ -436,6 +437,8 @@ class UDPLink(Link):
             marker_info["color"] = color
         if highlight_duration is not None:
             marker_info["highlight_duration"] = highlight_duration
+        if direction is not None:
+            marker_info["direction"] = direction
 
         if self._created:
             await self.update()

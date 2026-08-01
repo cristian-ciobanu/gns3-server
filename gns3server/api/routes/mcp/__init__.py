@@ -1015,6 +1015,7 @@ async def link_marker(
     name: Annotated[str | None, Field(description="Custom marker name for create action (auto-generated if omitted)")] = None,
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     enabled: Annotated[bool | None, Field(description="Enable or disable the marker (for update action)")] = None,
+    direction: Annotated[str | None, Field(description="Direction filter: 'tx' for capture node sending only, 'rx' for capture node receiving only (omit for both)")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
 ) -> list[dict[str, Any]]:
@@ -1033,7 +1034,7 @@ async def link_marker(
     and cannot be modified or deleted via this tool.
     """
     params = {"project_id": project_id, "link_id": link_id, "action": action}
-    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "color", "highlight_duration"):
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "color", "highlight_duration"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val
@@ -1050,6 +1051,7 @@ async def marker_definition(
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+    direction: Annotated[str | None, Field(description="Direction filter: 'tx' for capture node sending only, 'rx' for capture node receiving only (omit for both)")] = None,
 ) -> list[dict[str, Any]]:
     """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
 
@@ -1065,7 +1067,7 @@ async def marker_definition(
     Common BPF examples: 'arp', 'icmp', 'ospf', 'tcp port 22', 'udp port 53'
     """
     params = {"project_id": project_id, "action": action}
-    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration"):
+    for opt in ("bpf", "def_name", "name", "tag", "direction", "color", "highlight_duration"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val

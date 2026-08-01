@@ -124,6 +124,8 @@ class TestMarkerListener:
         assert ev["tag"] == "7"
         assert ev["ts"] == pytest.approx(1700000000.123456)
         assert ev["len"] == 98
+        # No dir= in the signal (legacy uBridge) → undirected.
+        assert ev["dir"] is None
 
     def test_unknown_node_dropped(self):
         fmgr = FakeMarkerManager()
@@ -182,6 +184,34 @@ class TestMarkerListener:
         lis.connection_made(None)
         lis.datagram_received(b"MARK 3.0 node=n filter=f link=- tag=1 len=42\n", None)
         assert fmgr.events[0][1]["link_id"] == "registry-link"
+
+    def test_dir_tx_passthrough(self):
+        # dir=tx = capture node sending (matched packet ingressed the device-side NIO).
+        fmgr = FakeMarkerManager()
+        fmgr.register("p", "n", "f", "l", tag=1)
+        lis = MarkerListener(fmgr)
+        lis.connection_made(None)
+        lis.datagram_received(b"MARK 1.0 node=n filter=f tag=1 len=10 dir=tx\n", None)
+        assert fmgr.events[0][1]["dir"] == "tx"
+
+    def test_dir_rx_passthrough(self):
+        # dir=rx = capture node receiving (matched packet ingressed the link-side NIO).
+        fmgr = FakeMarkerManager()
+        fmgr.register("p", "n", "f", "l", tag=1)
+        lis = MarkerListener(fmgr)
+        lis.connection_made(None)
+        lis.datagram_received(b"MARK 1.0 node=n filter=f tag=1 len=10 dir=rx\n", None)
+        assert fmgr.events[0][1]["dir"] == "rx"
+
+    def test_dir_absent_is_none(self):
+        # Older uBridge builds omit dir; the event then carries None so the UI
+        # falls back to undirected rendering.
+        fmgr = FakeMarkerManager()
+        fmgr.register("p", "n", "f", "l", tag=1)
+        lis = MarkerListener(fmgr)
+        lis.connection_made(None)
+        lis.datagram_received(b"MARK 1.0 node=n filter=f tag=1 len=10\n", None)
+        assert fmgr.events[0][1]["dir"] is None
 
     def test_exception_does_not_kill_listener(self):
         fmgr = FakeMarkerManager()

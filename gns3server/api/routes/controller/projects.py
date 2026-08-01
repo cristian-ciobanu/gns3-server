@@ -267,6 +267,7 @@ async def create_marker_definition(
         name=name,
         bpf=def_data.bpf,
         tag=def_data.tag,
+        direction=def_data.direction,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
     )
@@ -292,6 +293,7 @@ async def update_marker_definition(
         name=def_name,
         bpf=def_data.bpf if def_data.bpf else None,
         tag=def_data.tag,
+        direction=def_data.direction,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
     )

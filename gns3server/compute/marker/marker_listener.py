@@ -28,9 +28,18 @@ class MarkerListener(asyncio.DatagramProtocol):
 
     Signal format (one datagram per match, ASCII)::
 
-        MARK <sec.usec> node=<id> filter=<name> tag=<tag> len=<n>\\n
+        MARK <sec.usec> node=<id> filter=<name> tag=<tag> len=<n> [dir=<tx|rx>]\\n
 
-    The signal carries metadata only (no packet bytes). The compute-side
+    The signal carries metadata only (no packet bytes). ``dir`` is optional and
+    additive: uBridge stamps it from the ingress NIO of the matched packet to
+    indicate travel direction relative to the capture node (the ``node=<id>``
+    above) — ``tx`` = the capture node is sending (ingressed on the device-side
+    NIO), ``rx`` = it is receiving (ingressed on the link-side NIO). Older
+    uBridge builds omit it, so the listener leaves ``dir`` unset and consumers
+    fall back to undirected rendering. Unknown keys are always ignored, so the
+    field ships safely with no version coupling.
+
+    The compute-side
     :class:`~gns3server.compute.marker.marker_manager.MarkerManager` registry
     resolves ``(node_id, filter_name)`` to ``(project_id, link_id, tag)`` so the
     event can be emitted on the right project-scoped notification stream.
@@ -82,6 +91,11 @@ class MarkerListener(asyncio.DatagramProtocol):
         link = kv.get("link")
         tag = kv.get("tag")
         length = kv.get("len")
+        # Travel direction relative to the capture node (the node=<id> above):
+        # "tx" = capture node is sending (matched packet ingressed on the
+        # device-side NIO), "rx" = it is receiving (link-side NIO). Older
+        # uBridge builds omit dir; None here lets consumers render undirected.
+        direction = kv.get("dir")
 
         project_id, link_id, registered_tag = self._manager.lookup(node_id, filter_name)
         if project_id is None:
@@ -105,5 +119,8 @@ class MarkerListener(asyncio.DatagramProtocol):
             "tag": tag if tag and tag != "-" else registered_tag,
             "ts": ts,
             "len": int(length) if length and length.isdigit() else 0,
+            # Travel direction relative to the capture node (node_id above);
+            # None when the signal carries none (older uBridge) — undirected.
+            "dir": direction,
         }
         self._manager.emit_match(project_id, event)
