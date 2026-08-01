@@ -310,6 +310,31 @@ class UDPLink(Link):
             "traffic insight"
         )
 
+    def _node_by_id(self, node_id):
+        """
+        Resolve a caller-chosen capture node by id, validating it is an
+        endpoint of this link and marker-capable. Used when the caller
+        (REST/MCP) explicitly pins the observer side instead of letting
+        ``_choose_marker_side`` auto-pick.
+
+        :param node_id: node id (UUID or str) the caller requested
+        :returns: a ``self._nodes`` entry (node/adapter_number/port_number)
+        """
+
+        target = str(node_id)
+        for node in self._nodes:
+            if str(node["node"].id) != target:
+                continue
+            if node["node"].node_type not in _MARKER_CAPABLE_TYPES:
+                raise ControllerError(
+                    f"Node {node_id} ({node['node'].node_type}) cannot host a "
+                    f"marker — no uBridge bridge to attach the filter to"
+                )
+            return node
+        raise ControllerNotFoundError(
+            f"Node {node_id} is not an endpoint of link {self._id}"
+        )
+
     async def node_updated(self, node):
         """
         Called when a node member of the link is updated
@@ -322,7 +347,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, color=None, highlight_duration=None, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -335,6 +360,11 @@ class UDPLink(Link):
         :param name: stable filter name — echoed in MARK signals + pcap identity
         :param bpf: libpcap BPF expression
         :param tag: optional correlation id
+        :param capture_node_id: optional explicit observer node. When set the
+            marker is pinned to that endpoint's uBridge (and ``direction`` is
+            interpreted from its perspective); validated by ``_node_by_id``.
+            Omitted = auto-pick via ``_choose_marker_side``. Ignored for
+            inherited markers (project defs are link-agnostic → always auto).
         :param color: optional hex color for the Web UI (e.g. '#ff5722'); stored
             with the link and persisted in the topology, never sent to uBridge
         :param highlight_duration: optional UI-only hint (milliseconds) for how
@@ -350,7 +380,10 @@ class UDPLink(Link):
         if not result.get("valid"):
             raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
-        marker_side = self._choose_marker_side()
+        if capture_node_id and not inherited_from:
+            marker_side = self._node_by_id(capture_node_id)
+        else:
+            marker_side = self._choose_marker_side()
         marker_entry = {
             "bpf": bpf,
             "tag": tag,

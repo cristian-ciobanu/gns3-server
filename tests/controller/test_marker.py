@@ -99,6 +99,40 @@ async def test_start_marker_stores_entry(project):
 
 
 @pytest.mark.asyncio
+async def test_start_marker_pins_capture_node(project):
+    # Auto-pick would choose node1 (first endpoint); pin to node2 explicitly.
+    with _valid_bpf():
+        link = await _make_link(project)
+        chosen = link._nodes[1]["node"].id
+        auto = link._nodes[0]["node"].id
+        assert chosen != auto  # sanity: the pin must actually mean something
+        await link.start_marker("icmp", "icmp", capture_node_id=chosen)
+
+    assert link.markers["icmp"]["capture_node_id"] == chosen
+
+
+@pytest.mark.asyncio
+async def test_start_marker_rejects_non_endpoint_capture_node(project):
+
+    with _valid_bpf():
+        link = await _make_link(project)
+        with pytest.raises(ControllerNotFoundError):
+            await link.start_marker("icmp", "icmp", capture_node_id="11111111-2222-3333-4444-555555555555")
+
+
+@pytest.mark.asyncio
+async def test_start_marker_capture_node_ignored_for_inherited(project):
+    # Definitions are link-agnostic: an inherited marker must auto-pick even
+    # if a capture_node_id leaks through, never trusting the caller's pin.
+    with _valid_bpf():
+        link = await _make_link(project)
+        leaked = link._nodes[1]["node"].id
+        await link.start_marker("m", "icmp", capture_node_id=leaked, inherited_from="arp")
+
+    assert link.markers["m"]["capture_node_id"] == link._nodes[0]["node"].id
+
+
+@pytest.mark.asyncio
 async def test_start_marker_rejects_duplicate(project):
 
     with _valid_bpf():

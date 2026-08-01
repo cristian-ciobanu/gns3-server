@@ -180,6 +180,15 @@ class MarkerCreate(BaseModel):
         pattern=r"^(tx|rx)$",
         description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only. Omitted or null = both directions.",
     )
+    capture_node_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "Which endpoint's uBridge hosts this marker (the 'observer'). "
+            "tx/rx in `direction` are interpreted from this node's perspective. "
+            "Must be one of the link's two endpoints and a marker-capable type. "
+            "Omitted = server auto-picks (first started marker-capable endpoint)."
+        ),
+    )
 
 
 class MarkerDefinitionCreate(BaseModel):

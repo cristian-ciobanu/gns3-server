@@ -125,6 +125,28 @@ Because the listener ignores unknown keys, `dir` is **additive**: an older serve
 drops it and an older uBridge simply omits it — either way the system falls back to
 undirected rendering with no error.
 
+### Choosing the capture node
+
+Since `dir` is relative to the capture node, *which* endpoint is the observer decides what
+`tx`/`rx` mean. By default the server auto-picks (first started marker-capable endpoint, in
+link-endpoint order). To pin it — e.g. so `dir=tx` unambiguously means "vpcs1 is sending" —
+pass `capture_node_id` on marker **create**:
+
+```json
+{ "bpf": "icmp", "direction": "tx", "capture_node_id": "<vpcs1 node uuid>" }
+```
+
+The value must be one of the link's two endpoints and a marker-capable type (`vpcs`, `qemu`,
+`docker`, `iou`, `dynamips`, `cloud`); any other id is rejected with `409`. Omit it to keep
+the auto-pick. The chosen id is echoed back as `capture_node_id` in the marker entry and in
+each `MARK` signal's `node=<id>`, so the Web UI always knows the observer regardless of who
+picked it.
+
+`capture_node_id` is **create-only**: it is fixed once the marker exists (changing the
+observer would silently flip the meaning of stored `direction`, so recreate the marker
+instead). It is not accepted on project-level definitions — a definition is link-agnostic and
+has no endpoints to choose from, so inherited markers always auto-pick per link.
+
 ## API Endpoints
 
 All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`). The
@@ -167,11 +189,16 @@ extra request.
   "name": "icmp",
   "bpf": "icmp",
   "tag": 1,
+  "direction": "tx",
+  "capture_node_id": "a37e2235-e21f-46c9-a2ab-ba0f8c5465e6",
   "color": "#ff5722",
   "highlight_duration": 800,
   "enabled": true
 }
 ```
+
+`direction` and `capture_node_id` are both optional and create-only (see
+[Direction](#direction)).
 
 **Definition create body** (`MarkerDefinitionCreate`, shared by POST and PUT):
 
@@ -224,7 +251,8 @@ extra request.
 | `enabled` | bool | Whether the marker is active |
 | `color` | string \| null | Hex color render hint, e.g. `#ff5722` |
 | `highlight_duration` | int \| null | UI highlight duration in ms after a match; `null` = UI default |
-| `capture_node_id` | string | Server-chosen node whose uBridge hosts the marker |
+| `direction` | string \| null | `tx` / `rx` filter relative to the capture node; `null` = both |
+| `capture_node_id` | string | Node whose uBridge hosts the marker — caller-set on create, else auto-picked |
 | `inherited_from` | string | Source definition name — present on inherited markers only |
 
 ### Definition

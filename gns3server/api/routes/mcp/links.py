@@ -395,7 +395,7 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "direction", "color", "highlight_duration"):
+        for opt in ("name", "tag", "direction", "capture_node_id", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         return conn.http_call("post", base, json_data=body).json()

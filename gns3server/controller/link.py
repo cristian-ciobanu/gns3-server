@@ -334,7 +334,7 @@ class Link:
 
         raise NotImplementedError
 
-    async def start_marker(self, name, bpf, tag=None, direction=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None):
         """
         Attach a traffic-insight marker to this link (base — UDPLink overrides).
         """

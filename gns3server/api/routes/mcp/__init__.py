@@ -1016,6 +1016,7 @@ async def link_marker(
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     enabled: Annotated[bool | None, Field(description="Enable or disable the marker (for update action)")] = None,
     direction: Annotated[str | None, Field(description="Direction filter: 'tx' for capture node sending only, 'rx' for capture node receiving only (omit for both)")] = None,
+    capture_node_id: Annotated[str | None, Field(description="UUID of the endpoint whose uBridge hosts the marker (the observer; tx/rx are from its perspective). Must be a link endpoint and marker-capable. Omit to auto-pick.")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
 ) -> list[dict[str, Any]]:
@@ -1034,7 +1035,7 @@ async def link_marker(
     and cannot be modified or deleted via this tool.
     """
     params = {"project_id": project_id, "link_id": link_id, "action": action}
-    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "color", "highlight_duration"):
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val

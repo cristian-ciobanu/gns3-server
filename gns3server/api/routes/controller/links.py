@@ -466,6 +466,7 @@ async def create_marker(
         bpf=marker_data.bpf,
         tag=marker_data.tag,
         direction=marker_data.direction,
+        capture_node_id=marker_data.capture_node_id,
         color=marker_data.color,
         highlight_duration=marker_data.highlight_duration,
     )
