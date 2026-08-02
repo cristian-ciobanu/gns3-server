@@ -191,6 +191,29 @@ class MarkerCreate(BaseModel):
     )
 
 
+class MarkerUpdate(BaseModel):
+    """
+    Body for updating a marker — partial update, every field optional.
+
+    ``bpf`` is optional here (it is required on create). ``capture_node_id`` and
+    ``name`` are create-only / path-driven and intentionally absent; an explicit
+    ``direction: null`` clears the direction back to both (omitting keeps it).
+    """
+
+    bpf: Optional[str] = None
+    tag: Optional[int] = None
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx)$",
+        description="Direction filter; an explicit null clears it to both. Omit to keep.",
+    )
+    color: Optional[str] = Field(None, description="Hex color render hint, e.g. '#ff5722'")
+    highlight_duration: Optional[int] = Field(
+        None, ge=1, description="UI highlight duration in ms; null = UI default"
+    )
+    enabled: Optional[bool] = Field(None, description="Toggle the marker on/off (instant).")
+
+
 class MarkerDefinitionCreate(BaseModel):
     """
     Body for creating / updating a project-level marker definition.

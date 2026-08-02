@@ -497,7 +497,7 @@ async def delete_marker(
 )
 async def update_marker(
     marker_name: str,
-    marker_data: schemas.MarkerCreate,
+    marker_data: schemas.MarkerUpdate,
     link: Link = Depends(dep_link)
 ) -> dict:
     """
