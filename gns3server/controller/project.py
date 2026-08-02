@@ -214,6 +214,7 @@ class Project:
         self._nodes = {}
         self._links = {}
         self._marker_definitions = {}  # name → {bpf, tag, color, highlight_duration}
+        self._markers_paused = False  # project-wide marker mute (persisted, see asdict)
         self._drawings = {}
         self._snapshots = {}
         self._computes = []
@@ -932,6 +933,7 @@ class Project:
         and a node that is down or running an old compute is skipped.
         """
 
+        self._markers_paused = True
         seen = set()
         for link in list(self._links.values()):
             for info in link.markers.values():
@@ -943,10 +945,12 @@ class Project:
                     await self.get_node(node_id).post("/markers/pause")
                 except Exception:
                     pass
+        self.dump()
 
     async def resume_all_markers(self):
         """Resume marker signal+pcap emission on every marker-hosting node."""
 
+        self._markers_paused = False
         seen = set()
         for link in list(self._links.values()):
             for info in link.markers.values():
@@ -958,6 +962,7 @@ class Project:
                     await self.get_node(node_id).post("/markers/resume")
                 except Exception:
                     pass
+        self.dump()
 
     @property
     def marker_definitions(self):
@@ -1472,6 +1477,7 @@ class Project:
             defs = project_data.get("marker_definitions")
             if isinstance(defs, dict):
                 self._marker_definitions = defs
+            self._markers_paused = bool(project_data.get("markers_paused", False))
 
             topology = project_data["topology"]
             for compute in topology.get("computes", []):
@@ -1810,6 +1816,11 @@ class Project:
             if not node.is_always_running():
                 pool.append(node.start)
         await pool.join()
+        # marker pause is a uBridge runtime flag that resets when a node
+        # restarts, so re-apply the project-wide mute to the freshly started
+        # uBridges (markers are installed during node start).
+        if self._markers_paused:
+            await self.pause_all_markers()
 
     @open_required
     async def stop_all(self):
@@ -1925,6 +1936,7 @@ class Project:
             "variables": self._variables,
             "created_by": self._created_by,
             "marker_definitions": self._marker_definitions,
+            "markers_paused": self._markers_paused,
         }
 
     def __repr__(self):

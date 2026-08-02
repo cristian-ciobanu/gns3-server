@@ -172,6 +172,14 @@ The two levers compose and do not overlap:
 | `marker pause` (project) | stop | stop | kept (resume instant) |
 | `marker resume` (project) | resume | resume | kept |
 
+The project-wide pause state is **persisted** in the `.gns3` file as
+`markers_paused` and echoed on the project object (`GET /v3/projects/{pid}`,
+the `asdict()` body), so the Web UI renders the mute button from server truth
+rather than a local optimistic flag. Because `marker pause` is a uBridge
+runtime flag that resets when a node restarts, `start_all` re-applies the mute
+to freshly started uBridges after a project reopen — so a paused project stays
+paused across close/reopen.
+
 ## API Endpoints
 
 All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`). The
