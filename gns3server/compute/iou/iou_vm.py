@@ -1321,9 +1321,25 @@ class IOUVM(BaseNode):
                     self.project.emit("log.warning", {"message": message})
                     continue
                 raise
+            if not spec.get("enabled", True):
+                try:
+                    await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} off")
+                except UbridgeError as e:
+                    log.warning(f"Could not turn marker '{name}' off on {location}: {e}")
             manager.register(
                 str(self.project.id), self._id, name, link_id, tag
             )
+            # Record name -> location (bridge bay unit) for instant toggle.
+            self._marker_filter_bridges[name] = location
+
+    async def _ubridge_set_marker_filter_state(self, name, enabled):
+        """IOU override: toggle via ``iol_bridge enable_packet_filter <bridge> <bay> <unit> <name> on|off``."""
+
+        location = self._marker_filter_bridges.get(name)
+        if not location:
+            raise UbridgeError(f"Marker '{name}' is not installed on this node")
+        state = "on" if enabled else "off"
+        await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
 
     async def adapter_remove_nio_binding(self, adapter_number, port_number):
         """

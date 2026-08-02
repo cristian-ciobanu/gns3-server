@@ -100,6 +100,9 @@ class BaseNode:
         self._internal_aux_port = None
         self._custom_adapters = []
         self._ubridge_require_privileged_access = False
+        # marker filter name -> uBridge bridge_name (recorded at apply time so
+        # _ubridge_set_marker_filter_state can toggle on/off without an NIO rebuild).
+        self._marker_filter_bridges = {}
 
         if self._console is not None:
             # use a previously allocated console port
@@ -1163,9 +1166,63 @@ class BaseNode:
                     self.project.emit("log.warning", {"message": message})
                     continue
                 raise
+            # A disabled marker is installed but turned off (a paused tap), not
+            # dropped — so the UI can flip it back on instantly with
+            # enable_packet_filter, no NIO rebuild (ubridge contract §3.2).
+            if not spec.get("enabled", True):
+                try:
+                    await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} off")
+                except UbridgeError as e:
+                    # Old ubridge without enable_packet_filter: leave it installed
+                    # (on) rather than fail the whole link/marker apply.
+                    log.warning(f"Could not turn marker '{name}' off on {bridge_name}: {e}")
             manager.register(
                 str(self.project.id), self._id, name, link_id, tag
             )
+            # Remember which bridge hosts this filter so an instant on/off toggle
+            # (no NIO rebuild) can resolve it by name alone.
+            self._marker_filter_bridges[name] = bridge_name
+
+    async def _ubridge_set_marker_filter_state(self, name, enabled):
+        """
+        Toggle an installed marker filter on/off with a single uBridge command
+        (``bridge enable_packet_filter … on|off``) — no NIO reset/reapply, so the
+        pcap identity and emitted counter are preserved (ubridge contract §3.2).
+        The bridge is resolved from the name→bridge map populated at apply time;
+        IOU overrides this for its ``iol_bridge`` command shape.
+
+        :param name: marker filter name
+        :param enabled: True = on (signal+pcap), False = off (paused tap)
+        """
+
+        bridge_name = self._marker_filter_bridges.get(name)
+        if not bridge_name:
+            raise UbridgeError(f"Marker '{name}' is not installed on this node")
+        state = "on" if enabled else "off"
+        await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} {state}")
+
+    async def _ubridge_marker_pause(self):
+        """
+        Pause all marker signal+pcap emission on this node's uBridge
+        (``marker pause``). Keeps the sink open so ``resume`` is instant. Safe
+        on old ubridge builds (the error is downgraded to a warning). Called by
+        the project-level pause fan-out.
+        """
+
+        if self._ubridge_hypervisor:
+            try:
+                await self._ubridge_hypervisor.send("marker pause")
+            except UbridgeError as e:
+                log.warning(f"Could not pause markers on node {self._id}: {e}")
+
+    async def _ubridge_marker_resume(self):
+        """Resume marker signal+pcap emission (``marker resume``)."""
+
+        if self._ubridge_hypervisor:
+            try:
+                await self._ubridge_hypervisor.send("marker resume")
+            except UbridgeError as e:
+                log.warning(f"Could not resume markers on node {self._id}: {e}")
 
     async def _add_ubridge_ethernet_connection(self, bridge_name, ethernet_interface, block_host_traffic=False):
         """

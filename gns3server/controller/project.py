@@ -924,6 +924,41 @@ class Project:
                 }
         return result
 
+    async def pause_all_markers(self):
+        """
+        Pause marker signal+pcap emission on every node hosting a marker
+        (``marker pause`` per capture node's uBridge). Node-deduplicated and
+        best-effort: a node hosting markers on several links is paused once,
+        and a node that is down or running an old compute is skipped.
+        """
+
+        seen = set()
+        for link in list(self._links.values()):
+            for info in link.markers.values():
+                node_id = info.get("capture_node_id")
+                if not node_id or node_id in seen:
+                    continue
+                seen.add(node_id)
+                try:
+                    await self.get_node(node_id).post("/markers/pause")
+                except Exception:
+                    pass
+
+    async def resume_all_markers(self):
+        """Resume marker signal+pcap emission on every marker-hosting node."""
+
+        seen = set()
+        for link in list(self._links.values()):
+            for info in link.markers.values():
+                node_id = info.get("capture_node_id")
+                if not node_id or node_id in seen:
+                    continue
+                seen.add(node_id)
+                try:
+                    await self.get_node(node_id).post("/markers/resume")
+                except Exception:
+                    pass
+
     @property
     def marker_definitions(self):
         """

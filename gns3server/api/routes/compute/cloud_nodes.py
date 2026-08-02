@@ -255,3 +255,37 @@ async def stream_pcap_file(
     nio = node.get_nio(port_number)
     stream = Builtin.instance().stream_pcap_file(nio, node.project.id)
     return StreamingResponse(stream, media_type="application/vnd.tcpdump.pcap")
+
+
+@router.put(
+    "/{node_id}/markers/{marker_name}"
+)
+async def toggle_cloud_marker(
+    marker_name: str,
+    toggle_data: schemas.MarkerToggle,
+    node: Cloud = Depends(dep_node)
+) -> dict:
+    """
+    Toggle a marker filter on/off without an NIO rebuild (ubridge contract §3.2).
+    """
+
+    await node._ubridge_set_marker_filter_state(marker_name, toggle_data.enabled)
+    return {"marker_name": marker_name, "enabled": toggle_data.enabled}
+
+
+@router.post(
+    "/{node_id}/markers/pause",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+async def pause_cloud_markers(node: Cloud = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_pause()
+
+
+@router.post(
+    "/{node_id}/markers/resume",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+async def resume_cloud_markers(node: Cloud = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_resume()

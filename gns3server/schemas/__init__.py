@@ -91,7 +91,7 @@ from .controller.templates.dynamips_templates import (
 )
 
 # Compute schemas
-from .compute.nios import UDPNIO, TAPNIO, EthernetNIO
+from .compute.nios import UDPNIO, TAPNIO, EthernetNIO, MarkerToggle
 from .compute.atm_switch_nodes import ATMSwitchCreate, ATMSwitchUpdate, ATMSwitch
 from .compute.cloud_nodes import CloudCreate, CloudUpdate, Cloud
 from .compute.docker_nodes import DockerCreate, DockerUpdate, Docker

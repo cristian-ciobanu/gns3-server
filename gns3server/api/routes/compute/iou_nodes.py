@@ -346,3 +346,40 @@ async def console_ws(
 async def reset_console(node: IOUVM = Depends(dep_node)) -> None:
 
     await node.reset_console()
+
+
+@router.put(
+    "/{node_id}/markers/{marker_name}",
+    dependencies=[Depends(compute_authentication)]
+)
+async def toggle_iou_marker(
+    marker_name: str,
+    toggle_data: schemas.MarkerToggle,
+    node: IOUVM = Depends(dep_node)
+) -> dict:
+    """
+    Toggle a marker filter on/off without an NIO rebuild (ubridge contract §3.2).
+    """
+
+    await node._ubridge_set_marker_filter_state(marker_name, toggle_data.enabled)
+    return {"marker_name": marker_name, "enabled": toggle_data.enabled}
+
+
+@router.post(
+    "/{node_id}/markers/pause",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(compute_authentication)]
+)
+async def pause_iou_markers(node: IOUVM = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_pause()
+
+
+@router.post(
+    "/{node_id}/markers/resume",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(compute_authentication)]
+)
+async def resume_iou_markers(node: IOUVM = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_resume()

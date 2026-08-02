@@ -65,3 +65,13 @@ class TAPNIO(BaseModel):
 
     type: TAPNIOType
     tap_device: str = Field(..., description="TAP device name e.g. tap0")
+
+
+class MarkerToggle(BaseModel):
+    """
+    Body for the per-marker enable/disable toggle endpoint: flips a running
+    uBridge marker filter with ``enable_packet_filter on|off`` (no NIO rebuild,
+    so the pcap identity and emitted counter are preserved).
+    """
+
+    enabled: bool

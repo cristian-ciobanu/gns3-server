@@ -57,14 +57,17 @@ class UDPLink(Link):
 
     def _markers_for_node(self, node):
         """
-        Marker specs (name -> {bpf, tag, link_id}) for the markers whose capture
-        side is ``node`` and that are enabled. Routed by capture_node_id so a
-        marker only rides the NIO of the node whose uBridge will host it.
+        Marker specs (name -> {bpf, tag, link_id, direction, enabled}) for the
+        markers whose capture side is ``node``. Routed by capture_node_id so a
+        marker only rides the NIO of the node whose uBridge will host it. A
+        disabled marker is included (installed then turned ``off`` at uBridge,
+        not dropped) so the UI can toggle it instantly without an NIO rebuild.
         """
         return {
-            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id, "direction": m.get("direction")}
+            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id,
+                   "direction": m.get("direction"), "enabled": m.get("enabled", True)}
             for name, m in self._markers.items()
-            if m.get("enabled", True) and m.get("capture_node_id") == node.id
+            if m.get("capture_node_id") == node.id
         }
 
     def _get_node_markers(self, node1, node2):
@@ -456,6 +459,33 @@ class UDPLink(Link):
                 f"definition '{marker_info['inherited_from']}'. "
                 "Update it via the marker-definitions API instead."
             )
+
+        # Instant toggle: when only `enabled` changes, send a single
+        # enable_packet_filter on|off to the capture node instead of rebuilding
+        # the whole NIO (no pcap flush, emitted counter preserved). Falls through
+        # to the full reset+reapply below if the compute route is unavailable.
+        only_enabled = (
+            enabled is not None
+            and bpf is None
+            and tag is None
+            and direction is _UNSET
+            and color is None
+            and highlight_duration is None
+        )
+        if only_enabled and self._created and not marker_info.get("inherited_from"):
+            capture_node_id = marker_info.get("capture_node_id")
+            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
+            if side is not None:
+                try:
+                    await side["node"].put(f"/markers/{name}", data={"enabled": enabled})
+                    marker_info["enabled"] = enabled
+                    self._project.emit_notification("link.updated", self.asdict())
+                    self._project.dump()
+                    return
+                except Exception:
+                    # Old compute without the toggle route / node down: fall
+                    # through to the full NIO reset+reapply below.
+                    pass
 
         if bpf is not None and bpf != marker_info["bpf"]:
             result = validate_bpf_syntax(bpf)
