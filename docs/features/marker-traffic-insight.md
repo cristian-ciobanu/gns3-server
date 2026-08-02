@@ -147,6 +147,31 @@ observer would silently flip the meaning of stored `direction`, so recreate the 
 instead). It is not accepted on project-level definitions — a definition is link-agnostic and
 has no endpoints to choose from, so inherited markers always auto-pick per link.
 
+## Pause & resume
+
+Two independent ways to silence marker activity, both instant and without an
+NIO rebuild or pcap flush:
+
+- **Per-filter toggle** — `PUT /v3/projects/{pid}/links/{lid}/markers/{name}`
+  with `{"enabled": false}` flips the filter off in place (uBridge
+  `enable_packet_filter … off`): no signal, no pcap, but traffic still relays —
+  a paused `mark` is a no-op tap, not a drop. `{"enabled": true}` flips it back.
+  A change to `enabled` alone is a single command (the pcap identity and emitted
+  counter are preserved); changing `bpf` or other fields still goes through a
+  reset+reapply.
+- **Project-wide mute** — `POST /v3/projects/{pid}/markers/pause` and `/resume`
+  issue uBridge `marker pause` / `marker resume` on every capture node. Pause
+  stops signal **and** pcap but keeps the sink open, so resume is instant. Use
+  for a global "mute all markers" button.
+
+The two levers compose and do not overlap:
+
+| Action | signal | pcap | sink |
+|--------|--------|------|------|
+| per-filter `enabled: false` | stop | stop | n/a |
+| `marker pause` (project) | stop | stop | kept (resume instant) |
+| `marker resume` (project) | resume | resume | kept |
+
 ## API Endpoints
 
 All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`). The
@@ -175,6 +200,8 @@ All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`).
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/v3/projects/{pid}/markers` | All markers across links, flat | Project.Audit |
+| POST | `/v3/projects/{pid}/markers/pause` | Mute all markers project-wide (signal+pcap) | Project.Modify |
+| POST | `/v3/projects/{pid}/markers/resume` | Resume all markers project-wide | Project.Modify |
 
 The link object returned by `GET /v3/projects/{pid}/links[/{lid}]` also carries a `markers`
 field (including inherited markers), so the Web UI can render a link's markers without an
@@ -248,7 +275,7 @@ extra request.
 |-------|------|-------------|
 | `bpf` | string | libpcap BPF expression (required) |
 | `tag` | int \| null | Correlation id echoed in `MARK` signals |
-| `enabled` | bool | Whether the marker is active |
+| `enabled` | bool | Whether the marker is active. Toggle is instant: `false` flips the uBridge filter off in place (no signal/pcap), `true` back on — no NIO rebuild (see [Pause & resume](#pause--resume)) |
 | `color` | string \| null | Hex color render hint, e.g. `#ff5722` |
 | `highlight_duration` | int \| null | UI highlight duration in ms after a match; `null` = UI default |
 | `direction` | string \| null | `tx` / `rx` filter relative to the capture node; `null` = both |
