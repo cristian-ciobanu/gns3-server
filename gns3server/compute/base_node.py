@@ -1197,7 +1197,11 @@ class BaseNode:
 
         bridge_name = self._marker_filter_bridges.get(name)
         if not bridge_name:
-            raise UbridgeError(f"Marker '{name}' is not installed on this node")
+            # Marker not installed on this uBridge (node not started, or not yet
+            # applied). The controller-layer `enabled` is still authoritative and
+            # is honoured when the node starts and applies the marker, so a
+            # toggle here is a no-op rather than an error.
+            return
         state = "on" if enabled else "off"
         await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} {state}")
 

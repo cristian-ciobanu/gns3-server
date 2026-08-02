@@ -1337,7 +1337,9 @@ class IOUVM(BaseNode):
 
         location = self._marker_filter_bridges.get(name)
         if not location:
-            raise UbridgeError(f"Marker '{name}' is not installed on this node")
+            # Marker not installed on this uBridge (node not started, or not yet
+            # applied); controller-layer `enabled` is authoritative. No-op.
+            return
         state = "on" if enabled else "off"
         await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
 
