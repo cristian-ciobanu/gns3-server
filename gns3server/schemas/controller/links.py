@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Tuple
 from enum import Enum
 from uuid import UUID, uuid4
@@ -177,8 +177,8 @@ class MarkerCreate(BaseModel):
     )
     direction: Optional[str] = Field(
         None,
-        pattern=r"^(tx|rx)$",
-        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only. Omitted or null = both directions.",
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only, 'both' or null = both directions.",
     )
     capture_node_id: Optional[UUID] = Field(
         None,
@@ -189,6 +189,11 @@ class MarkerCreate(BaseModel):
             "Omitted = server auto-picks (first started marker-capable endpoint)."
         ),
     )
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
 
 
 class MarkerUpdate(BaseModel):
@@ -204,14 +209,19 @@ class MarkerUpdate(BaseModel):
     tag: Optional[int] = None
     direction: Optional[str] = Field(
         None,
-        pattern=r"^(tx|rx)$",
-        description="Direction filter; an explicit null clears it to both. Omit to keep.",
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter; 'both' or an explicit null clears it to both. Omit to keep.",
     )
     color: Optional[str] = Field(None, description="Hex color render hint, e.g. '#ff5722'")
     highlight_duration: Optional[int] = Field(
         None, ge=1, description="UI highlight duration in ms; null = UI default"
     )
     enabled: Optional[bool] = Field(None, description="Toggle the marker on/off (instant).")
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
 
 
 class MarkerDefinitionCreate(BaseModel):
@@ -246,8 +256,13 @@ class MarkerDefinitionCreate(BaseModel):
     )
     direction: Optional[str] = Field(
         None,
-        pattern=r"^(tx|rx)$",
-        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only. Omitted or null = both directions.",
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only, 'both' or null = both directions.",
     )
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
 
 
