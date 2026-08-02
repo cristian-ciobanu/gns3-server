@@ -180,7 +180,7 @@ async def test_set_marker_filter_state_off(compute_project, manager):
 
     node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
     node._ubridge_send = AsyncioMagicMock()
-    node._marker_filter_bridges["m"] = "VPCS-10"
+    node._marker_filter_bridges["m", "L"] = "VPCS-10"
     await node._ubridge_set_marker_filter_state("m", False)
     node._ubridge_send.assert_called_with("bridge enable_packet_filter VPCS-10 m off")
 
@@ -190,7 +190,7 @@ async def test_set_marker_filter_state_on(compute_project, manager):
 
     node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
     node._ubridge_send = AsyncioMagicMock()
-    node._marker_filter_bridges["m"] = "VPCS-10"
+    node._marker_filter_bridges["m", "L"] = "VPCS-10"
     await node._ubridge_set_marker_filter_state("m", True)
     node._ubridge_send.assert_called_with("bridge enable_packet_filter VPCS-10 m on")
 
@@ -226,4 +226,4 @@ async def test_apply_markers_turns_disabled_filter_off(compute_project, manager)
         mm.instance.return_value.register = MagicMock()
         await node._ubridge_apply_markers("VPCS-10", nio)
     node._ubridge_send.assert_any_call("bridge enable_packet_filter VPCS-10 m off")
-    assert node._marker_filter_bridges["m"] == "VPCS-10"
+    assert node._marker_filter_bridges["m", "L1"] == "VPCS-10"

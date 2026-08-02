@@ -382,7 +382,7 @@ async def toggle_dynamips_marker(
     Toggle a marker filter on/off without an NIO rebuild (ubridge contract §3.2).
     """
 
-    if marker_name not in node._marker_filter_bridges:
+    if not any(n == marker_name for (n, lid) in node._marker_filter_bridges):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Marker '{marker_name}' is not installed on this node",

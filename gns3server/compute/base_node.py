@@ -1181,29 +1181,29 @@ class BaseNode:
             )
             # Remember which bridge hosts this filter so an instant on/off toggle
             # (no NIO rebuild) can resolve it by name alone.
-            self._marker_filter_bridges[name] = bridge_name
+            # keyed (name, link_id) so a node that hosts markers for several links
+            # (e.g. IOU with one IOL-BRIDGE and many bays/units) records each
+            # copy independently — toggle below iterates all matching entries.
+            self._marker_filter_bridges[name, link_id] = bridge_name
 
     async def _ubridge_set_marker_filter_state(self, name, enabled):
         """
         Toggle an installed marker filter on/off with a single uBridge command
         (``bridge enable_packet_filter … on|off``) — no NIO reset/reapply, so the
         pcap identity and emitted counter are preserved (ubridge contract §3.2).
-        The bridge is resolved from the name→bridge map populated at apply time;
-        IOU overrides this for its ``iol_bridge`` command shape.
+        The bridge is resolved from the (name, link_id)→bridge map populated at
+        apply time; entries are iterated so a node that hosts the same marker name
+        on several links (e.g. IOU with one IOL-BRIDGE per node) toggles every
+        copy. IOU overrides this for its ``iol_bridge`` command shape.
 
         :param name: marker filter name
         :param enabled: True = on (signal+pcap), False = off (paused tap)
         """
 
-        bridge_name = self._marker_filter_bridges.get(name)
-        if not bridge_name:
-            # Marker not installed on this uBridge (node not started, or not yet
-            # applied). The controller-layer `enabled` is still authoritative and
-            # is honoured when the node starts and applies the marker, so a
-            # toggle here is a no-op rather than an error.
-            return
         state = "on" if enabled else "off"
-        await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} {state}")
+        for (n, lid), bridge_name in list(self._marker_filter_bridges.items()):
+            if n == name:
+                await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} {state}")
 
     async def _ubridge_marker_pause(self):
         """

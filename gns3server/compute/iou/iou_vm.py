@@ -1330,18 +1330,15 @@ class IOUVM(BaseNode):
                 str(self.project.id), self._id, name, link_id, tag
             )
             # Record name -> location (bridge bay unit) for instant toggle.
-            self._marker_filter_bridges[name] = location
+            self._marker_filter_bridges[name, link_id] = location
 
     async def _ubridge_set_marker_filter_state(self, name, enabled):
-        """IOU override: toggle via ``iol_bridge enable_packet_filter <bridge> <bay> <unit> <name> on|off``."""
+        """IOU override: toggle every (name, link_id) entry via ``iol_bridge``."""
 
-        location = self._marker_filter_bridges.get(name)
-        if not location:
-            # Marker not installed on this uBridge (node not started, or not yet
-            # applied); controller-layer `enabled` is authoritative. No-op.
-            return
         state = "on" if enabled else "off"
-        await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
+        for (n, lid), location in list(self._marker_filter_bridges.items()):
+            if n == name:
+                await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
 
     async def adapter_remove_nio_binding(self, adapter_number, port_number):
         """
