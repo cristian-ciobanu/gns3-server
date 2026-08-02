@@ -1015,7 +1015,7 @@ async def link_marker(
     name: Annotated[str | None, Field(description="Custom marker name for create action (auto-generated if omitted)")] = None,
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     enabled: Annotated[bool | None, Field(description="Enable or disable the marker (for update action)")] = None,
-    direction: Annotated[str | None, Field(description="Direction filter: 'tx' for capture node sending only, 'rx' for capture node receiving only (omit for both)")] = None,
+    direction: Annotated[str | None, Field(description="Direction filter: 'tx' (capture node sending only), 'rx' (receiving only), or 'both' (no filter — on update this clears a previously set direction). Omit to leave unchanged on update.")] = None,
     capture_node_id: Annotated[str | None, Field(description="UUID of the endpoint whose uBridge hosts the marker (the observer; tx/rx are from its perspective). Must be a link endpoint and marker-capable. Omit to auto-pick.")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
@@ -1026,7 +1026,7 @@ async def link_marker(
     Set action='create' to add a marker, 'update' to modify it, 'delete' to remove.
 
     Create requires: project_id, link_id, action='create', bpf
-    Update requires: project_id, link_id, action='update', marker_name, and at least one of (bpf, tag, enabled, color, highlight_duration)
+    Update requires: project_id, link_id, action='update', marker_name, and at least one of (bpf, tag, enabled, direction, color, highlight_duration)
     Delete requires: project_id, link_id, action='delete', marker_name
 
     To read current markers, use link_get — the response includes a 'markers' dict.
@@ -1052,7 +1052,7 @@ async def marker_definition(
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
-    direction: Annotated[str | None, Field(description="Direction filter: 'tx' for capture node sending only, 'rx' for capture node receiving only (omit for both)")] = None,
+    direction: Annotated[str | None, Field(description="Direction filter: 'tx' (capture node sending only), 'rx' (receiving only), or 'both' (no filter — on update this clears a previously set direction). Omit to leave unchanged on update.")] = None,
 ) -> list[dict[str, Any]]:
     """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
 
@@ -1061,7 +1061,7 @@ async def marker_definition(
     On delete, 'global-{name}' is removed from every link.
 
     Create requires: project_id, action='create', bpf
-    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration)
+    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, direction, color, highlight_duration)
     Delete requires: project_id, action='delete', def_name
     List requires:  project_id, action='list'
 

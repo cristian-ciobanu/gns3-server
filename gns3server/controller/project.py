@@ -37,6 +37,7 @@ from .snapshot import Snapshot
 from .drawing import Drawing
 from .topology import project_to_topology, load_topology
 from .udp_link import UDPLink
+from .link import _UNSET
 from ..config import Config
 from ..utils.path import check_path_allowed, get_default_project_directory
 from ..utils.application_id import get_next_application_id
@@ -947,7 +948,7 @@ class Project:
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
-    async def update_marker_definition(self, name, bpf=None, tag=None, direction=None, color=None, highlight_duration=None):
+    async def update_marker_definition(self, name, bpf=None, tag=None, direction=_UNSET, color=None, highlight_duration=None):
         """
         Update a marker definition and sync every inherited copy on every link.
         """
@@ -966,8 +967,8 @@ class Project:
             d["color"] = color
         if highlight_duration is not None:
             d["highlight_duration"] = highlight_duration
-        if direction is not None:
-            d["direction"] = direction
+        if direction is not _UNSET:
+            d["direction"] = direction  # None = clear back to both directions
 
         # Sync: update every inherited copy across all links.
         for link in list(self._links.values()):

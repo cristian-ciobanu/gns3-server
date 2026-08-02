@@ -30,6 +30,13 @@ import logging
 log = logging.getLogger(__name__)
 
 
+# Sentinel for "argument not passed". Distinct from None so marker/definition
+# updaters can tell "caller omitted direction" (keep current value) from
+# "caller passed direction=None" (clear it back to both directions). See
+# UDPLink.update_marker and Project.update_marker_definition.
+_UNSET = object()
+
+
 FILTERS = [
     {
         "type": "frequency_drop",
@@ -346,7 +353,7 @@ class Link:
         """
         raise NotImplementedError
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=None):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET):
         """
         Update an existing marker's BPF, tag, or enabled flag.
 

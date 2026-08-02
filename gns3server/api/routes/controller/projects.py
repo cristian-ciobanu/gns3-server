@@ -40,6 +40,7 @@ from uuid import UUID
 from gns3server import schemas
 from gns3server.controller import Controller
 from gns3server.controller.project import Project
+from gns3server.controller.link import _UNSET
 from gns3server.controller.controller_error import ControllerError, ControllerBadRequestError
 from gns3server.controller.import_project import import_project as import_controller_project
 from gns3server.controller.export_project import export_project as export_controller_project
@@ -293,7 +294,7 @@ async def update_marker_definition(
         name=def_name,
         bpf=def_data.bpf if def_data.bpf else None,
         tag=def_data.tag,
-        direction=def_data.direction,
+        direction=def_data.direction if "direction" in def_data.model_fields_set else _UNSET,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
     )

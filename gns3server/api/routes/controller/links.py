@@ -32,7 +32,7 @@ from uuid import UUID, uuid4
 from gns3server.controller import Controller
 from gns3server.controller.controller_error import ControllerError
 from gns3server.db.repositories.rbac import RbacRepository
-from gns3server.controller.link import Link
+from gns3server.controller.link import Link, _UNSET
 from gns3server.utils.http_client import HTTPClient
 from gns3server.utils.port_allocator import link_id_to_port
 from gns3server.utils.websocket_to_websocket import websocket_proxy
@@ -510,7 +510,7 @@ async def update_marker(
         name=marker_name,
         bpf=marker_data.bpf if marker_data.bpf else None,
         tag=marker_data.tag,
-        direction=marker_data.direction,
+        direction=marker_data.direction if "direction" in marker_data.model_fields_set else _UNSET,
         color=marker_data.color,
         enabled=marker_data.enabled,
         highlight_duration=marker_data.highlight_duration,

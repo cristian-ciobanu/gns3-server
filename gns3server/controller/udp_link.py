@@ -17,7 +17,7 @@
 
 
 from .controller_error import ControllerError, ControllerNotFoundError
-from .link import Link
+from .link import Link, _UNSET
 from .node_types import BUILTIN_NODE_TYPES
 from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
@@ -430,7 +430,7 @@ class UDPLink(Link):
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=None, color=None, highlight_duration=None, inherited=False):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False):
         """
         Update an existing marker's BPF/tag/enabled/color. Any change pushes via
         ``self.update()``; uBridge picks up the new params on the next NIO
@@ -470,8 +470,8 @@ class UDPLink(Link):
             marker_info["color"] = color
         if highlight_duration is not None:
             marker_info["highlight_duration"] = highlight_duration
-        if direction is not None:
-            marker_info["direction"] = direction
+        if direction is not _UNSET:
+            marker_info["direction"] = direction  # None = clear back to both directions
 
         if self._created:
             await self.update()
