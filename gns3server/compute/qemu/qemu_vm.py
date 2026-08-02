@@ -1338,7 +1338,7 @@ class QemuVM(BaseNode):
                 )
             )
         else:
-            log.info(
+            log.debug(
                 f"Connected to QEMU monitor on {self._monitor_host}:{self._monitor} after {time.time() - begin:.4f} seconds"
             )
         return reader, writer
@@ -1355,7 +1355,7 @@ class QemuVM(BaseNode):
 
         result = None
         if self.is_running() and self._monitor:
-            log.info(f"Execute QEMU monitor command: {command}")
+            log.debug(f"Execute QEMU monitor command: {command}")
             reader, writer = await self._open_qemu_monitor_connection_vm()
             if reader is None and writer is None:
                 return result
@@ -1405,7 +1405,7 @@ class QemuVM(BaseNode):
                 return
 
             for command in commands:
-                log.info(f"Execute QEMU monitor command: {command}")
+                log.debug(f"Execute QEMU monitor command: {command}")
                 try:
                     cmd_byte = command.encode("ascii")
                     writer.write(cmd_byte + b"\n")
