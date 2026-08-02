@@ -131,6 +131,7 @@ class Link:
             direction=marker_def.get("direction"),
             color=marker_def.get("color"),
             highlight_duration=marker_def.get("highlight_duration"),
+            enabled=not marker_def.get("paused", False),
             inherited_from=def_name,
         )
 
@@ -341,7 +342,7 @@ class Link:
 
         raise NotImplementedError
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, enabled=True):
         """
         Attach a traffic-insight marker to this link (base — UDPLink overrides).
         """

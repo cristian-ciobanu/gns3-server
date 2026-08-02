@@ -219,37 +219,6 @@ def get_project_markers(project: Project = Depends(dep_project)) -> dict:
     return project.markers
 
 
-@router.post(
-    "/{project_id}/markers/pause",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(has_privilege("Project.Modify"))]
-)
-async def pause_project_markers(project: Project = Depends(dep_project)) -> None:
-    """
-    Pause marker signal+pcap emission project-wide (``marker pause`` on every
-    marker-hosting node's uBridge; resume is instant, sink retained).
-
-    Required privilege: Project.Modify
-    """
-
-    await project.pause_all_markers()
-
-
-@router.post(
-    "/{project_id}/markers/resume",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(has_privilege("Project.Modify"))]
-)
-async def resume_project_markers(project: Project = Depends(dep_project)) -> None:
-    """
-    Resume marker signal+pcap emission project-wide.
-
-    Required privilege: Project.Modify
-    """
-
-    await project.resume_all_markers()
-
-
 # ---------------------------------------------------------------------------
 # Project-level marker definitions (global rules inherited by every link)
 # ---------------------------------------------------------------------------
@@ -330,6 +299,44 @@ async def update_marker_definition(
         highlight_duration=def_data.highlight_duration,
     )
     return project.marker_definitions.get(def_name, {})
+
+
+@router.post(
+    "/{project_id}/marker-definitions/{def_name}/pause",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def pause_marker_definition(
+    def_name: str,
+    project: Project = Depends(dep_project)
+) -> None:
+    """
+    Pause a definition: toggle off every inherited ``global-{def_name}`` copy
+    on every link (uBridge ``enable_packet_filter off``, instant — no NIO
+    rebuild). The definition's ``paused`` flag is persisted, so links created
+    later inherit it already paused.
+
+    Required privilege: Project.Modify
+    """
+
+    await project.pause_marker_definition(def_name)
+
+
+@router.post(
+    "/{project_id}/marker-definitions/{def_name}/resume",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def resume_marker_definition(
+    def_name: str,
+    project: Project = Depends(dep_project)
+) -> None:
+    """Resume a paused definition (toggle on every inherited copy).
+
+    Required privilege: Project.Modify
+    """
+
+    await project.resume_marker_definition(def_name)
 
 
 @router.delete(

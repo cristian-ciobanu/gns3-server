@@ -350,7 +350,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, color=None, highlight_duration=None, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -390,7 +390,7 @@ class UDPLink(Link):
         marker_entry = {
             "bpf": bpf,
             "tag": tag,
-            "enabled": True,
+            "enabled": enabled,
             "color": color,
             "highlight_duration": highlight_duration,
             "capture_node_id": marker_side["node"].id,
@@ -472,7 +472,7 @@ class UDPLink(Link):
             and color is None
             and highlight_duration is None
         )
-        if only_enabled and self._created and not marker_info.get("inherited_from"):
+        if only_enabled and self._created:
             capture_node_id = marker_info.get("capture_node_id")
             side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
             if side is not None:

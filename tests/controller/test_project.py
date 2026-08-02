@@ -83,7 +83,6 @@ async def test_json():
         "supplier": None,
         "variables": None,
         "marker_definitions": {},
-        "markers_paused": False,
         "created_by": None
     }
 

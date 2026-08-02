@@ -149,36 +149,28 @@ has no endpoints to choose from, so inherited markers always auto-pick per link.
 
 ## Pause & resume
 
-Two independent ways to silence marker activity, both instant and without an
-NIO rebuild or pcap flush:
+Two levels of silencing, both instant (no NIO rebuild, no pcap flush):
 
-- **Per-filter toggle** — `PUT /v3/projects/{pid}/links/{lid}/markers/{name}`
-  with `{"enabled": false}` flips the filter off in place (uBridge
+- **Per-marker (private)** — `PUT /v3/projects/{pid}/links/{lid}/markers/{name}`
+  with `{"enabled": false}` flips that one filter off in place (uBridge
   `enable_packet_filter … off`): no signal, no pcap, but traffic still relays —
   a paused `mark` is a no-op tap, not a drop. `{"enabled": true}` flips it back.
   A change to `enabled` alone is a single command (the pcap identity and emitted
   counter are preserved); changing `bpf` or other fields still goes through a
   reset+reapply.
-- **Project-wide mute** — `POST /v3/projects/{pid}/markers/pause` and `/resume`
-  issue uBridge `marker pause` / `marker resume` on every capture node. Pause
-  stops signal **and** pcap but keeps the sink open, so resume is instant. Use
-  for a global "mute all markers" button.
-
-The two levers compose and do not overlap:
+- **Per-definition (inherited)** — `POST /v3/projects/{pid}/marker-definitions/{name}/pause`
+  and `/resume` toggle **every** inherited `global-{name}` copy across all links
+  at once (same `enable_packet_filter on|off`, fanned out per copy). Use to
+  pause or resume a whole rule independently of the others. The definition's
+  `paused` flag is persisted to the `.gns3` and echoed on the definition object,
+  so links created later inherit it already paused, and the Web UI renders the
+  per-rule button from server truth.
 
 | Action | signal | pcap | sink |
 |--------|--------|------|------|
-| per-filter `enabled: false` | stop | stop | n/a |
-| `marker pause` (project) | stop | stop | kept (resume instant) |
-| `marker resume` (project) | resume | resume | kept |
-
-The project-wide pause state is **persisted** in the `.gns3` file as
-`markers_paused` and echoed on the project object (`GET /v3/projects/{pid}`,
-the `asdict()` body), so the Web UI renders the mute button from server truth
-rather than a local optimistic flag. Because `marker pause` is a uBridge
-runtime flag that resets when a node restarts, `start_all` re-applies the mute
-to freshly started uBridges after a project reopen — so a paused project stays
-paused across close/reopen.
+| per-marker `enabled: false` | stop | stop | n/a |
+| per-def `pause` (all `global-{name}` copies) | stop | stop | n/a |
+| per-def `resume` | resume | resume | n/a |
 
 ## API Endpoints
 
@@ -202,14 +194,14 @@ All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`).
 | POST | `/v3/projects/{pid}/marker-definitions` | Create definition (fans out to every link) | Project.Modify |
 | PUT | `/v3/projects/{pid}/marker-definitions/{name}` | Update definition (syncs all copies) | Project.Modify |
 | DELETE | `/v3/projects/{pid}/marker-definitions/{name}` | Delete definition (clears all copies) | Project.Modify |
+| POST | `/v3/projects/{pid}/marker-definitions/{name}/pause` | Pause every inherited copy (instant, persisted) | Project.Modify |
+| POST | `/v3/projects/{pid}/marker-definitions/{name}/resume` | Resume every inherited copy | Project.Modify |
 
 ### Aggregation
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/v3/projects/{pid}/markers` | All markers across links, flat | Project.Audit |
-| POST | `/v3/projects/{pid}/markers/pause` | Mute all markers project-wide (signal+pcap) | Project.Modify |
-| POST | `/v3/projects/{pid}/markers/resume` | Resume all markers project-wide | Project.Modify |
 
 The link object returned by `GET /v3/projects/{pid}/links[/{lid}]` also carries a `markers`
 field (including inherited markers), so the Web UI can render a link's markers without an
@@ -270,6 +262,8 @@ extra request.
     "tag": 5,
     "color": null,
     "highlight_duration": 1200,
+    "direction": null,
+    "paused": false,
     "link_ids": ["656ed826-...", "6bd9d156-..."]
   }
 }
@@ -298,6 +292,8 @@ extra request.
 | `tag` | int \| null | Correlation id |
 | `color` | string \| null | Hex color render hint |
 | `highlight_duration` | int \| null | UI highlight duration in ms; `null` = UI default |
+| `direction` | string \| null | `tx` / `rx` filter relative to the capture node; `null` = both |
+| `paused` | bool | Per-definition mute flag — `true` mutes every inherited copy (persisted) |
 | `link_ids` | string[] | Links currently carrying an inherited copy (GET only) |
 
 ### Notifications

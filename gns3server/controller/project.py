@@ -214,7 +214,6 @@ class Project:
         self._nodes = {}
         self._links = {}
         self._marker_definitions = {}  # name → {bpf, tag, color, highlight_duration}
-        self._markers_paused = False  # project-wide marker mute (persisted, see asdict)
         self._drawings = {}
         self._snapshots = {}
         self._computes = []
@@ -925,44 +924,37 @@ class Project:
                 }
         return result
 
-    async def pause_all_markers(self):
+    async def pause_marker_definition(self, name):
         """
-        Pause marker signal+pcap emission on every node hosting a marker
-        (``marker pause`` per capture node's uBridge). Node-deduplicated and
-        best-effort: a node hosting markers on several links is paused once,
-        and a node that is down or running an old compute is skipped.
+        Pause every inherited copy of a definition (``global-{name}``) on every
+        link: toggle each filter off in place via ``update_marker(enabled=False)``
+        — uBridge ``enable_packet_filter off``, no NIO rebuild, pcap/emitted
+        preserved. The definition's ``paused`` flag is persisted, so links
+        created later inherit the marker already paused.
         """
 
-        self._markers_paused = True
-        seen = set()
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = True
+        marker_name = f"global-{name}"
         for link in list(self._links.values()):
-            for info in link.markers.values():
-                node_id = info.get("capture_node_id")
-                if not node_id or node_id in seen:
-                    continue
-                seen.add(node_id)
-                try:
-                    await self.get_node(node_id).post("/markers/pause")
-                except Exception:
-                    pass
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                await link.update_marker(marker_name, enabled=False, inherited=True)
         self.dump()
+        self.emit_notification("project.updated", self.asdict())
 
-    async def resume_all_markers(self):
-        """Resume marker signal+pcap emission on every marker-hosting node."""
+    async def resume_marker_definition(self, name):
+        """Resume every inherited copy of a definition (toggle on)."""
 
-        self._markers_paused = False
-        seen = set()
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = False
+        marker_name = f"global-{name}"
         for link in list(self._links.values()):
-            for info in link.markers.values():
-                node_id = info.get("capture_node_id")
-                if not node_id or node_id in seen:
-                    continue
-                seen.add(node_id)
-                try:
-                    await self.get_node(node_id).post("/markers/resume")
-                except Exception:
-                    pass
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                await link.update_marker(marker_name, enabled=True, inherited=True)
         self.dump()
+        self.emit_notification("project.updated", self.asdict())
 
     @property
     def marker_definitions(self):
@@ -983,7 +975,7 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
-        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration}
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "paused": False}
         await self._apply_def_to_all_links(name)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
@@ -1477,7 +1469,6 @@ class Project:
             defs = project_data.get("marker_definitions")
             if isinstance(defs, dict):
                 self._marker_definitions = defs
-            self._markers_paused = bool(project_data.get("markers_paused", False))
 
             topology = project_data["topology"]
             for compute in topology.get("computes", []):
@@ -1816,11 +1807,6 @@ class Project:
             if not node.is_always_running():
                 pool.append(node.start)
         await pool.join()
-        # marker pause is a uBridge runtime flag that resets when a node
-        # restarts, so re-apply the project-wide mute to the freshly started
-        # uBridges (markers are installed during node start).
-        if self._markers_paused:
-            await self.pause_all_markers()
 
     @open_required
     async def stop_all(self):
@@ -1936,7 +1922,6 @@ class Project:
             "variables": self._variables,
             "created_by": self._created_by,
             "marker_definitions": self._marker_definitions,
-            "markers_paused": self._markers_paused,
         }
 
     def __repr__(self):

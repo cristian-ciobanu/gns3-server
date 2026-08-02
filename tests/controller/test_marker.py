@@ -512,29 +512,40 @@ async def test_update_marker_with_bpf_still_rebuilds_nio(project):
 
 
 # ---------------------------------------------------------------------------
-# Part C: project-level pause/resume fan-out
+# Per-definition pause/resume (toggle every inherited global-{name} copy)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_pause_all_markers_fans_out_to_capture_nodes(project):
-    # Part C: project-level pause hits each marker-hosting node once.
+async def test_pause_marker_definition_toggles_copies_off(project):
     with _valid_bpf():
-        link = await _make_link(project)
-        await link.start_marker("m", "icmp")
-        node = link._nodes[0]["node"]
-        node.post = AsyncioMagicMock()
-        project.get_node = MagicMock(return_value=node)
-        await project.pause_all_markers()
-    node.post.assert_any_call("/markers/pause")
+        link1 = await _make_link(project)
+        link2 = await _make_link(project)
+        await project.create_marker_definition("arp", "arp")
+        assert link1.markers["global-arp"]["enabled"] is True
+        assert link2.markers["global-arp"]["enabled"] is True
+        await project.pause_marker_definition("arp")
+    assert project.marker_definitions["arp"]["paused"] is True
+    assert link1.markers["global-arp"]["enabled"] is False
+    assert link2.markers["global-arp"]["enabled"] is False
 
 
 @pytest.mark.asyncio
-async def test_resume_all_markers_fans_out(project):
+async def test_resume_marker_definition_toggles_copies_on(project):
     with _valid_bpf():
         link = await _make_link(project)
-        await link.start_marker("m", "icmp")
-        node = link._nodes[0]["node"]
-        node.post = AsyncioMagicMock()
-        project.get_node = MagicMock(return_value=node)
-        await project.resume_all_markers()
-    node.post.assert_any_call("/markers/resume")
+        await project.create_marker_definition("arp", "arp")
+        await project.pause_marker_definition("arp")
+        assert link.markers["global-arp"]["enabled"] is False
+        await project.resume_marker_definition("arp")
+    assert project.marker_definitions["arp"]["paused"] is False
+    assert link.markers["global-arp"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_paused_definition_inherited_as_disabled(project):
+    # A link created after the definition was paused inherits it already off.
+    with _valid_bpf():
+        await project.create_marker_definition("arp", "arp")
+        await project.pause_marker_definition("arp")
+        new_link = await _make_link(project)
+    assert new_link.markers["global-arp"]["enabled"] is False
