@@ -359,3 +359,158 @@ class TestTemplate:
             m.return_value = _mock_conn({})
             result = delete_template_handler({"template_id": "t1"}, ctx)
             assert "deleted" in str(result).lower()
+
+
+# ── Marker (traffic-insight) ────────────────────────────────────────────
+
+
+class TestLinkMarker:
+    """link_marker_handler direction tri-state: omit=preserve, tx/rx=set, both=clear (→ null)."""
+
+    mod = "links"
+
+    def test_update_direction_both_clears(self, ctx):
+        from gns3server.api.routes.mcp.links import link_marker_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "update",
+                 "marker_name": "icmp", "direction": "both"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/links/l/markers/icmp",
+                json_data={"direction": None},
+            )
+
+    def test_update_direction_tx_sets(self, ctx):
+        from gns3server.api.routes.mcp.links import link_marker_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "update",
+                 "marker_name": "icmp", "direction": "tx"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/links/l/markers/icmp",
+                json_data={"direction": "tx"},
+            )
+
+    def test_update_direction_omitted_preserved(self, ctx):
+        from gns3server.api.routes.mcp.links import link_marker_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "update",
+                 "marker_name": "icmp", "tag": 1}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/links/l/markers/icmp",
+                json_data={"tag": 1},
+            )
+
+    def test_create_direction_both_omitted(self, ctx):
+        from gns3server.api.routes.mcp.links import link_marker_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "create",
+                 "bpf": "icmp", "direction": "both"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/links/l/markers",
+                json_data={"bpf": "icmp"},
+            )
+
+    def test_create_direction_tx(self, ctx):
+        from gns3server.api.routes.mcp.links import link_marker_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "create",
+                 "bpf": "icmp", "direction": "tx"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/links/l/markers",
+                json_data={"bpf": "icmp", "direction": "tx"},
+            )
+
+
+class TestMarkerDefinition:
+    """marker_definition_handler direction tri-state (same semantics as link markers)."""
+
+    mod = "links"
+
+    def test_update_direction_both_clears(self, ctx):
+        from gns3server.api.routes.mcp.links import marker_definition_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "arp"})
+            m.return_value = conn
+            marker_definition_handler(
+                {"project_id": "p", "action": "update",
+                 "def_name": "arp", "direction": "both"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/marker-definitions/arp",
+                json_data={"direction": None},
+            )
+
+    def test_update_direction_tx_sets(self, ctx):
+        from gns3server.api.routes.mcp.links import marker_definition_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "arp"})
+            m.return_value = conn
+            marker_definition_handler(
+                {"project_id": "p", "action": "update",
+                 "def_name": "arp", "direction": "tx"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/marker-definitions/arp",
+                json_data={"direction": "tx"},
+            )
+
+    def test_update_direction_omitted_preserved(self, ctx):
+        from gns3server.api.routes.mcp.links import marker_definition_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "arp"})
+            m.return_value = conn
+            marker_definition_handler(
+                {"project_id": "p", "action": "update",
+                 "def_name": "arp", "tag": 1}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/marker-definitions/arp",
+                json_data={"tag": 1},
+            )
+
+    def test_create_direction_both_omitted(self, ctx):
+        from gns3server.api.routes.mcp.links import marker_definition_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "arp"})
+            m.return_value = conn
+            marker_definition_handler(
+                {"project_id": "p", "action": "create",
+                 "bpf": "arp", "direction": "both"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/marker-definitions",
+                json_data={"bpf": "arp"},
+            )
+
+    def test_create_direction_tx(self, ctx):
+        from gns3server.api.routes.mcp.links import marker_definition_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"name": "arp"})
+            m.return_value = conn
+            marker_definition_handler(
+                {"project_id": "p", "action": "create",
+                 "bpf": "arp", "direction": "tx"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/marker-definitions",
+                json_data={"bpf": "arp", "direction": "tx"},
+            )

@@ -378,3 +378,86 @@ async def test_markers_aggregation(project):
     assert agg[key]["highlight_duration"] == 800
     assert agg[key]["link_id"] == link.id
     assert agg[key]["node_id"] == agg[key]["capture_node_id"]
+
+
+# ---------------------------------------------------------------------------
+# Direction clear/preserve semantics (sentinel _UNSET vs explicit None)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_update_marker_clears_direction(project):
+    # Explicit direction=None clears the filter back to "both directions" —
+    # distinct from omitting the kwarg (which preserves the stored value).
+    with _valid_bpf():
+        link = await _make_link(project)
+        await link.start_marker("m", "icmp", direction="tx")
+        assert link.markers["m"]["direction"] == "tx"
+        await link.update_marker("m", direction=None)
+    assert link.markers["m"]["direction"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_marker_preserves_direction_when_omitted(project):
+    # Omitting direction entirely is a partial update: the stored value stays.
+    with _valid_bpf():
+        link = await _make_link(project)
+        await link.start_marker("m", "icmp", direction="tx")
+        await link.update_marker("m", tag=9)
+    assert link.markers["m"]["direction"] == "tx"
+    assert link.markers["m"]["tag"] == 9
+
+
+@pytest.mark.asyncio
+async def test_update_marker_definition_clears_direction(project):
+    # Clearing a definition's direction must propagate to every inherited copy.
+    with _valid_bpf():
+        link1 = await _make_link(project)
+        link2 = await _make_link(project)
+        await project.create_marker_definition("arp", "arp", direction="tx")
+        for link in (link1, link2):
+            assert link.markers["global-arp"]["direction"] == "tx"
+        await project.update_marker_definition("arp", direction=None)
+
+    assert project.marker_definitions["arp"]["direction"] is None
+    for link in (link1, link2):
+        assert link.markers["global-arp"]["direction"] is None
+
+
+# ---------------------------------------------------------------------------
+# Capture-node routing + capability validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pinned_marker_routes_only_to_chosen_node(project):
+    # The marker rides only the pinned capture node's NIO; the far endpoint sees nothing.
+    with _valid_bpf():
+        link = await _make_link(project)
+        chosen = link._nodes[1]["node"]
+        other = link._nodes[0]["node"]
+        await link.start_marker("icmp", "icmp", capture_node_id=chosen.id)
+
+    assert "icmp" in link._markers_for_node(chosen)
+    assert "icmp" not in link._markers_for_node(other)
+
+
+@pytest.mark.asyncio
+async def test_markers_for_node_carries_direction(project):
+    # The NIO-bound marker spec forwards direction so uBridge gets the dir token.
+    with _valid_bpf():
+        link = await _make_link(project)
+        node = link._nodes[0]["node"]  # auto-pick selects the first capable endpoint
+        await link.start_marker("m", "icmp", direction="rx")
+
+    assert link._markers_for_node(node)["m"]["direction"] == "rx"
+
+
+@pytest.mark.asyncio
+async def test_start_marker_rejects_non_capable_capture_node(project):
+    # A NAT endpoint has no uBridge bridge. Pinning to it must fail even though
+    # it IS a link endpoint (distinct from the not-an-endpoint -> 404 case).
+    with _valid_bpf():
+        link = await _make_link(project)
+        nat = Node(project, link._nodes[0]["node"].compute, "nat", node_type="nat")
+        link._nodes.append({"node": nat, "adapter_number": 0, "port_number": 0})
+        with pytest.raises(ControllerError):
+            await link.start_marker("m", "icmp", capture_node_id=nat.id)
