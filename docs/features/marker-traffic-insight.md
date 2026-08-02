@@ -341,3 +341,12 @@ direction relative to the capture node; see [Direction](#direction).
 - **Persistence.** Definitions and private markers persist in the topology; inherited
   markers are re-created from definitions on project load, so reopening a project restores
   the same configuration and stale inherited copies cannot survive on disk.
+- **Log interpretation across node types.** Each node type logs its startup and link
+  operations differently — do not mistake sparse logs from one type for inactivity.
+  QEMU prints `set_link gns3-<N> on` via its QEMU monitor, which is the most visible
+  startup log among all types. VPCS, Docker, IOU, Dynamips, and Cloud each have their own
+  startup paths (fork + ubridge, container veth, iouyap, Dynamips hypervisor, and TAP
+  device respectively) and none of them emit QEMU-monitor-style logs. To verify marker
+  operations (toggle, pause, resume) on non-QEMU types, either inspect uBridge's
+  own log for `enable_packet_filter` / `marker pause` / `marker resume` commands, or
+  watch the gns3server log for the corresponding compute-route calls at INFO level.
