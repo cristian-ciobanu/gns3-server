@@ -21,6 +21,7 @@ import pytest
 import pytest_asyncio
 
 from tests.utils import asyncio_patch, AsyncioMagicMock
+from unittest.mock import patch, MagicMock
 
 from gns3server.compute.vpcs.vpcs_vm import VPCSVM
 from gns3server.compute.docker.docker_vm import DockerVM
@@ -172,3 +173,57 @@ async def test_ubridge_apply_bpf_filters(node):
     node._ubridge_send.assert_any_call("bridge reset_packet_filters VPCS-10")
     node._ubridge_send.assert_any_call("bridge add_packet_filter VPCS-10 filter0 bpf \"icmp[icmptype] == 8\"")
     node._ubridge_send.assert_any_call("bridge add_packet_filter VPCS-10 filter1 bpf \"tcp src port 53\"")
+
+
+@pytest.mark.asyncio
+async def test_set_marker_filter_state_off(compute_project, manager):
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._marker_filter_bridges["m"] = "VPCS-10"
+    await node._ubridge_set_marker_filter_state("m", False)
+    node._ubridge_send.assert_called_with("bridge enable_packet_filter VPCS-10 m off")
+
+
+@pytest.mark.asyncio
+async def test_set_marker_filter_state_on(compute_project, manager):
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._marker_filter_bridges["m"] = "VPCS-10"
+    await node._ubridge_set_marker_filter_state("m", True)
+    node._ubridge_send.assert_called_with("bridge enable_packet_filter VPCS-10 m on")
+
+
+@pytest.mark.asyncio
+async def test_marker_pause_sends_command(compute_project, manager):
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_hypervisor = AsyncioMagicMock()
+    await node._ubridge_marker_pause()
+    node._ubridge_hypervisor.send.assert_called_with("marker pause")
+
+
+@pytest.mark.asyncio
+async def test_marker_resume_sends_command(compute_project, manager):
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_hypervisor = AsyncioMagicMock()
+    await node._ubridge_marker_resume()
+    node._ubridge_hypervisor.send.assert_called_with("marker resume")
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_turns_disabled_filter_off(compute_project, manager):
+    # Part A: a disabled marker is installed (add_packet_filter) then turned off
+    # with enable_packet_filter … off, and its bridge is recorded for toggling.
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "icmp", "tag": None, "link_id": "L1", "direction": None, "enabled": False}}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.register = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    node._ubridge_send.assert_any_call("bridge enable_packet_filter VPCS-10 m off")
+    assert node._marker_filter_bridges["m"] == "VPCS-10"

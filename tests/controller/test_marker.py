@@ -461,3 +461,80 @@ async def test_start_marker_rejects_non_capable_capture_node(project):
         link._nodes.append({"node": nat, "adapter_number": 0, "port_number": 0})
         with pytest.raises(ControllerError):
             await link.start_marker("m", "icmp", capture_node_id=nat.id)
+
+
+# ---------------------------------------------------------------------------
+# Part A/B: enabled reaches uBridge + instant per-filter toggle
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_markers_for_node_keeps_disabled_and_carries_enabled(project):
+    # Part A: a disabled marker is NOT dropped from the NIO payload (so uBridge
+    # can install it then turn it off) and the spec carries `enabled`.
+    with _valid_bpf():
+        link = await _make_link(project)
+        node = link._nodes[0]["node"]
+        await link.start_marker("m", "icmp")
+        await link.update_marker("m", enabled=False)
+    spec = link._markers_for_node(node).get("m")
+    assert spec is not None
+    assert spec["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_marker_enabled_only_hits_toggle_route(project):
+    # Part B: an enabled-only change routes to the per-marker toggle endpoint,
+    # not a full NIO reset+reapply.
+    with _valid_bpf():
+        link = await _make_link(project)
+        node = link._nodes[0]["node"]
+        await link.start_marker("m", "icmp")
+        compute = node.compute
+        compute.put.reset_mock()
+        await link.update_marker("m", enabled=False)
+    paths = [c.args[0] for c in compute.put.call_args_list]
+    assert any("/markers/m" in p for p in paths)
+    assert not any(p.endswith("/nio") for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_update_marker_with_bpf_still_rebuilds_nio(project):
+    # A non-enabled-only change falls through to the NIO reset+reapply path.
+    with _valid_bpf():
+        link = await _make_link(project)
+        node = link._nodes[0]["node"]
+        await link.start_marker("m", "icmp")
+        compute = node.compute
+        compute.put.reset_mock()
+        await link.update_marker("m", bpf="tcp")
+    paths = [c.args[0] for c in compute.put.call_args_list]
+    assert any(p.endswith("/nio") for p in paths)
+
+
+# ---------------------------------------------------------------------------
+# Part C: project-level pause/resume fan-out
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pause_all_markers_fans_out_to_capture_nodes(project):
+    # Part C: project-level pause hits each marker-hosting node once.
+    with _valid_bpf():
+        link = await _make_link(project)
+        await link.start_marker("m", "icmp")
+        node = link._nodes[0]["node"]
+        node.post = AsyncioMagicMock()
+        project.get_node = MagicMock(return_value=node)
+        await project.pause_all_markers()
+    node.post.assert_any_call("/markers/pause")
+
+
+@pytest.mark.asyncio
+async def test_resume_all_markers_fans_out(project):
+    with _valid_bpf():
+        link = await _make_link(project)
+        await link.start_marker("m", "icmp")
+        node = link._nodes[0]["node"]
+        node.post = AsyncioMagicMock()
+        project.get_node = MagicMock(return_value=node)
+        await project.resume_all_markers()
+    node.post.assert_any_call("/markers/resume")
