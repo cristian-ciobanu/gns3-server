@@ -360,6 +360,11 @@ async def toggle_vpcs_marker(
     Toggle a marker filter on/off without an NIO rebuild (ubridge contract §3.2).
     """
 
+    if marker_name not in node._marker_filter_bridges:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Marker '{marker_name}' is not installed on this node",
+        )
     await node._ubridge_set_marker_filter_state(marker_name, toggle_data.enabled)
     return {"marker_name": marker_name, "enabled": toggle_data.enabled}
 
