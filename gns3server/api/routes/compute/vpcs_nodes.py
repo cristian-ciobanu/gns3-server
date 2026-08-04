@@ -387,3 +387,42 @@ async def pause_vpcs_markers(node: VPCSVM = Depends(dep_node)) -> None:
 async def resume_vpcs_markers(node: VPCSVM = Depends(dep_node)) -> None:
 
     await node._ubridge_marker_resume()
+
+
+@router.delete(
+    "/{node_id}/markers/{marker_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(compute_authentication)]
+)
+async def delete_vpcs_marker_capture(
+    marker_name: str,
+    link_id: str = "",
+    node: VPCSVM = Depends(dep_node)
+) -> None:
+    """
+    Delete a marker's capture pcap (called by the controller when the marker is
+    removed) so the file is cleaned up even with the node stopped.
+    """
+
+    await node.delete_marker_capture(marker_name, link_id)
+
+
+@router.put(
+    "/{node_id}/markers/{marker_name}/rebuild",
+    dependencies=[Depends(compute_authentication)]
+)
+async def rebuild_vpcs_marker(
+    marker_name: str,
+    rebuild_data: schemas.MarkerRebuild,
+    node: VPCSVM = Depends(dep_node)
+) -> dict:
+    """
+    Re-install a single marker filter with new BPF/tag/direction (delete + add,
+    no bridge reset) so sibling markers' pcaps stay open.
+    """
+
+    await node.rebuild_marker_filter(
+        marker_name, rebuild_data.link_id, rebuild_data.bpf,
+        rebuild_data.tag, rebuild_data.direction, rebuild_data.enabled,
+    )
+    return {"marker_name": marker_name}

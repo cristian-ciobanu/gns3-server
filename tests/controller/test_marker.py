@@ -578,8 +578,9 @@ async def test_update_marker_enabled_only_hits_toggle_route(project):
 
 
 @pytest.mark.asyncio
-async def test_update_marker_with_bpf_still_rebuilds_nio(project):
-    # A non-enabled-only change falls through to the NIO reset+reapply path.
+async def test_update_marker_with_bpf_rebuilds_single_filter(project):
+    # A bpf change rebuilds just this marker's filter (delete + add), NOT a full
+    # NIO reapply, so sibling markers' pcaps stay open.
     with _valid_bpf():
         link = await _make_link(project)
         node = link._nodes[0]["node"]
@@ -588,7 +589,23 @@ async def test_update_marker_with_bpf_still_rebuilds_nio(project):
         compute.put.reset_mock()
         await link.update_marker("m", bpf="tcp")
     paths = [c.args[0] for c in compute.put.call_args_list]
-    assert any(p.endswith("/nio") for p in paths)
+    assert any(p.endswith("/markers/m/rebuild") for p in paths)
+    assert not any(p.endswith("/nio") for p in paths)  # no full NIO reapply
+
+
+@pytest.mark.asyncio
+async def test_update_marker_ui_only_does_not_push(project):
+    # color/highlight_duration are UI-only — stored, never pushed to uBridge.
+    with _valid_bpf():
+        link = await _make_link(project)
+        node = link._nodes[0]["node"]
+        await link.start_marker("m", "icmp")
+        compute = node.compute
+        compute.put.reset_mock()
+        await link.update_marker("m", color="#ffffff", highlight_duration=1500)
+    assert compute.put.call_args_list == []  # nothing pushed to uBridge
+    assert link.markers["m"]["color"] == "#ffffff"
+    assert link.markers["m"]["highlight_duration"] == 1500
 
 
 # ---------------------------------------------------------------------------
@@ -663,3 +680,18 @@ async def test_update_marker_definition_rejects_directional(project):
     await project.update_marker_definition("arp", color="#ffffff")
     await project.update_marker_definition("arp", direction=None)
     assert project.marker_definitions["arp"]["direction"] is None
+
+
+@pytest.mark.asyncio
+async def test_stop_marker_deletes_capture_pcap(project):
+    # Removing a marker asks the capture node's compute to delete its pcap, so
+    # the file is cleaned up even with the node stopped (the NIO reapply path
+    # only runs while uBridge is up).
+    with _valid_bpf():
+        link = await _make_link(project)
+        capture = link._nodes[0]["node"]
+        await link.start_marker("icmp", "icmp", capture_node_id=capture.id)
+        capture.delete = AsyncioMagicMock()
+        await link.stop_marker("icmp")
+
+    capture.delete.assert_called_once_with("/markers/icmp", params={"link_id": link.id})

@@ -1340,6 +1340,17 @@ class IOUVM(BaseNode):
             if n == name:
                 await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
 
+    async def _ubridge_delete_marker_filter(self, location, name):
+        """IOU override: remove a single marker filter via ``iol_bridge``
+        (location = ``{bridge} {bay} {unit}``), not a bridge-wide reset."""
+
+        if not (self._ubridge_hypervisor and self._ubridge_hypervisor.is_running()):
+            return
+        try:
+            await self._ubridge_send(f"iol_bridge delete_packet_filter {location} {name}")
+        except UbridgeError as e:
+            log.warning("Could not remove marker filter '%s' from %s: %s", name, location, e)
+
     async def adapter_remove_nio_binding(self, adapter_number, port_number):
         """
         Removes an adapter NIO binding.

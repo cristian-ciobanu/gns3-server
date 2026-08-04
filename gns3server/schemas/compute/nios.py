@@ -75,3 +75,19 @@ class MarkerToggle(BaseModel):
     """
 
     enabled: bool
+
+
+class MarkerRebuild(BaseModel):
+    """
+    Body for the per-marker rebuild endpoint: re-install a single uBridge marker
+    filter with new BPF/tag/direction via ``delete_packet_filter`` + add (NOT a
+    bridge-wide reset), so sibling markers keep their pcaps open. The marker's
+    own pcap is reopened by uBridge on re-add (new capture session for the new
+    BPF), which is expected.
+    """
+
+    bpf: str
+    tag: Optional[int] = None
+    direction: Optional[str] = None
+    enabled: bool = True
+    link_id: str = ""

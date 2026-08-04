@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 from collections import OrderedDict
 
 import pytest
@@ -227,3 +228,64 @@ async def test_apply_markers_turns_disabled_filter_off(compute_project, manager)
         await node._ubridge_apply_markers("VPCS-10", nio)
     node._ubridge_send.assert_any_call("bridge enable_packet_filter VPCS-10 m off")
     assert node._marker_filter_bridges["m", "L1"] == "VPCS-10"
+
+
+@pytest.mark.asyncio
+async def test_delete_marker_capture_removes_pcap_and_entry(compute_project, manager):
+    # Deleting a marker's capture removes its pcap and forgets the bridge entry.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    markers_dir = compute_project.markers_working_directory()
+    os.makedirs(markers_dir, exist_ok=True)
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+    pcap = os.path.join(markers_dir, f"{node.id}_L1_m.pcap")
+    open(pcap, "wb").write(b"data")
+
+    await node.delete_marker_capture("m", "L1")
+
+    assert not os.path.exists(pcap)
+    assert ("m", "L1") not in node._marker_filter_bridges
+
+
+@pytest.mark.asyncio
+async def test_delete_marker_capture_idempotent_when_missing(compute_project, manager):
+    # No file on disk → must not raise, and still clears the entry.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+
+    await node.delete_marker_capture("m", "L1")
+
+    assert ("m", "L1") not in node._marker_filter_bridges
+
+
+@pytest.mark.asyncio
+async def test_delete_marker_capture_sends_delete_filter(compute_project, manager):
+    # With uBridge running, removing a marker issues a fine-grained
+    # delete_packet_filter (not a bridge-wide reset) so sibling pcaps stay open.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._ubridge_hypervisor = MagicMock()
+    node._ubridge_hypervisor.is_running.return_value = True
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+
+    await node.delete_marker_capture("m", "L1")
+
+    node._ubridge_send.assert_any_call("bridge delete_packet_filter VPCS-10 m")
+    assert ("m", "L1") not in node._marker_filter_bridges
+
+
+@pytest.mark.asyncio
+async def test_rebuild_marker_filter_delete_then_add(compute_project, manager):
+    # rebuild re-installs a single filter (delete_packet_filter + add) with the
+    # new params, no bridge reset; enabled=False turns it off after re-add.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._ubridge_hypervisor = MagicMock()
+    node._ubridge_hypervisor.is_running.return_value = True
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+
+    await node.rebuild_marker_filter("m", "L1", "tcp", tag=7, direction="rx", enabled=False)
+
+    cmds = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert any("delete_packet_filter VPCS-10 m" in c for c in cmds)
+    assert any("add_packet_filter VPCS-10 m mark" in c and "tcp" in c for c in cmds)
+    assert any("enable_packet_filter VPCS-10 m off" in c for c in cmds)

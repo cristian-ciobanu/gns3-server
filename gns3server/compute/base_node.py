@@ -1130,6 +1130,61 @@ class BaseNode:
         # bad expression must surface instead of being silently dropped.
         await self._ubridge_send(cmd)
 
+    async def delete_marker_capture(self, name, link_id):
+        """
+        Remove a marker from uBridge (fine-grained ``delete_packet_filter`` — NOT
+        reset_packet_filters, so sibling markers' pcaps aren't closed/reopened)
+        and delete its capture pcap. Called by the controller when a marker is
+        removed; safe with the node stopped (filter removal is skipped, the file
+        is still unlinked). IOU overrides ``_ubridge_delete_marker_filter`` for
+        its ``iol_bridge`` command shape.
+        """
+        bridge_name = self._marker_filter_bridges.pop((name, link_id), None)
+        if bridge_name is not None:
+            await self._ubridge_delete_marker_filter(bridge_name, name)
+        try:
+            markers_dir = self.project.markers_working_directory()
+            pcap_path = os.path.join(markers_dir, f"{self._id}_{link_id}_{name}.pcap")
+            os.remove(pcap_path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.warning("Could not remove marker pcap for '%s' on link %s: %s", name, link_id, e)
+
+    async def _ubridge_delete_marker_filter(self, bridge_name, name):
+        """
+        Remove a single marker filter from uBridge with ``delete_packet_filter``
+        (not a bridge-wide reset) so other markers keep their pcaps open. A no-op
+        when uBridge isn't running — the pcap cleanup in the caller still proceeds.
+        """
+        if not (self._ubridge_hypervisor and self._ubridge_hypervisor.is_running()):
+            return
+        try:
+            await self._ubridge_send(f"bridge delete_packet_filter {bridge_name} {name}")
+        except UbridgeError as e:
+            log.warning("Could not remove marker filter '%s' from %s: %s", name, bridge_name, e)
+
+    async def rebuild_marker_filter(self, name, link_id, bpf, tag=None, direction=None, enabled=True):
+        """
+        Re-install a single marker filter with new params (delete + add), without
+        a bridge-wide reset — so sibling markers keep their pcaps open. uBridge
+        reopens the marker's own pcap on re-add (a new capture session for the
+        new BPF), which is expected. No-op if the marker isn't installed (node
+        stopped) — the next NIO reapply picks up the updated ``_markers``.
+
+        IOU needs no override: this calls ``_ubridge_delete_marker_filter`` /
+        ``_ubridge_add_marker_filter`` / ``_ubridge_set_marker_filter_state``,
+        all of which IOU already overrides for ``iol_bridge``.
+        """
+        bridge_name = self._marker_filter_bridges.get((name, link_id))
+        if bridge_name is None:
+            return
+        await self._ubridge_delete_marker_filter(bridge_name, name)
+        pcap_path = os.path.join(self.project.markers_working_directory(), f"{self._id}_{link_id}_{name}.pcap")
+        await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id, direction=direction)
+        if not enabled:
+            await self._ubridge_set_marker_filter_state(name, enabled=False)
+
     async def _ubridge_apply_markers(self, bridge_name, nio):
         """
         (Re-)apply every traffic-insight marker carried by *nio* to the uBridge

@@ -427,17 +427,29 @@ class UDPLink(Link):
                 "Delete or update it via the marker-definitions API instead."
             )
 
+        capture_node_id = self._markers[name].get("capture_node_id")
         del self._markers[name]
-        if self._created:
-            await self.update()
+        # Remove the marker filter + its pcap on the capture node directly — NOT a
+        # full NIO reapply (which would reset_packet_filters and close/reopen every
+        # sibling marker's pcap). delete_packet_filter removes just this filter;
+        # the marker is already gone from _markers, so any later reapply (filter
+        # change, node restart) won't re-add it either.
+        if capture_node_id is not None:
+            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
+            if side is not None:
+                try:
+                    await side["node"].delete(f"/markers/{name}", params={"link_id": self._id})
+                except Exception:
+                    pass  # best-effort: old compute without the route leaves the file
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
 
     async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False):
         """
-        Update an existing marker's BPF/tag/enabled/color. Any change pushes via
-        ``self.update()``; uBridge picks up the new params on the next NIO
-        reset+reapply (same as packet filters).
+        Update an existing marker's fields and push to uBridge fine-grained — no
+        full NIO reapply, so sibling markers' pcaps stay open. bpf/tag/direction
+        rebuild just this filter (delete + add); enabled is an instant toggle;
+        color/highlight_duration are UI-only (stored, never pushed).
 
         :param name: filter name to update
         :param bpf: new BPF expression (None = keep existing)
@@ -460,33 +472,7 @@ class UDPLink(Link):
                 "Update it via the marker-definitions API instead."
             )
 
-        # Instant toggle: when only `enabled` changes, send a single
-        # enable_packet_filter on|off to the capture node instead of rebuilding
-        # the whole NIO (no pcap flush, emitted counter preserved). Falls through
-        # to the full reset+reapply below if the compute route is unavailable.
-        only_enabled = (
-            enabled is not None
-            and bpf is None
-            and tag is None
-            and direction is _UNSET
-            and color is None
-            and highlight_duration is None
-        )
-        if only_enabled and self._created:
-            capture_node_id = marker_info.get("capture_node_id")
-            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
-            if side is not None:
-                try:
-                    await side["node"].put(f"/markers/{name}", data={"enabled": enabled})
-                    marker_info["enabled"] = enabled
-                    self._project.emit_notification("link.updated", self.asdict())
-                    self._project.dump()
-                    return
-                except Exception:
-                    # Old compute without the toggle route / node down: fall
-                    # through to the full NIO reset+reapply below.
-                    pass
-
+        # Merge every changed field into the marker state first.
         if bpf is not None and bpf != marker_info["bpf"]:
             result = validate_bpf_syntax(bpf)
             if not result.get("valid"):
@@ -503,7 +489,34 @@ class UDPLink(Link):
         if direction is not _UNSET:
             marker_info["direction"] = direction  # None = clear back to both directions
 
+        # Push to uBridge fine-grained — NO full NIO reapply (which would
+        # reset_packet_filters and close/reopen every sibling marker's pcap):
+        #   * bpf/tag/direction changed → rebuild just this filter (delete + add),
+        #     reopening only this marker's pcap (expected, new BPF)
+        #   * only enabled changed      → instant toggle (enable_packet_filter)
+        #   * only UI fields changed    → nothing to push to uBridge
         if self._created:
-            await self.update()
+            ubridge_rebuild = (bpf is not None) or (tag is not None) or (direction is not _UNSET)
+            capture_node_id = marker_info.get("capture_node_id")
+            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
+            if side is not None:
+                try:
+                    if ubridge_rebuild:
+                        await side["node"].put(
+                            f"/markers/{name}/rebuild",
+                            data={
+                                "bpf": marker_info["bpf"],
+                                "tag": marker_info.get("tag"),
+                                "direction": marker_info.get("direction"),
+                                "enabled": marker_info.get("enabled", True),
+                                "link_id": self._id,
+                            },
+                        )
+                    elif enabled is not None:
+                        await side["node"].put(f"/markers/{name}", data={"enabled": enabled})
+                except Exception:
+                    # Old compute without the route / node down: state is already
+                    # correct in _markers; the next NIO reapply converges uBridge.
+                    pass
         self._project.emit_notification("link.updated", self.asdict())
         self._project.dump()
