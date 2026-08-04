@@ -990,6 +990,10 @@ class BaseNode:
             log.info(f"Stopping uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
             await self._ubridge_hypervisor.stop()
         self._ubridge_hypervisor = None
+        # uBridge is gone, so every marker filter (and its in-bridge state) is
+        # gone too — clear the map so the next apply re-installs them all rather
+        # than skipping them as "already installed".
+        self._marker_filter_bridges.clear()
 
     async def add_ubridge_udp_connection(self, bridge_name, source_nio, destination_nio):
         """
@@ -1187,11 +1191,13 @@ class BaseNode:
 
     async def _ubridge_apply_markers(self, bridge_name, nio):
         """
-        (Re-)apply every traffic-insight marker carried by *nio* to the uBridge
-        bridge *bridge_name*.  Called from ``add_ubridge_udp_connection`` (bridge
-        creation / node restart) and ``update_ubridge_udp_connection`` (NIO update
-        — the preceding ``_ubridge_apply_filters`` has already issued
-        ``reset_packet_filters``, so we must re-add markers to survive the reset).
+        Install the traffic-insight markers carried by *nio* onto bridge
+        *bridge_name* that aren't already there. uBridge's ``reset_packet_filters``
+        preserves mark filters (contract), so on an NIO update we add only the new
+        ones — re-adding an existing marker would either duplicate it or
+        close/reopen its pcap. Called from ``add_ubridge_udp_connection`` (fresh
+        bridge, empty map → installs all) and ``update_ubridge_udp_connection``
+        (incremental).
         """
         from gns3server.compute.marker.marker_manager import MarkerManager
 
@@ -1202,9 +1208,14 @@ class BaseNode:
         manager = MarkerManager.instance()
         markers_dir = self.project.markers_working_directory()
         for name, spec in markers.items():
+            link_id = spec.get("link_id", "")
+            # Incremental: skip markers already on this bridge. uBridge keeps mark
+            # filters across reset_packet_filters, so re-adding would duplicate (or
+            # reopen the pcap). A fresh bridge has an empty map → installs all.
+            if (name, link_id) in self._marker_filter_bridges:
+                continue
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            link_id = spec.get("link_id", "")
             pcap_path = os.path.join(
                 markers_dir, f"{self._id}_{link_id}_{name}.pcap"
             )

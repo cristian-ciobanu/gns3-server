@@ -289,3 +289,29 @@ async def test_rebuild_marker_filter_delete_then_add(compute_project, manager):
     assert any("delete_packet_filter VPCS-10 m" in c for c in cmds)
     assert any("add_packet_filter VPCS-10 m mark" in c and "tcp" in c for c in cmds)
     assert any("enable_packet_filter VPCS-10 m off" in c for c in cmds)
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_skips_already_installed(compute_project, manager):
+    # Incremental apply: a marker already in _marker_filter_bridges is not
+    # re-added (uBridge keeps it across reset), so its pcap isn't reopened.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"  # already installed
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "icmp", "tag": None, "link_id": "L1", "direction": None, "enabled": True}}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.register = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    cmds = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert not any("add_packet_filter" in c for c in cmds)  # skipped, not re-added
+
+
+@pytest.mark.asyncio
+async def test_stop_ubridge_clears_marker_bridges(compute_project, manager):
+    # uBridge stopping drops every marker filter — the map must clear so the next
+    # apply re-installs them instead of skipping as "already installed".
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+    await node._stop_ubridge()
+    assert node._marker_filter_bridges == {}
