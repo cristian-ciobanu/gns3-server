@@ -965,6 +965,21 @@ class Project:
         """
         return self._marker_definitions
 
+    def _validate_marker_definition_bpf(self, name, bpf):
+        """
+        Validate a marker definition's BPF once, here, so the fan-out to every
+        link (``_apply_def_to_all_links`` → ``inherit_marker`` → ``start_marker``)
+        and the per-link sync (``update_marker_definition`` → ``update_marker``)
+        can skip re-validation for the inherited copies — otherwise one
+        ``tcpdump -d`` subprocess runs per link for the same expression. A
+        private per-link marker still validates in ``start_marker``/``update_marker``.
+        """
+        result = validate_bpf_syntax(bpf)
+        if not result.get("valid"):
+            raise ControllerError(
+                f"Marker definition '{name}': invalid BPF — {result.get('error', 'unknown error')}"
+            )
+
     def _validate_marker_definition_direction(self, name, direction):
         """
         Reject tx/rx on a marker definition: a definition fans out to every link
@@ -997,6 +1012,7 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
+        self._validate_marker_definition_bpf(name, bpf)
         self._validate_marker_definition_direction(name, direction)
         self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "paused": False}
         await self._apply_def_to_all_links(name)
@@ -1015,6 +1031,7 @@ class Project:
 
         d = self._marker_definitions[name]
         if bpf is not None:
+            self._validate_marker_definition_bpf(name, bpf)
             d["bpf"] = bpf
         if tag is not None:
             d["tag"] = tag
@@ -1489,10 +1506,27 @@ class Project:
                     setattr(self, key, val)
 
             # marker_definitions is loaded separately (it is not a __init__ kwarg
-            # nor a simple attribute — it backs a read-only property).
+            # nor a simple attribute — it backs a read-only property). Each BPF
+            # is validated once here so the inherited fan-out (start_marker) can
+            # skip re-validation; an invalid definition is dropped with a warning
+            # rather than failing the open — it could not fan out anyway.
             defs = project_data.get("marker_definitions")
             if isinstance(defs, dict):
-                self._marker_definitions = defs
+                clean_defs = {}
+                for def_name, d in defs.items():
+                    bpf = d.get("bpf")
+                    if not bpf:
+                        log.warning("Dropping marker definition '%s' on load: missing bpf", def_name)
+                        continue
+                    result = validate_bpf_syntax(bpf)
+                    if not result.get("valid"):
+                        log.warning(
+                            "Dropping marker definition '%s' on load: invalid BPF (%s)",
+                            def_name, result.get("error")
+                        )
+                        continue
+                    clean_defs[def_name] = d
+                self._marker_definitions = clean_defs
 
             topology = project_data["topology"]
             for compute in topology.get("computes", []):

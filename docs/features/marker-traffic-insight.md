@@ -348,6 +348,12 @@ direction relative to the capture node; see [Direction](#direction).
 - **Render hints are not enforced.** `color` and `highlight_duration` (milliseconds, `>= 1`)
   are stored on the link and never sent to uBridge; `null` lets the UI apply its own
   default. A partial PUT (e.g. changing only `bpf`) leaves them untouched.
+- **BPF is validated once per source.** A private per-link marker validates its BPF inline
+  on create/update. A definition validates its BPF once at create/update (and once per
+  definition on project load, dropping any whose BPF has gone invalid); the inherited
+  fan-out to every link then skips re-validation, so creating a definition over *N* links
+  runs one `tcpdump -d` rather than *N*. (uBridge still runs `pcap_compile` itself at
+  install time, so an invalid expression can never slip through.)
 - **Supported node types.** A marker needs a uBridge bridge: `vpcs`, `qemu`, `docker`,
   `iou`, `dynamips`, `cloud` (one capable endpoint suffices). Types without a uBridge are
   silently skipped by the inheritance fan-out. IOU uses one shared `IOL-BRIDGE` per node but

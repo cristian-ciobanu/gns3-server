@@ -28,6 +28,7 @@ import uuid
 
 import pytest
 from unittest.mock import MagicMock, patch
+from contextlib import ExitStack
 
 from tests.utils import AsyncioMagicMock
 
@@ -38,11 +39,20 @@ from gns3server.controller.controller_error import ControllerError, ControllerNo
 
 
 def _valid_bpf():
-    """Bypass tcpdump-based BPF validation so tests don't depend on tcpdump."""
-    return patch(
+    """Bypass tcpdump-based BPF validation so tests don't depend on tcpdump.
+
+    Patches both namespaces that import ``validate_bpf_syntax`` by name: the
+    per-link ``udp_link`` (private marker create/update) and the project layer
+    (definition create/update/load), which is now the single validation point
+    for inherited copies.
+    """
+    stack = ExitStack()
+    for target in (
         "gns3server.controller.udp_link.validate_bpf_syntax",
-        return_value={"valid": True, "error": None},
-    )
+        "gns3server.controller.project.validate_bpf_syntax",
+    ):
+        stack.enter_context(patch(target, return_value={"valid": True, "error": None}))
+    return stack
 
 
 async def _make_link(project):
@@ -436,6 +446,73 @@ async def test_apply_defs_to_new_link(project):
 
     assert "global-arp" in new_link.markers
     assert new_link.markers["global-arp"]["inherited_from"] == "arp"
+
+
+@pytest.mark.asyncio
+async def test_create_marker_definition_validates_bpf_once(project):
+    # A definition validates its BPF once (project layer); the inherited fan-out
+    # to every link must NOT re-validate — no tcpdump subprocess per link.
+    with patch("gns3server.controller.project.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as proj_val, \
+         patch("gns3server.controller.udp_link.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as link_val:
+        await _make_link(project)
+        await _make_link(project)
+        await project.create_marker_definition("arp", "arp")
+
+    assert proj_val.call_count == 1          # validated once at the def layer
+    assert link_val.call_count == 0          # fan-out skipped per-link validation
+
+
+@pytest.mark.asyncio
+async def test_create_marker_definition_rejects_invalid_bpf(project):
+
+    with patch("gns3server.controller.project.validate_bpf_syntax",
+               return_value={"valid": False, "error": "syntax error"}):
+        with pytest.raises(ControllerError):
+            await project.create_marker_definition("arp", "not a real bpf")
+    assert "arp" not in project.marker_definitions
+
+
+@pytest.mark.asyncio
+async def test_update_marker_definition_skips_per_link_validation(project):
+    # Updating a def's BPF validates once more (project); the per-link sync
+    # (update_marker with inherited=True) must NOT re-validate.
+    with patch("gns3server.controller.project.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as proj_val, \
+         patch("gns3server.controller.udp_link.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as link_val:
+        await _make_link(project)
+        await _make_link(project)
+        await project.create_marker_definition("arp", "arp")
+        await project.update_marker_definition("arp", bpf="arp or rarp")
+
+    assert proj_val.call_count == 2          # once on create, once on update
+    assert link_val.call_count == 0          # sync skipped per-link validation
+
+
+@pytest.mark.asyncio
+async def test_start_marker_skips_validation_for_inherited(project):
+    # An inherited marker rides an already-validated definition BPF, so
+    # start_marker must not call validate_bpf_syntax.
+    with patch("gns3server.controller.udp_link.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as link_val:
+        link = await _make_link(project)
+        await link.inherit_marker("arp", {"bpf": "arp"})
+
+    assert link_val.call_count == 0
+    assert link.markers["global-arp"]["bpf"] == "arp"
+
+
+@pytest.mark.asyncio
+async def test_start_marker_validates_for_private(project):
+    # A private (non-inherited) marker still validates inline.
+    with patch("gns3server.controller.udp_link.validate_bpf_syntax",
+               return_value={"valid": True, "error": None}) as link_val:
+        link = await _make_link(project)
+        await link.start_marker("icmp", "icmp")
+
+    assert link_val.call_count == 1
 
 
 @pytest.mark.asyncio

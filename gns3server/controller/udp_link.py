@@ -379,9 +379,15 @@ class UDPLink(Link):
         if name in self._markers:
             raise ControllerError(f"Marker '{name}' already exists on link {self._id}")
 
-        result = validate_bpf_syntax(bpf)
-        if not result.get("valid"):
-            raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+        # Validate the BPF only for private per-link markers. An inherited copy
+        # (``inherited_from`` set) fans out from a definition whose BPF was
+        # already validated once at create/update (and on project load), so
+        # re-validating per link would spawn one ``tcpdump -d`` per link for the
+        # same expression.
+        if not inherited_from:
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
         if capture_node_id and not inherited_from:
             marker_side = self._node_by_id(capture_node_id)
@@ -474,9 +480,13 @@ class UDPLink(Link):
 
         # Merge every changed field into the marker state first.
         if bpf is not None and bpf != marker_info["bpf"]:
-            result = validate_bpf_syntax(bpf)
-            if not result.get("valid"):
-                raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+            # An inherited marker is synced from a definition whose BPF was
+            # already validated at create/update (or load); re-validating per
+            # link is redundant. Private markers validate here as before.
+            if not inherited:
+                result = validate_bpf_syntax(bpf)
+                if not result.get("valid"):
+                    raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
             marker_info["bpf"] = bpf
         if tag is not None:
             marker_info["tag"] = tag
