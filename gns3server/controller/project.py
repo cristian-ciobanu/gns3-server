@@ -967,17 +967,22 @@ class Project:
 
     def _validate_marker_definition_direction(self, name, direction):
         """
-        Reject tx/rx on a marker definition: a definition auto-selects its
-        capture node per link (``_choose_marker_side``), while tx/rx is
-        interpreted from that node's perspective, so a fixed direction has no
-        stable meaning project-wide. Only 'both' (the default, = ``None``) is
-        allowed — use a per-link marker if a directional filter is needed.
+        Reject tx/rx on a marker definition: a definition fans out to every link
+        and auto-selects its capture node on each (``_choose_marker_side``),
+        while tx/rx is relative to that node, so a fixed direction has no
+        consistent meaning across links. Only 'both' (the default, = ``None``)
+        is allowed — encode the direction in the BPF instead (e.g.
+        ``icmp[icmptype]==8`` for echo requests), or use a per-link marker whose
+        capture node is pinned.
         """
         if direction in ("tx", "rx"):
             raise ControllerError(
                 f"Marker definition '{name}': direction '{direction}' is not allowed. "
-                "A definition auto-selects its capture node per link and tx/rx is "
-                "relative to that node — use 'both' (the default), or a per-link marker."
+                "A definition fans out to every link and auto-selects its capture node on each, "
+                "but tx/rx is relative to that node, so a fixed direction has no consistent "
+                "meaning across links. Keep 'both' (the default) and encode the direction in "
+                "the BPF instead, e.g. 'icmp and icmp[icmptype]==8' for echo requests only. "
+                "For a capture-node-relative direction on a single link, use a per-link marker."
             )
 
     async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None):

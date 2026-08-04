@@ -147,6 +147,13 @@ observer would silently flip the meaning of stored `direction`, so recreate the 
 instead). It is not accepted on project-level definitions — a definition is link-agnostic and
 has no endpoints to choose from, so inherited markers always auto-pick per link.
 
+For the same reason, a definition **rejects `direction: tx|rx`** (HTTP 409): each inherited
+copy auto-picks its capture node, so a fixed tx/rx would denote different session directions
+on different links. A definition is `both` only; encode the direction you want in the BPF
+instead — e.g. `icmp and icmp[icmptype]==8` for echo requests, a packet-intrinsic property
+that is consistent on every link regardless of capture node. tx/rx remains available on
+per-link markers, where the capture node is fixed.
+
 ## Pause & resume
 
 Two levels of silencing, both instant (no NIO rebuild, no pcap flush):
@@ -156,8 +163,10 @@ Two levels of silencing, both instant (no NIO rebuild, no pcap flush):
   `enable_packet_filter … off`): no signal, no pcap, but traffic still relays —
   a paused `mark` is a no-op tap, not a drop. `{"enabled": true}` flips it back.
   A change to `enabled` alone is a single command (the pcap identity and emitted
-  counter are preserved); changing `bpf` or other fields still goes through a
-  reset+reapply.
+  counter are preserved). Changing `bpf`, `tag`, or `direction` rebuilds just that
+  one filter (`delete_packet_filter` + add) — only that marker's own pcap reopens
+  (a new capture session for the new BPF); changing `color`/`highlight_duration`
+  is UI-only, nothing is pushed to uBridge.
 - **Per-definition (inherited)** — `POST /v3/projects/{pid}/marker-definitions/{name}/pause`
   and `/resume` toggle **every** inherited `global-{name}` copy across all links
   at once (same `enable_packet_filter on|off`, fanned out per copy). Use to
@@ -171,6 +180,15 @@ Two levels of silencing, both instant (no NIO rebuild, no pcap flush):
 | per-marker `enabled: false` | stop | stop | n/a |
 | per-def `pause` (all `global-{name}` copies) | stop | stop | n/a |
 | per-def `resume` | resume | resume | n/a |
+
+## Capture files
+
+Each marker appends matches to `<project>/project-files/markers/<node_id>_<link_id>_<filter>.pcap`.
+Removing a marker — per-link `DELETE .../markers/{name}` or deleting a definition (which
+removes every inherited copy) — deletes that marker's pcap too, even with the capture node
+stopped (the filter is removed with `delete_packet_filter`, the file is unlinked). uBridge's
+`reset_packet_filters` (run on NIO/filter changes) preserves mark filters, so unrelated
+changes no longer close/reopen any marker's pcap.
 
 ## API Endpoints
 
