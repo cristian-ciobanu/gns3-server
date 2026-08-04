@@ -1115,7 +1115,10 @@ class BaseNode:
         # marker definitions (inherit_marker). The prefix is only forbidden at the
         # user-facing schema layer, not at the uBridge boundary.
         _MARKER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-        if not _MARKER_NAME_RE.match(name):
+        # Defense-in-depth vs hand-edited topology: the user-facing name is capped
+        # at 32 by the schema; inherited copies carry a ``global-`` prefix (≤ 39),
+        # so allow up to 48 here.
+        if not _MARKER_NAME_RE.match(name) or len(name) > 48:
             raise UbridgeError(f"Invalid marker name: {name!r}")
         cmd = 'bridge add_packet_filter {bridge} {name} mark "{bpf}"'.format(
             bridge=bridge_name, name=name, bpf=bpf

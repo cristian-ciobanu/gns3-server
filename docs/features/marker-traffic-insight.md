@@ -340,6 +340,8 @@ direction relative to the capture node; see [Direction](#direction).
   filter, the pcap filename, and `MARK` signal routing — so rename is a delete + recreate,
   not a field update. PUT ignores the body `name`; the `{name}` path parameter identifies
   the target, and only `bpf / tag / color / enabled / highlight_duration` are changeable.
+  Names are 1–32 chars (`[A-Za-z0-9][A-Za-z0-9_.-]*`); inherited copies carry a `global-`
+  prefix, so their filter names reach ~39.
 - **`global` prefix reserved.** User-chosen names may not start with `global`; inherited
   markers are stored as `global-{definition_name}` so the two namespaces cannot collide.
   Omitting `name` on create yields an auto-generated, prefix-free name.

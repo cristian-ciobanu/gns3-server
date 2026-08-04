@@ -105,6 +105,17 @@ class TestMarkerRoutes:
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+    async def test_create_marker_name_too_long_rejected(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
+
+        link = UDPLink(project)
+        project._links = {link.id: link}
+
+        response = await client.post(
+            app.url_path_for("create_marker", project_id=project.id, link_id=link.id),
+            json={"name": "x" * 33, "bpf": "icmp"},  # max_length is 32
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
     async def test_get_markers(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
 
         link = UDPLink(project)

@@ -152,7 +152,7 @@ class MarkerCreate(BaseModel):
     name: Optional[str] = Field(
         None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-        max_length=128,
+        max_length=32,
         description='Unique marker name on the link. Auto-generated when absent.',
     )
     bpf: str
@@ -236,7 +236,7 @@ class MarkerDefinitionCreate(BaseModel):
     name: Optional[str] = Field(
         None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-        max_length=128,
+        max_length=32,
         description="Unique definition name. Auto-generated when absent.",
     )
     bpf: str
