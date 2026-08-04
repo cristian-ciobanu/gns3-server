@@ -1052,7 +1052,6 @@ async def marker_definition(
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
-    direction: Annotated[str | None, Field(description="Direction filter: 'tx' (capture node sending only), 'rx' (receiving only), or 'both' (no filter — on update this clears a previously set direction). Omit to leave unchanged on update.")] = None,
 ) -> list[dict[str, Any]]:
     """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
 
@@ -1061,14 +1060,20 @@ async def marker_definition(
     On delete, 'global-{name}' is removed from every link.
 
     Create requires: project_id, action='create', bpf
-    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, direction, color, highlight_duration)
+    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration)
     Delete requires: project_id, action='delete', def_name
     List requires:  project_id, action='list'
+
+    A definition has NO direction (tx/rx): it fans out to every link and auto-selects
+    its capture node on each, so a fixed direction has no consistent meaning. Encode
+    the direction you want in the BPF instead (e.g. 'icmp and icmp[icmptype]==8' for
+    echo requests only). For a capture-node-relative direction on a single link, use
+    the per-link `link_marker` tool.
 
     Common BPF examples: 'arp', 'icmp', 'ospf', 'tcp port 22', 'udp port 53'
     """
     params = {"project_id": project_id, "action": action}
-    for opt in ("bpf", "def_name", "name", "tag", "direction", "color", "highlight_duration"):
+    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val
