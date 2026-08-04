@@ -791,7 +791,9 @@ class Project:
                 "tag": marker.get("tag"),
                 "enabled": marker.get("enabled", True),
                 "color": marker.get("color"),
+                "highlight_duration": marker.get("highlight_duration"),
                 "capture_node_id": marker.get("capture_node_id"),
+                "direction": marker.get("direction"),
             }
         if "link_style" in link_data:
             await link.update_link_style(link_data["link_style"])
@@ -963,6 +965,21 @@ class Project:
         """
         return self._marker_definitions
 
+    def _validate_marker_definition_direction(self, name, direction):
+        """
+        Reject tx/rx on a marker definition: a definition auto-selects its
+        capture node per link (``_choose_marker_side``), while tx/rx is
+        interpreted from that node's perspective, so a fixed direction has no
+        stable meaning project-wide. Only 'both' (the default, = ``None``) is
+        allowed — use a per-link marker if a directional filter is needed.
+        """
+        if direction in ("tx", "rx"):
+            raise ControllerError(
+                f"Marker definition '{name}': direction '{direction}' is not allowed. "
+                "A definition auto-selects its capture node per link and tx/rx is "
+                "relative to that node — use 'both' (the default), or a per-link marker."
+            )
+
     async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None):
         """
         Create a project-level marker definition and fan out to every existing
@@ -975,6 +992,7 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
+        self._validate_marker_definition_direction(name, direction)
         self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "paused": False}
         await self._apply_def_to_all_links(name)
         self.dump()
@@ -1000,6 +1018,7 @@ class Project:
         if highlight_duration is not None:
             d["highlight_duration"] = highlight_duration
         if direction is not _UNSET:
+            self._validate_marker_definition_direction(name, direction)
             d["direction"] = direction  # None = clear back to both directions
 
         # Sync: update every inherited copy across all links.

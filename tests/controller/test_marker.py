@@ -24,6 +24,8 @@ Controller-layer tests for the traffic-insight marker feature:
 * Project.apply_defs_to_new_link and the markers aggregation property.
 """
 
+import uuid
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -287,6 +289,78 @@ async def test_persist_markers_excludes_inherited(project):
 
 
 @pytest.mark.asyncio
+async def test_load_marker_preserves_direction_and_highlight_duration(project):
+    """Regression: a private marker's direction + highlight_duration must survive
+    a close/reopen round-trip through the topology file.
+
+    _create_link_from_topology_data previously restored only bpf/tag/enabled/
+    color/capture_node_id, silently dropping direction (→ reverted to "both")
+    and highlight_duration.
+    """
+    compute = MagicMock()
+    compute.id = "local"
+    compute.host = "example.com"
+
+    async def subnet(_other):
+        return ("192.168.1.1", "192.168.1.2")
+
+    async def udp_cb(path, data={}, **kwargs):
+        response = MagicMock()
+        response.json = {"udp_port": 1234}
+        return response
+
+    compute.get_ip_on_same_subnet.side_effect = subnet
+    compute.post.side_effect = udp_cb
+    # Attaching the 2nd node auto-creates the link (NIO round-trips).
+    compute.put = AsyncioMagicMock()
+    compute.delete = AsyncioMagicMock()
+
+    node1 = Node(project, compute, "n1", node_type="vpcs")
+    node1._ports = [EthernetPort("E0", 0, 0, 0)]
+    node2 = Node(project, compute, "n2", node_type="vpcs")
+    node2._ports = [EthernetPort("E0", 0, 0, 1)]
+    # _create_link_from_topology_data resolves nodes via project.get_node().
+    project._nodes[node1.id] = node1
+    project._nodes[node2.id] = node2
+
+    capture_node_id = str(uuid.uuid4())
+    link_id = str(uuid.uuid4())
+    link_data = {
+        "link_id": link_id,
+        "nodes": [
+            {"node_id": node1.id, "adapter_number": 0, "port_number": 0, "label": "a"},
+            {"node_id": node2.id, "adapter_number": 0, "port_number": 1, "label": "b"},
+        ],
+        "markers": {
+            "icmp": {
+                "bpf": "icmp",
+                "direction": "rx",
+                "highlight_duration": 800,
+                "tag": 7,
+                "color": "#ff5722",
+                "enabled": True,
+                "capture_node_id": capture_node_id,
+            }
+        },
+    }
+    with patch(
+        "gns3server.controller.project.validate_bpf_syntax",
+        return_value={"valid": True, "error": None},
+    ):
+        await project._create_link_from_topology_data(link_data)
+
+    # The link survives (2 attached nodes); pull it back from the project.
+    link = project._links[link_id]
+    entry = link._markers["icmp"]
+    assert entry["direction"] == "rx"           # dropped before the fix
+    assert entry["highlight_duration"] == 800   # dropped before the fix
+    assert entry["tag"] == 7
+    assert entry["color"] == "#ff5722"
+    assert entry["capture_node_id"] == capture_node_id
+    assert entry["enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_asdict_markers_runtime_vs_dump(project):
     """Runtime asdict exposes all markers; topology dump drops inherited ones."""
 
@@ -410,10 +484,16 @@ async def test_update_marker_preserves_direction_when_omitted(project):
 @pytest.mark.asyncio
 async def test_update_marker_definition_clears_direction(project):
     # Clearing a definition's direction must propagate to every inherited copy.
+    # New defs can't carry tx/rx, but a legacy def loaded from an old topology
+    # could — so inject one and confirm a clear syncs every copy.
     with _valid_bpf():
         link1 = await _make_link(project)
         link2 = await _make_link(project)
-        await project.create_marker_definition("arp", "arp", direction="tx")
+        await project.create_marker_definition("arp", "arp")
+        # Simulate a legacy directional value persisted before the restriction.
+        project._marker_definitions["arp"]["direction"] = "tx"
+        await link1.update_marker("global-arp", direction="tx", inherited=True)
+        await link2.update_marker("global-arp", direction="tx", inherited=True)
         for link in (link1, link2):
             assert link.markers["global-arp"]["direction"] == "tx"
         await project.update_marker_definition("arp", direction=None)
@@ -549,3 +629,37 @@ async def test_paused_definition_inherited_as_disabled(project):
         await project.pause_marker_definition("arp")
         new_link = await _make_link(project)
     assert new_link.markers["global-arp"]["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Marker definition direction (tx/rx rejected — it is capture-node-relative)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_marker_definition_rejects_directional(project):
+    # tx/rx is relative to the auto-selected capture node → rejected at the def level.
+    with pytest.raises(ControllerError):
+        await project.create_marker_definition("arp", "arp", direction="tx")
+    with pytest.raises(ControllerError):
+        await project.create_marker_definition("arp", "arp", direction="rx")
+    assert "arp" not in project.marker_definitions  # nothing created
+
+
+@pytest.mark.asyncio
+async def test_create_marker_definition_allows_both(project):
+    await project.create_marker_definition("arp", "arp")           # default both
+    await project.create_marker_definition("icmp", "icmp", direction=None)
+    assert project.marker_definitions["arp"]["direction"] is None
+    assert project.marker_definitions["icmp"]["direction"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_marker_definition_rejects_directional(project):
+    await project.create_marker_definition("arp", "arp")           # both
+    with pytest.raises(ControllerError):
+        await project.update_marker_definition("arp", direction="tx")
+    # omitted direction and explicit clear-to-both are both fine
+    await project.update_marker_definition("arp", color="#ffffff")
+    await project.update_marker_definition("arp", direction=None)
+    assert project.marker_definitions["arp"]["direction"] is None
