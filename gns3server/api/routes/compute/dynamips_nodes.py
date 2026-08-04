@@ -412,21 +412,26 @@ async def resume_dynamips_markers(node: Router = Depends(dep_node)) -> None:
 
 
 @router.delete(
-    "/{node_id}/markers/{marker_name}",
+    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/{marker_name}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(compute_authentication)]
 )
 async def delete_dynamips_marker_capture(
     marker_name: str,
+    adapter_number: int,
+    port_number: int,
     link_id: str = "",
     node: Router = Depends(dep_node)
 ) -> None:
     """
     Delete a marker's capture pcap (called by the controller when the marker is
-    removed) so the file is cleaned up even with the node stopped.
+    removed) so the file is cleaned up even with the node stopped. Also drops
+    the marker from the port NIO's cached spec so a node restart won't reinstall
+    it (and recreate an empty pcap).
     """
 
-    await node.delete_marker_capture(marker_name, link_id)
+    nio = node.get_nio(adapter_number, port_number)
+    await node.delete_marker_capture(marker_name, link_id, nio)
 
 
 @router.put(

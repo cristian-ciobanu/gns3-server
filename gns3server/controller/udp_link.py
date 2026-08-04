@@ -444,7 +444,10 @@ class UDPLink(Link):
             side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
             if side is not None:
                 try:
-                    await side["node"].delete(f"/markers/{name}", params={"link_id": self._id})
+                    await side["node"].delete(
+                        f"/adapters/{side['adapter_number']}/ports/{side['port_number']}/markers/{name}",
+                        params={"link_id": self._id},
+                    )
                 except Exception:
                     pass  # best-effort: old compute without the route leaves the file
         self._project.emit_notification("link.updated", self.asdict())

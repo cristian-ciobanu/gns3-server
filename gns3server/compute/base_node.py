@@ -1134,7 +1134,7 @@ class BaseNode:
         # bad expression must surface instead of being silently dropped.
         await self._ubridge_send(cmd)
 
-    async def delete_marker_capture(self, name, link_id):
+    async def delete_marker_capture(self, name, link_id, nio=None):
         """
         Remove a marker from uBridge (fine-grained ``delete_packet_filter`` — NOT
         reset_packet_filters, so sibling markers' pcaps aren't closed/reopened)
@@ -1142,7 +1142,15 @@ class BaseNode:
         removed; safe with the node stopped (filter removal is skipped, the file
         is still unlinked). IOU overrides ``_ubridge_delete_marker_filter`` for
         its ``iol_bridge`` command shape.
+
+        ``nio`` is the port NIO whose cached ``nio.markers`` carries this marker
+        spec; it is dropped here so a later node start / NIO reapply
+        (``_ubridge_apply_markers``) does not reinstall the marker. Without this,
+        deleting a marker while the node is stopped left the spec in
+        ``nio.markers``, and starting the node recreated an empty pcap.
         """
+        if nio is not None and getattr(nio, "markers", None):
+            nio.markers.pop(name, None)
         bridge_name = self._marker_filter_bridges.pop((name, link_id), None)
         if bridge_name is not None:
             await self._ubridge_delete_marker_filter(bridge_name, name)

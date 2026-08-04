@@ -274,6 +274,20 @@ async def test_delete_marker_capture_sends_delete_filter(compute_project, manage
 
 
 @pytest.mark.asyncio
+async def test_delete_marker_capture_drops_from_nio_markers(compute_project, manager):
+    # The marker spec cached on the port NIO (nio.markers) is what
+    # _ubridge_apply_markers reads on node start. delete_marker_capture must drop
+    # it, else deleting a marker while the node is stopped leaves the spec in
+    # nio.markers and starting the node reinstalls it (empty pcap reappears).
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "icmp", "tag": None, "link_id": "L1",
+                         "direction": None, "enabled": True}}
+    await node.delete_marker_capture("m", "L1", nio)
+    assert "m" not in nio.markers
+
+
+@pytest.mark.asyncio
 async def test_rebuild_marker_filter_delete_then_add(compute_project, manager):
     # rebuild re-installs a single filter (delete_packet_filter + add) with the
     # new params, no bridge reset; enabled=False turns it off after re-add.

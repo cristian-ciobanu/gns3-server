@@ -771,4 +771,6 @@ async def test_stop_marker_deletes_capture_pcap(project):
         capture.delete = AsyncioMagicMock()
         await link.stop_marker("icmp")
 
-    capture.delete.assert_called_once_with("/markers/icmp", params={"link_id": link.id})
+    capture.delete.assert_called_once_with(
+        "/adapters/0/ports/0/markers/icmp", params={"link_id": link.id}
+    )
