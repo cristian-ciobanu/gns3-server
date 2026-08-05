@@ -20,7 +20,7 @@ API routes for Dynamips nodes.
 
 import os
 
-from fastapi import APIRouter, WebSocket, Body, Depends, status
+from fastapi import APIRouter, WebSocket, Body, Depends, status, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from typing import List, Union

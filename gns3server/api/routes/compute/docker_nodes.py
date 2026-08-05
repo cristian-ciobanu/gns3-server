@@ -20,7 +20,7 @@ API routes for Docker nodes.
 
 import os
 
-from fastapi import APIRouter, WebSocket, Depends, Body, status
+from fastapi import APIRouter, WebSocket, Depends, Body, status, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from uuid import UUID

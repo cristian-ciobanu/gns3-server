@@ -20,7 +20,7 @@ API routes for Qemu nodes.
 
 import os
 
-from fastapi import APIRouter, WebSocket, Depends, Body, Path, status
+from fastapi import APIRouter, WebSocket, Depends, Body, Path, status, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from typing import Union
