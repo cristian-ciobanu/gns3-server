@@ -18,7 +18,6 @@
 Represents a uBridge hypervisor and starts/stops the associated uBridge process.
 """
 
-import sys
 import os
 import socket
 import subprocess
@@ -154,19 +153,17 @@ class Hypervisor(UBridgeHypervisor):
 
     async def _check_ubridge_version(self, env=None):
         """
-        Checks if the ubridge executable version
+        Checks if the ubridge executable version meets the minimum required.
         """
         try:
             output = await subprocess_check_output(self._path, "-v", cwd=self._working_dir, env=env)
             match = re.search(r"ubridge version ([0-9a-z\.]+)", output)
             if match:
                 self._version = match.group(1)
-                if sys.platform.startswith("darwin"):
-                    minimum_required_version = "0.9.12"
-                else:
-                    # uBridge version 0.9.14 is required for packet filters
-                    # to work for IOU nodes.
-                    minimum_required_version = "0.9.14"
+                # uBridge >= 1.2.0 is required for features this server now
+                # relies on: the AF_UNIX control channel (-U), the marker
+                # (mark) filter, and the brctl-backed builtin Ethernet Switch.
+                minimum_required_version = "1.2.0"
                 if parse_version(self._version) < parse_version(minimum_required_version):
                     raise UbridgeError(f"uBridge executable version must be >= {minimum_required_version}")
             else:
