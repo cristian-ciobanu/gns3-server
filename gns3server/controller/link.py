@@ -122,13 +122,27 @@ class Link:
         with a per-link private marker of the same name.  It carries an
         ``inherited_from`` back-reference that (a) guards against per-link
         edits and (b) lets the project sync changes to every copy at once.
+
+        The pcap link-layer follows the link type: Ethernet is always EN10MB.
+        A serial link needs the definition's WAN encapsulation (HDLC / PPP /
+        Frame Relay); if none was chosen the serial link is skipped — an EN10MB
+        pcap on a serial link is undecodable.
         """
+
+        def_data_link_type = marker_def.get("data_link_type", "DLT_EN10MB")
+        if self._link_type == "serial":
+            if def_data_link_type.upper() == "DLT_EN10MB":
+                return  # definition is Ethernet-only; skip this serial link
+            data_link_type = def_data_link_type
+        else:
+            data_link_type = "DLT_EN10MB"
 
         await self.start_marker(
             name=f"global-{def_name}",
             bpf=marker_def["bpf"],
             tag=marker_def.get("tag"),
             direction=marker_def.get("direction"),
+            data_link_type=data_link_type,
             color=marker_def.get("color"),
             highlight_duration=marker_def.get("highlight_duration"),
             enabled=not marker_def.get("paused", False),

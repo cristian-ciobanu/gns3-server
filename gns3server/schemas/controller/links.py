@@ -189,6 +189,19 @@ class MarkerCreate(BaseModel):
             "Omitted = server auto-picks (first started marker-capable endpoint)."
         ),
     )
+    data_link_type: str = Field(
+        "DLT_EN10MB",
+        description=(
+            "pcap link-layer type the marker's BPF compiles against and its "
+            "capture file is written with (a uBridge `linktype` token). Defaults "
+            "to DLT_EN10MB (Ethernet), which is omitted from the uBridge command. "
+            "Only meaningful for serial links: set it to the matching serial DLT "
+            "from the port's data_link_types — DLT_C_HDLC / DLT_PPP_SERIAL / "
+            "DLT_FRELAY / DLT_ATM_RFC1483 — so the BPF offsets and pcap decode "
+            "match the encapsulation configured in IOS. Create-only (changing it "
+            "would invalidate the pcap)."
+        ),
+    )
 
     @field_validator("direction", mode="before")
     @classmethod
@@ -258,6 +271,17 @@ class MarkerDefinitionCreate(BaseModel):
         None,
         pattern=r"^(tx|rx|both)$",
         description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only, 'both' or null = both directions.",
+    )
+    data_link_type: str = Field(
+        "DLT_EN10MB",
+        description=(
+            "pcap link-layer type for inherited markers on serial links (uBridge "
+            "`linktype`). Defaults to DLT_EN10MB (Ethernet): the definition then "
+            "applies only to Ethernet links and serial links are skipped. Set a "
+            "serial DLT — DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / "
+            "DLT_ATM_RFC1483 — to also cover serial links with that encapsulation; "
+            "Ethernet links stay EN10MB regardless. Changing it re-fans-out."
+        ),
     )
 
     @field_validator("direction", mode="before")

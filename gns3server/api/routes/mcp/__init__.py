@@ -1052,6 +1052,7 @@ async def marker_definition(
     tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+    data_link_type: Annotated[str | None, Field(description="pcap link-layer type for serial links (DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / DLT_ATM_RFC1483). Omit = Ethernet-only (serial links skipped); setting it also covers serial links with that encapsulation")] = None,
 ) -> list[dict[str, Any]]:
     """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
 
@@ -1060,7 +1061,7 @@ async def marker_definition(
     On delete, 'global-{name}' is removed from every link.
 
     Create requires: project_id, action='create', bpf
-    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration)
+    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration, data_link_type)
     Delete requires: project_id, action='delete', def_name
     List requires:  project_id, action='list'
 
@@ -1073,7 +1074,7 @@ async def marker_definition(
     Common BPF examples: 'arp', 'icmp', 'ospf', 'tcp port 22', 'udp port 53'
     """
     params = {"project_id": project_id, "action": action}
-    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration"):
+    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration", "data_link_type"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val

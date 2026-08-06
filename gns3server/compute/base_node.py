@@ -1091,7 +1091,25 @@ class BaseNode:
                 )
                 i += 1
 
-    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None, link_id=None, direction=None):
+    @staticmethod
+    def _marker_linktype(data_link_type):
+        """
+        Normalize a GNS3 pcap data-link type (e.g. ``DLT_C_HDLC``) to the bare
+        uBridge ``linktype`` token (``C_HDLC``) by stripping the ``DLT_`` prefix.
+        Returns ``None`` for Ethernet (``DLT_EN10MB`` / unset) so the ``linktype``
+        keyword is omitted and uBridge defaults to EN10MB. Values come straight
+        from ``SerialPort.data_link_types`` (the single source of truth); uBridge
+        resolves them with ``pcap_datalink_name_to_val``, which is case-sensitive
+        and expects the canonical uppercase form.
+        """
+        if not data_link_type:
+            return None
+        dlt = data_link_type.upper()
+        if dlt.startswith("DLT_"):
+            dlt = dlt[4:]
+        return None if dlt == "EN10MB" else dlt
+
+    async def _ubridge_add_marker_filter(self, bridge_name, name, bpf, pcap_path, tag=None, link_id=None, direction=None, data_link_type=None):
         """
         Attach a `mark` packet filter to a uBridge bridge for traffic insight.
 
@@ -1132,6 +1150,9 @@ class BaseNode:
             cmd += f" link {link_id}"
         if direction is not None:
             cmd += f" dir {direction}"
+        linktype = self._marker_linktype(data_link_type)
+        if linktype is not None:
+            cmd += f" linktype {linktype}"
         cmd += ' pcap "{path}"'.format(path=pcap_path)
         # Let BPF compile errors propagate — the marker is the user's intent, so a
         # bad expression must surface instead of being silently dropped.
@@ -1232,7 +1253,8 @@ class BaseNode:
             )
             try:
                 await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id,
-                                                     direction=spec.get("direction"))
+                                                     direction=spec.get("direction"),
+                                                     data_link_type=spec.get("data_link_type"))
             except UbridgeError as e:
                 # Swallow BPF compile errors (warn + skip) so a single bad
                 # expression can't break link creation / node restart — mirrors

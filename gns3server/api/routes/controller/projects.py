@@ -271,6 +271,7 @@ async def create_marker_definition(
         direction=def_data.direction,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
+        data_link_type=def_data.data_link_type,
     )
     return project.marker_definitions.get(name, {})
 
@@ -297,6 +298,7 @@ async def update_marker_definition(
         direction=def_data.direction if "direction" in def_data.model_fields_set else _UNSET,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
+        data_link_type=def_data.data_link_type if "data_link_type" in def_data.model_fields_set else _UNSET,
     )
     return project.marker_definitions.get(def_name, {})
 

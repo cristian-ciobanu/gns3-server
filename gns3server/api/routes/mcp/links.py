@@ -457,7 +457,7 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "color", "highlight_duration"):
+        for opt in ("name", "tag", "color", "highlight_duration", "data_link_type"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         # No direction: a definition fans out to every link and auto-selects its
@@ -473,11 +473,11 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
 
     if action == "update":
         body = {}
-        for opt in ("bpf", "tag", "color", "highlight_duration"):
+        for opt in ("bpf", "tag", "color", "highlight_duration", "data_link_type"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         if not body:
-            return {"error": "At least one update field is required (bpf, tag, color, highlight_duration)"}
+            return {"error": "At least one update field is required (bpf, tag, color, highlight_duration, data_link_type)"}
         return conn.http_call("put", url, json_data=body).json()
 
     # action == "delete"

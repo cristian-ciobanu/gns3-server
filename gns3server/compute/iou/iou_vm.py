@@ -1311,6 +1311,9 @@ class IOUVM(BaseNode):
             direction = spec.get("direction")
             if direction is not None:
                 cmd += f" dir {direction}"
+            linktype = self._marker_linktype(spec.get("data_link_type"))
+            if linktype is not None:
+                cmd += f" linktype {linktype}"
             cmd += ' pcap "{path}"'.format(path=pcap_path)
             try:
                 await self._ubridge_send(cmd)

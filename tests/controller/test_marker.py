@@ -34,6 +34,7 @@ from tests.utils import AsyncioMagicMock
 
 from gns3server.controller.udp_link import UDPLink
 from gns3server.controller.ports.ethernet_port import EthernetPort
+from gns3server.controller.ports.serial_port import SerialPort
 from gns3server.controller.node import Node
 from gns3server.controller.controller_error import ControllerError, ControllerNotFoundError
 
@@ -55,17 +56,21 @@ def _valid_bpf():
     return stack
 
 
-async def _make_link(project):
-    """Build a created UDPLink between two VPCS nodes on a mocked compute."""
+async def _make_link(project, port_cls=EthernetPort):
+    """Build a created UDPLink between two VPCS nodes on a mocked compute.
+
+    ``port_cls`` defaults to EthernetPort; pass SerialPort for a serial link
+    (the link's link_type follows the port).
+    """
 
     compute = MagicMock()
     compute.id = "local"
     compute.host = "example.com"
 
     node1 = Node(project, compute, "n1", node_type="vpcs")
-    node1._ports = [EthernetPort("E0", 0, 0, 0)]
+    node1._ports = [port_cls("E0", 0, 0, 0)]
     node2 = Node(project, compute, "n2", node_type="vpcs")
-    node2._ports = [EthernetPort("E0", 0, 0, 1)]
+    node2._ports = [port_cls("E0", 0, 0, 1)]
 
     async def subnet(_other):
         return ("192.168.1.1", "192.168.1.2")
@@ -108,6 +113,29 @@ async def test_start_marker_stores_entry(project):
     assert entry["enabled"] is True
     assert entry["capture_node_id"] in {n["node"].id for n in link._nodes}
     assert "inherited_from" not in entry
+
+
+@pytest.mark.asyncio
+async def test_start_marker_stores_data_link_type(project):
+    # data_link_type is stored on the marker and flows into the per-node spec
+    # (the compute-side source for the uBridge `linktype` keyword). Serial-only;
+    # defaults to DLT_EN10MB when omitted (Ethernet → linktype omitted).
+    with _valid_bpf():
+        link = await _make_link(project)
+        await link.start_marker("ospf", "ospf", data_link_type="DLT_C_HDLC")
+
+    assert link.markers["ospf"]["data_link_type"] == "DLT_C_HDLC"
+    capture_id = link.markers["ospf"]["capture_node_id"]
+    capture_side = next(n for n in link._nodes if n["node"].id == capture_id)
+    assert link._markers_for_node(capture_side["node"])["ospf"]["data_link_type"] == "DLT_C_HDLC"
+
+    # Default when omitted = Ethernet.
+    with _valid_bpf():
+        link2 = await _make_link(project)
+        await link2.start_marker("icmp", "icmp")
+    cid = link2.markers["icmp"]["capture_node_id"]
+    cside = next(n for n in link2._nodes if n["node"].id == cid)
+    assert link2._markers_for_node(cside["node"])["icmp"]["data_link_type"] == "DLT_EN10MB"
 
 
 @pytest.mark.asyncio
@@ -418,6 +446,46 @@ async def test_update_marker_definition_syncs(project):
         assert link.markers["global-arp"]["highlight_duration"] == 1500
         assert link.markers["global-arp"]["bpf"] == "arp or rarp"
     assert project.marker_definitions["arp"]["highlight_duration"] == 1500
+
+
+@pytest.mark.asyncio
+async def test_definition_serial_dlt_fans_out_to_serial_link(project):
+    # A definition with a serial data_link_type covers serial links with that
+    # encapsulation AND ethernet links with EN10MB (one definition, mixed topo).
+    with _valid_bpf():
+        serial_link = await _make_link(project, SerialPort)
+        eth_link = await _make_link(project)
+        await project.create_marker_definition("ospf", "ospf", data_link_type="DLT_C_HDLC")
+
+    assert serial_link._link_type == "serial"
+    assert serial_link.markers["global-ospf"]["data_link_type"] == "DLT_C_HDLC"
+    assert eth_link.markers["global-ospf"]["data_link_type"] == "DLT_EN10MB"
+
+
+@pytest.mark.asyncio
+async def test_definition_default_skips_serial_link(project):
+    # Default (EN10MB) definition is Ethernet-only: serial links are skipped
+    # (an EN10MB pcap on a serial link would be undecodable).
+    with _valid_bpf():
+        serial_link = await _make_link(project, SerialPort)
+        eth_link = await _make_link(project)
+        await project.create_marker_definition("arp", "arp")
+
+    assert "global-arp" not in serial_link.markers
+    assert "global-arp" in eth_link.markers
+
+
+@pytest.mark.asyncio
+async def test_update_definition_data_link_type_refans_out(project):
+    # Changing data_link_type re-evaluates which links host the marker: a serial
+    # link skipped under the default gains the marker once a WAN DLT is chosen.
+    with _valid_bpf():
+        serial_link = await _make_link(project, SerialPort)
+        await project.create_marker_definition("ospf", "ospf")
+        assert "global-ospf" not in serial_link.markers  # default → serial skipped
+        await project.update_marker_definition("ospf", data_link_type="DLT_PPP_SERIAL")
+
+    assert serial_link.markers["global-ospf"]["data_link_type"] == "DLT_PPP_SERIAL"
 
 
 @pytest.mark.asyncio

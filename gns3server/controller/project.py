@@ -1000,7 +1000,7 @@ class Project:
                 "For a capture-node-relative direction on a single link, use a per-link marker."
             )
 
-    async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None):
+    async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None, data_link_type="DLT_EN10MB"):
         """
         Create a project-level marker definition and fan out to every existing
         link that has a capable node.  Links without a capable node are silently
@@ -1014,12 +1014,12 @@ class Project:
 
         self._validate_marker_definition_bpf(name, bpf)
         self._validate_marker_definition_direction(name, direction)
-        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "paused": False}
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "data_link_type": data_link_type, "paused": False}
         await self._apply_def_to_all_links(name)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
-    async def update_marker_definition(self, name, bpf=None, tag=None, direction=_UNSET, color=None, highlight_duration=None):
+    async def update_marker_definition(self, name, bpf=None, tag=None, direction=_UNSET, color=None, highlight_duration=None, data_link_type=_UNSET):
         """
         Update a marker definition and sync every inherited copy on every link.
         """
@@ -1042,15 +1042,33 @@ class Project:
         if direction is not _UNSET:
             self._validate_marker_definition_direction(name, direction)
             d["direction"] = direction  # None = clear back to both directions
+        if data_link_type is not _UNSET:
+            d["data_link_type"] = data_link_type
 
-        # Sync: update every inherited copy across all links.
-        for link in list(self._links.values()):
-            marker_name = f"global-{name}"
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                await link.update_marker(
-                    marker_name, bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"), color=d.get("color"),
-                    highlight_duration=d.get("highlight_duration"), inherited=True
-                )
+        if data_link_type is not _UNSET:
+            # data_link_type decides which links host an inherited copy (serial
+            # links are skipped unless a WAN encapsulation is chosen), so a change
+            # needs a full re-fan-out: drop every copy, then re-apply.
+            for link in list(self._links.values()):
+                marker_name = f"global-{name}"
+                if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                    try:
+                        await link.stop_marker(marker_name, inherited=True)
+                    except ControllerError:
+                        log.warning(
+                            "Failed to remove inherited marker %s from link %s",
+                            marker_name, link.id
+                        )
+            await self._apply_def_to_all_links(name)
+        else:
+            # Sync: update every inherited copy across all links.
+            for link in list(self._links.values()):
+                marker_name = f"global-{name}"
+                if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
+                    await link.update_marker(
+                        marker_name, bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"), color=d.get("color"),
+                        highlight_duration=d.get("highlight_duration"), inherited=True
+                    )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 

@@ -230,6 +230,52 @@ async def test_apply_markers_turns_disabled_filter_off(compute_project, manager)
     assert node._marker_filter_bridges["m", "L1"] == "VPCS-10"
 
 
+def test_marker_linktype_normalizes():
+    # Ethernet / unset → None (linktype omitted; uBridge defaults to EN10MB).
+    assert VPCSVM._marker_linktype(None) is None
+    assert VPCSVM._marker_linktype("") is None
+    assert VPCSVM._marker_linktype("DLT_EN10MB") is None
+    # Serial DLTs from SerialPort.data_link_types, DLT_ prefix stripped.
+    assert VPCSVM._marker_linktype("DLT_C_HDLC") == "C_HDLC"
+    assert VPCSVM._marker_linktype("DLT_PPP_SERIAL") == "PPP_SERIAL"
+    assert VPCSVM._marker_linktype("DLT_FRELAY") == "FRELAY"
+    assert VPCSVM._marker_linktype("DLT_ATM_RFC1483") == "ATM_RFC1483"
+    # Case-insensitive input → canonical uppercase (pcap_datalink_name_to_val is
+    # case-sensitive and expects the uppercase form). Shared by base_node and IOU.
+    assert VPCSVM._marker_linktype("dlt_c_hdlc") == "C_HDLC"
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_appends_linktype_for_serial(compute_project, manager):
+    # A serial data_link_type reaches the uBridge mark command as `linktype C_HDLC`
+    # so the BPF offsets and pcap decode match the WAN encapsulation.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "icmp", "tag": None, "link_id": "L1",
+                         "direction": None, "data_link_type": "DLT_C_HDLC", "enabled": True}}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.register = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    sent = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert any("linktype C_HDLC" in s for s in sent)
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_omits_linktype_for_ethernet(compute_project, manager):
+    # Ethernet (DLT_EN10MB) → no linktype keyword; uBridge defaults to EN10MB.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "icmp", "tag": None, "link_id": "L1",
+                         "direction": None, "data_link_type": "DLT_EN10MB", "enabled": True}}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.register = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    sent = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert not any("linktype" in s for s in sent)
+
+
 @pytest.mark.asyncio
 async def test_delete_marker_capture_removes_pcap_and_entry(compute_project, manager):
     # Deleting a marker's capture removes its pcap and forgets the bridge entry.

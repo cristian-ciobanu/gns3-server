@@ -57,15 +57,18 @@ class UDPLink(Link):
 
     def _markers_for_node(self, node):
         """
-        Marker specs (name -> {bpf, tag, link_id, direction, enabled}) for the
-        markers whose capture side is ``node``. Routed by capture_node_id so a
-        marker only rides the NIO of the node whose uBridge will host it. A
-        disabled marker is included (installed then turned ``off`` at uBridge,
-        not dropped) so the UI can toggle it instantly without an NIO rebuild.
+        Marker specs (name -> {bpf, tag, link_id, direction, data_link_type,
+        enabled}) for the markers whose capture side is ``node``. Routed by
+        capture_node_id so a marker only rides the NIO of the node whose uBridge
+        will host it. A disabled marker is included (installed then turned
+        ``off`` at uBridge, not dropped) so the UI can toggle it instantly
+        without an NIO rebuild.
         """
         return {
             name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id,
-                   "direction": m.get("direction"), "enabled": m.get("enabled", True)}
+                   "direction": m.get("direction"),
+                   "data_link_type": m.get("data_link_type", "DLT_EN10MB"),
+                   "enabled": m.get("enabled", True)}
             for name, m in self._markers.items()
             if m.get("capture_node_id") == node.id
         }
@@ -350,7 +353,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None):
         """
         Attach a traffic-insight marker to this link.
 
@@ -401,6 +404,7 @@ class UDPLink(Link):
             "highlight_duration": highlight_duration,
             "capture_node_id": marker_side["node"].id,
             "direction": direction,
+            "data_link_type": data_link_type,
         }
         if inherited_from:
             marker_entry["inherited_from"] = inherited_from
