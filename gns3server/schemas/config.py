@@ -164,10 +164,11 @@ class ServerSettings(BaseModel):
     udp_start_port_range: int = Field(10000, gt=0, le=65535)
     udp_end_port_range: int = Field(30000, gt=0, le=65535)
     ubridge_path: str = "ubridge"
-    # Transport for the uBridge hypervisor control channel. "tcp" (-H) is the
-    # historical default; "unix" (-U, AF_UNIX + SO_PEERCRED) is recommended on
-    # Linux for kernel-level peer authentication.
-    ubridge_control_transport: UbridgeControlTransport = UbridgeControlTransport.tcp
+    # Transport for the uBridge hypervisor control channel. "unix" (-U,
+    # AF_UNIX + SO_PEERCRED) is the default — recommended on Linux for
+    # kernel-level peer authentication. "tcp" (-H) is retained for backward
+    # compatibility.
+    ubridge_control_transport: UbridgeControlTransport = UbridgeControlTransport.unix
     # Marker (traffic-insight) UDP sink: one listener per compute process that
     # receives ubridge MARK signals from every ubridge on this host. The host
     # defaults to loopback because ubridge runs on the same host as the compute.
