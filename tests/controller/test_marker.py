@@ -434,6 +434,21 @@ async def test_create_marker_definition_fans_out(project):
 
 
 @pytest.mark.asyncio
+async def test_definition_fans_out_over_many_links(project):
+    # The fan-out is concurrent (bounded) — a large topology must not serialize
+    # N compute round-trips — but behaviorally every link still receives the
+    # marker and per-link failures stay isolated.
+    with _valid_bpf():
+        links = [await _make_link(project) for _ in range(20)]
+        await project.create_marker_definition("arp", "arp", highlight_duration=700)
+
+    for link in links:
+        assert link.markers["global-arp"]["highlight_duration"] == 700
+        assert link.markers["global-arp"]["inherited_from"] == "arp"
+    assert project.marker_definitions["arp"]["highlight_duration"] == 700
+
+
+@pytest.mark.asyncio
 async def test_update_marker_definition_syncs(project):
 
     with _valid_bpf():

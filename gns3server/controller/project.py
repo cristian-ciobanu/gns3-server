@@ -1045,30 +1045,33 @@ class Project:
         if data_link_type is not _UNSET:
             d["data_link_type"] = data_link_type
 
+        # Links that currently carry an inherited copy of this definition.
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+
         if data_link_type is not _UNSET:
             # data_link_type decides which links host an inherited copy (serial
             # links are skipped unless a WAN encapsulation is chosen), so a change
             # needs a full re-fan-out: drop every copy, then re-apply.
-            for link in list(self._links.values()):
-                marker_name = f"global-{name}"
-                if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                    try:
-                        await link.stop_marker(marker_name, inherited=True)
-                    except ControllerError:
-                        log.warning(
-                            "Failed to remove inherited marker %s from link %s",
-                            marker_name, link.id
-                        )
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.stop_marker(f"global-{name}", inherited=True),
+                lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+            )
             await self._apply_def_to_all_links(name)
         else:
             # Sync: update every inherited copy across all links.
-            for link in list(self._links.values()):
-                marker_name = f"global-{name}"
-                if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                    await link.update_marker(
-                        marker_name, bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"), color=d.get("color"),
-                        highlight_duration=d.get("highlight_duration"), inherited=True
-                    )
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.update_marker(
+                    f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
+                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True
+                ),
+                lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
+            )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -1084,17 +1087,17 @@ class Project:
 
         del self._marker_definitions[name]
 
-        for link in list(self._links.values()):
-            marker_name = f"global-{name}"
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                try:
-                    await link.stop_marker(marker_name, inherited=True)
-                except ControllerError:
-                    # A missing compute or broken link shouldn't block the delete.
-                    log.warning(
-                        "Failed to remove inherited marker %s from link %s",
-                        marker_name, link.id
-                    )
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.stop_marker(f"global-{name}", inherited=True),
+            # A missing compute or broken link shouldn't block the delete.
+            lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+        )
 
         self.dump()
         self.emit_notification("project.updated", self.asdict())
@@ -1107,21 +1110,21 @@ class Project:
         """
 
         d = self._marker_definitions[def_name]
-        for link in list(self._links.values()):
-            try:
-                await link.inherit_marker(def_name, d)
-            except ControllerError as e:
-                # Per-link failures (e.g. no capable node) shouldn't block the
-                # definition from serving the rest.
-                log.warning(
-                    "Marker definition '%s' could not be applied to link %s: %s",
-                    def_name, link.id, e
-                )
+        await self._marker_apply_concurrently(
+            list(self._links.values()),
+            lambda link: link.inherit_marker(def_name, d),
+            lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
+        )
 
     async def apply_defs_to_new_link(self, link):
         """
         Apply every active marker definition to a newly created link so it
         inherits project-level rules automatically.
+
+        Deliberately serial: all definitions share the same link, and each
+        ``inherit_marker`` pushes the link's full marker set — concurrent
+        pushes would race (a later push overwriting an earlier one's spec and
+        losing markers).
         """
 
         for def_name, d in self._marker_definitions.items():
@@ -1132,6 +1135,33 @@ class Project:
                     "Marker definition '%s' could not be applied to new link %s: %s",
                     def_name, link.id, e
                 )
+
+    async def _marker_apply_concurrently(self, links, operation, fail_msg):
+        """
+        Run an async per-link marker operation across *links* with bounded
+        concurrency. A serial loop takes N sequential compute round-trips — a
+        definition over 1000 links would take minutes on remote computes — so
+        fan out in parallel batches. Links are independent (own ``_markers`` /
+        ``_link_data``), so this is race-free; per-link ``ControllerError`` is
+        logged and skipped, preserving the serial loop's isolation semantics.
+        ``Project.dump`` is synchronous and writes atomically (tmp + rename),
+        so concurrent dumps from the fan-out cannot corrupt the topology file.
+
+        :param links: iterable of links to operate on
+        :param operation: async callable ``(link) -> coroutine``
+        :param fail_msg: callable ``(link, error) -> log message``
+        """
+
+        sem = asyncio.Semaphore(32)
+
+        async def guarded(link):
+            async with sem:
+                try:
+                    await operation(link)
+                except ControllerError as e:
+                    log.warning(fail_msg(link, e))
+
+        await asyncio.gather(*(guarded(link) for link in links))
 
     @property
     def snapshots(self):
