@@ -1290,9 +1290,18 @@ class IOUVM(BaseNode):
             bridge_name=bridge_name, bay=adapter_number, unit=port_number
         )
         for name, spec in markers.items():
+            link_id = spec.get("link_id", "")
+            # Incremental: skip markers already installed on this port. A NIO
+            # update carries EVERY marker on the port (e.g. an inherited
+            # global-* copy plus a newly added private one); uBridge's
+            # add_packet_filter rejects a duplicate filter name (packet_filter.c),
+            # so we must not re-add one already here — mirrors the generic
+            # _ubridge_apply_markers guard. A fresh bridge has an empty map
+            # (cleared on _stop_ubridge) so all are installed.
+            if (name, link_id) in self._marker_filter_bridges:
+                continue
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            link_id = spec.get("link_id", "")
             pcap_path = os.path.join(
                 markers_dir, f"{self._id}_{link_id}_{name}.pcap"
             )
