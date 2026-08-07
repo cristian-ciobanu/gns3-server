@@ -939,9 +939,15 @@ class Project:
             raise ControllerError(f"Marker definition '{name}' not found")
         self._marker_definitions[name]["paused"] = True
         marker_name = f"global-{name}"
-        for link in list(self._links.values()):
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                await link.update_marker(marker_name, enabled=False, inherited=True)
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=False, inherited=True, dump=False),
+            lambda link, e: f"Failed to pause marker {marker_name} on link {link.id}: {e}",
+        )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -952,9 +958,15 @@ class Project:
             raise ControllerError(f"Marker definition '{name}' not found")
         self._marker_definitions[name]["paused"] = False
         marker_name = f"global-{name}"
-        for link in list(self._links.values()):
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                await link.update_marker(marker_name, enabled=True, inherited=True)
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=True, inherited=True, dump=False),
+            lambda link, e: f"Failed to resume marker {marker_name} on link {link.id}: {e}",
+        )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -1058,7 +1070,7 @@ class Project:
             # needs a full re-fan-out: drop every copy, then re-apply.
             await self._marker_apply_concurrently(
                 affected,
-                lambda link: link.stop_marker(f"global-{name}", inherited=True),
+                lambda link: link.stop_marker(f"global-{name}", inherited=True, dump=False),
                 lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
             )
             await self._apply_def_to_all_links(name)
@@ -1068,7 +1080,8 @@ class Project:
                 affected,
                 lambda link: link.update_marker(
                     f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
-                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True
+                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
+                    dump=False
                 ),
                 lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
             )
@@ -1110,9 +1123,12 @@ class Project:
         """
 
         d = self._marker_definitions[def_name]
+        # dump=False: per-link topology writes are the dominant cost on large
+        # projects — the callers (create/update_marker_definition) dump once
+        # after the fan-out.
         await self._marker_apply_concurrently(
             list(self._links.values()),
-            lambda link: link.inherit_marker(def_name, d),
+            lambda link: link.inherit_marker(def_name, d, dump=False),
             lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
         )
 
@@ -1129,7 +1145,9 @@ class Project:
 
         for def_name, d in self._marker_definitions.items():
             try:
-                await link.inherit_marker(def_name, d)
+                # dump=False: the caller (link create / project open) dumps once
+                # after; per-def dumps here would be N full topology writes.
+                await link.inherit_marker(def_name, d, dump=False)
             except ControllerError as e:
                 log.warning(
                     "Marker definition '%s' could not be applied to new link %s: %s",

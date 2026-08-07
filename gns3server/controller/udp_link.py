@@ -353,7 +353,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True):
         """
         Attach a traffic-insight marker to this link.
 
@@ -412,9 +412,12 @@ class UDPLink(Link):
         if self._created:
             await self.update()
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        # Bulk fan-out passes dump=False: N per-link topology writes on a
+        # 500-link project are the dominant cost — the caller dumps once after.
+        if dump:
+            self._project.dump()
 
-    async def stop_marker(self, name, inherited=False):
+    async def stop_marker(self, name, inherited=False, dump=True):
         """
         Remove a traffic-insight marker from this link.
 
@@ -455,9 +458,10 @@ class UDPLink(Link):
                 except Exception:
                     pass  # best-effort: old compute without the route leaves the file
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        if dump:
+            self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True):
         """
         Update an existing marker's fields and push to uBridge fine-grained — no
         full NIO reapply, so sibling markers' pcaps stay open. bpf/tag/direction
@@ -536,4 +540,5 @@ class UDPLink(Link):
                     # correct in _markers; the next NIO reapply converges uBridge.
                     pass
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        if dump:
+            self._project.dump()
