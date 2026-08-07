@@ -469,6 +469,7 @@ async def create_marker(
         capture_node_id=marker_data.capture_node_id,
         color=marker_data.color,
         highlight_duration=marker_data.highlight_duration,
+        data_link_type=marker_data.data_link_type,
     )
     return link.markers.get(name, {})
 
