@@ -40,6 +40,7 @@ from uuid import UUID
 from gns3server import schemas
 from gns3server.controller import Controller
 from gns3server.controller.project import Project
+from gns3server.controller.link import _UNSET
 from gns3server.controller.controller_error import ControllerError, ControllerBadRequestError
 from gns3server.controller.import_project import import_project as import_controller_project
 from gns3server.controller.export_project import export_project as export_controller_project
@@ -267,8 +268,10 @@ async def create_marker_definition(
         name=name,
         bpf=def_data.bpf,
         tag=def_data.tag,
+        direction=def_data.direction,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
+        data_link_type=def_data.data_link_type,
     )
     return project.marker_definitions.get(name, {})
 
@@ -292,10 +295,50 @@ async def update_marker_definition(
         name=def_name,
         bpf=def_data.bpf if def_data.bpf else None,
         tag=def_data.tag,
+        direction=def_data.direction if "direction" in def_data.model_fields_set else _UNSET,
         color=def_data.color,
         highlight_duration=def_data.highlight_duration,
+        data_link_type=def_data.data_link_type if "data_link_type" in def_data.model_fields_set else _UNSET,
     )
     return project.marker_definitions.get(def_name, {})
+
+
+@router.post(
+    "/{project_id}/marker-definitions/{def_name}/pause",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def pause_marker_definition(
+    def_name: str,
+    project: Project = Depends(dep_project)
+) -> None:
+    """
+    Pause a definition: toggle off every inherited ``global-{def_name}`` copy
+    on every link (uBridge ``enable_packet_filter off``, instant — no NIO
+    rebuild). The definition's ``paused`` flag is persisted, so links created
+    later inherit it already paused.
+
+    Required privilege: Project.Modify
+    """
+
+    await project.pause_marker_definition(def_name)
+
+
+@router.post(
+    "/{project_id}/marker-definitions/{def_name}/resume",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Project.Modify"))]
+)
+async def resume_marker_definition(
+    def_name: str,
+    project: Project = Depends(dep_project)
+) -> None:
+    """Resume a paused definition (toggle on every inherited copy).
+
+    Required privilege: Project.Modify
+    """
+
+    await project.resume_marker_definition(def_name)
 
 
 @router.delete(

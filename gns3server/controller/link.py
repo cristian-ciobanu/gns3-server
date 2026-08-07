@@ -30,6 +30,13 @@ import logging
 log = logging.getLogger(__name__)
 
 
+# Sentinel for "argument not passed". Distinct from None so marker/definition
+# updaters can tell "caller omitted direction" (keep current value) from
+# "caller passed direction=None" (clear it back to both directions). See
+# UDPLink.update_marker and Project.update_marker_definition.
+_UNSET = object()
+
+
 FILTERS = [
     {
         "type": "frequency_drop",
@@ -107,7 +114,7 @@ class Link:
         """
         return self._markers
 
-    async def inherit_marker(self, def_name, marker_def):
+    async def inherit_marker(self, def_name, marker_def, dump=True):
         """
         Apply a project-level marker definition to this link.
 
@@ -115,15 +122,32 @@ class Link:
         with a per-link private marker of the same name.  It carries an
         ``inherited_from`` back-reference that (a) guards against per-link
         edits and (b) lets the project sync changes to every copy at once.
+
+        The pcap link-layer follows the link type: Ethernet is always EN10MB.
+        A serial link needs the definition's WAN encapsulation (HDLC / PPP /
+        Frame Relay); if none was chosen the serial link is skipped — an EN10MB
+        pcap on a serial link is undecodable.
         """
+
+        def_data_link_type = marker_def.get("data_link_type", "DLT_EN10MB")
+        if self._link_type == "serial":
+            if def_data_link_type.upper() == "DLT_EN10MB":
+                return  # definition is Ethernet-only; skip this serial link
+            data_link_type = def_data_link_type
+        else:
+            data_link_type = "DLT_EN10MB"
 
         await self.start_marker(
             name=f"global-{def_name}",
             bpf=marker_def["bpf"],
             tag=marker_def.get("tag"),
+            direction=marker_def.get("direction"),
+            data_link_type=data_link_type,
             color=marker_def.get("color"),
             highlight_duration=marker_def.get("highlight_duration"),
+            enabled=not marker_def.get("paused", False),
             inherited_from=def_name,
+            dump=dump,
         )
 
     def _persist_markers(self):
@@ -333,7 +357,7 @@ class Link:
 
         raise NotImplementedError
 
-    async def start_marker(self, name, bpf, tag=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, capture_node_id=None, enabled=True):
         """
         Attach a traffic-insight marker to this link (base — UDPLink overrides).
         """
@@ -345,7 +369,7 @@ class Link:
         """
         raise NotImplementedError
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET):
         """
         Update an existing marker's BPF, tag, or enabled flag.
 

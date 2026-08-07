@@ -395,9 +395,12 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "color", "highlight_duration"):
+        for opt in ("name", "tag", "capture_node_id", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
+        # direction: "tx"/"rx" set a one-way filter; "both"/omitted = no filter.
+        if params.get("direction") in ("tx", "rx"):
+            body["direction"] = params["direction"]
         return conn.http_call("post", base, json_data=body).json()
 
     marker_name = params.get("marker_name")
@@ -411,8 +414,14 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         for opt in ("bpf", "tag", "enabled", "color", "highlight_duration"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
+        # direction tri-state: omitted=preserve, "tx"/"rx"=set, "both"=clear (→ null).
+        direction = params.get("direction")
+        if direction == "both":
+            body["direction"] = None
+        elif direction in ("tx", "rx"):
+            body["direction"] = direction
         if not body:
-            return {"error": "At least one update field is required (bpf, tag, enabled, color, highlight_duration)"}
+            return {"error": "At least one update field is required (bpf, tag, enabled, direction, color, highlight_duration)"}
         return conn.http_call("put", url, json_data=body).json()
 
     # action == "delete"
@@ -448,9 +457,12 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "color", "highlight_duration"):
+        for opt in ("name", "tag", "color", "highlight_duration", "data_link_type"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
+        # No direction: a definition fans out to every link and auto-selects its
+        # capture node on each, so tx/rx (which is relative to that node) has no
+        # consistent meaning. Encode direction in the BPF instead.
         return conn.http_call("post", base, json_data=body).json()
 
     def_name = params.get("def_name")
@@ -461,11 +473,11 @@ def marker_definition_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
 
     if action == "update":
         body = {}
-        for opt in ("bpf", "tag", "color", "highlight_duration"):
+        for opt in ("bpf", "tag", "color", "highlight_duration", "data_link_type"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         if not body:
-            return {"error": "At least one update field is required (bpf, tag, color, highlight_duration)"}
+            return {"error": "At least one update field is required (bpf, tag, color, highlight_duration, data_link_type)"}
         return conn.http_call("put", url, json_data=body).json()
 
     # action == "delete"

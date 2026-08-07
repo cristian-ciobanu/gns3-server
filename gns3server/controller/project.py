@@ -37,6 +37,7 @@ from .snapshot import Snapshot
 from .drawing import Drawing
 from .topology import project_to_topology, load_topology
 from .udp_link import UDPLink
+from .link import _UNSET
 from ..config import Config
 from ..utils.path import check_path_allowed, get_default_project_directory
 from ..utils.application_id import get_next_application_id
@@ -790,7 +791,9 @@ class Project:
                 "tag": marker.get("tag"),
                 "enabled": marker.get("enabled", True),
                 "color": marker.get("color"),
+                "highlight_duration": marker.get("highlight_duration"),
                 "capture_node_id": marker.get("capture_node_id"),
+                "direction": marker.get("direction"),
             }
         if "link_style" in link_data:
             await link.update_link_style(link_data["link_style"])
@@ -923,6 +926,50 @@ class Project:
                 }
         return result
 
+    async def pause_marker_definition(self, name):
+        """
+        Pause every inherited copy of a definition (``global-{name}``) on every
+        link: toggle each filter off in place via ``update_marker(enabled=False)``
+        — uBridge ``enable_packet_filter off``, no NIO rebuild, pcap/emitted
+        preserved. The definition's ``paused`` flag is persisted, so links
+        created later inherit the marker already paused.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = True
+        marker_name = f"global-{name}"
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=False, inherited=True, dump=False),
+            lambda link, e: f"Failed to pause marker {marker_name} on link {link.id}: {e}",
+        )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def resume_marker_definition(self, name):
+        """Resume every inherited copy of a definition (toggle on)."""
+
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = False
+        marker_name = f"global-{name}"
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=True, inherited=True, dump=False),
+            lambda link, e: f"Failed to resume marker {marker_name} on link {link.id}: {e}",
+        )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
     @property
     def marker_definitions(self):
         """
@@ -930,7 +977,42 @@ class Project:
         """
         return self._marker_definitions
 
-    async def create_marker_definition(self, name, bpf, tag=None, color=None, highlight_duration=None):
+    def _validate_marker_definition_bpf(self, name, bpf):
+        """
+        Validate a marker definition's BPF once, here, so the fan-out to every
+        link (``_apply_def_to_all_links`` → ``inherit_marker`` → ``start_marker``)
+        and the per-link sync (``update_marker_definition`` → ``update_marker``)
+        can skip re-validation for the inherited copies — otherwise one
+        ``tcpdump -d`` subprocess runs per link for the same expression. A
+        private per-link marker still validates in ``start_marker``/``update_marker``.
+        """
+        result = validate_bpf_syntax(bpf)
+        if not result.get("valid"):
+            raise ControllerError(
+                f"Marker definition '{name}': invalid BPF — {result.get('error', 'unknown error')}"
+            )
+
+    def _validate_marker_definition_direction(self, name, direction):
+        """
+        Reject tx/rx on a marker definition: a definition fans out to every link
+        and auto-selects its capture node on each (``_choose_marker_side``),
+        while tx/rx is relative to that node, so a fixed direction has no
+        consistent meaning across links. Only 'both' (the default, = ``None``)
+        is allowed — encode the direction in the BPF instead (e.g.
+        ``icmp[icmptype]==8`` for echo requests), or use a per-link marker whose
+        capture node is pinned.
+        """
+        if direction in ("tx", "rx"):
+            raise ControllerError(
+                f"Marker definition '{name}': direction '{direction}' is not allowed. "
+                "A definition fans out to every link and auto-selects its capture node on each, "
+                "but tx/rx is relative to that node, so a fixed direction has no consistent "
+                "meaning across links. Keep 'both' (the default) and encode the direction in "
+                "the BPF instead, e.g. 'icmp and icmp[icmptype]==8' for echo requests only. "
+                "For a capture-node-relative direction on a single link, use a per-link marker."
+            )
+
+    async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None, data_link_type="DLT_EN10MB"):
         """
         Create a project-level marker definition and fan out to every existing
         link that has a capable node.  Links without a capable node are silently
@@ -942,12 +1024,14 @@ class Project:
                 f"Marker definition '{name}' already exists in this project"
             )
 
-        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "color": color, "highlight_duration": highlight_duration}
+        self._validate_marker_definition_bpf(name, bpf)
+        self._validate_marker_definition_direction(name, direction)
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "data_link_type": data_link_type, "paused": False}
         await self._apply_def_to_all_links(name)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
-    async def update_marker_definition(self, name, bpf=None, tag=None, color=None, highlight_duration=None):
+    async def update_marker_definition(self, name, bpf=None, tag=None, direction=_UNSET, color=None, highlight_duration=None, data_link_type=_UNSET):
         """
         Update a marker definition and sync every inherited copy on every link.
         """
@@ -959,6 +1043,7 @@ class Project:
 
         d = self._marker_definitions[name]
         if bpf is not None:
+            self._validate_marker_definition_bpf(name, bpf)
             d["bpf"] = bpf
         if tag is not None:
             d["tag"] = tag
@@ -966,15 +1051,40 @@ class Project:
             d["color"] = color
         if highlight_duration is not None:
             d["highlight_duration"] = highlight_duration
+        if direction is not _UNSET:
+            self._validate_marker_definition_direction(name, direction)
+            d["direction"] = direction  # None = clear back to both directions
+        if data_link_type is not _UNSET:
+            d["data_link_type"] = data_link_type
 
-        # Sync: update every inherited copy across all links.
-        for link in list(self._links.values()):
-            marker_name = f"global-{name}"
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                await link.update_marker(
-                    marker_name, bpf=d["bpf"], tag=d.get("tag"), color=d.get("color"),
-                    highlight_duration=d.get("highlight_duration"), inherited=True
-                )
+        # Links that currently carry an inherited copy of this definition.
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+
+        if data_link_type is not _UNSET:
+            # data_link_type decides which links host an inherited copy (serial
+            # links are skipped unless a WAN encapsulation is chosen), so a change
+            # needs a full re-fan-out: drop every copy, then re-apply.
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.stop_marker(f"global-{name}", inherited=True, dump=False),
+                lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+            )
+            await self._apply_def_to_all_links(name)
+        else:
+            # Sync: update every inherited copy across all links.
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.update_marker(
+                    f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
+                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
+                    dump=False
+                ),
+                lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
+            )
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -990,17 +1100,17 @@ class Project:
 
         del self._marker_definitions[name]
 
-        for link in list(self._links.values()):
-            marker_name = f"global-{name}"
-            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name:
-                try:
-                    await link.stop_marker(marker_name, inherited=True)
-                except ControllerError:
-                    # A missing compute or broken link shouldn't block the delete.
-                    log.warning(
-                        "Failed to remove inherited marker %s from link %s",
-                        marker_name, link.id
-                    )
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.stop_marker(f"global-{name}", inherited=True),
+            # A missing compute or broken link shouldn't block the delete.
+            lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+        )
 
         self.dump()
         self.emit_notification("project.updated", self.asdict())
@@ -1013,31 +1123,63 @@ class Project:
         """
 
         d = self._marker_definitions[def_name]
-        for link in list(self._links.values()):
-            try:
-                await link.inherit_marker(def_name, d)
-            except ControllerError as e:
-                # Per-link failures (e.g. no capable node) shouldn't block the
-                # definition from serving the rest.
-                log.warning(
-                    "Marker definition '%s' could not be applied to link %s: %s",
-                    def_name, link.id, e
-                )
+        # dump=False: per-link topology writes are the dominant cost on large
+        # projects — the callers (create/update_marker_definition) dump once
+        # after the fan-out.
+        await self._marker_apply_concurrently(
+            list(self._links.values()),
+            lambda link: link.inherit_marker(def_name, d, dump=False),
+            lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
+        )
 
     async def apply_defs_to_new_link(self, link):
         """
         Apply every active marker definition to a newly created link so it
         inherits project-level rules automatically.
+
+        Deliberately serial: all definitions share the same link, and each
+        ``inherit_marker`` pushes the link's full marker set — concurrent
+        pushes would race (a later push overwriting an earlier one's spec and
+        losing markers).
         """
 
         for def_name, d in self._marker_definitions.items():
             try:
-                await link.inherit_marker(def_name, d)
+                # dump=False: the caller (link create / project open) dumps once
+                # after; per-def dumps here would be N full topology writes.
+                await link.inherit_marker(def_name, d, dump=False)
             except ControllerError as e:
                 log.warning(
                     "Marker definition '%s' could not be applied to new link %s: %s",
                     def_name, link.id, e
                 )
+
+    async def _marker_apply_concurrently(self, links, operation, fail_msg):
+        """
+        Run an async per-link marker operation across *links* with bounded
+        concurrency. A serial loop takes N sequential compute round-trips — a
+        definition over 1000 links would take minutes on remote computes — so
+        fan out in parallel batches. Links are independent (own ``_markers`` /
+        ``_link_data``), so this is race-free; per-link ``ControllerError`` is
+        logged and skipped, preserving the serial loop's isolation semantics.
+        ``Project.dump`` is synchronous and writes atomically (tmp + rename),
+        so concurrent dumps from the fan-out cannot corrupt the topology file.
+
+        :param links: iterable of links to operate on
+        :param operation: async callable ``(link) -> coroutine``
+        :param fail_msg: callable ``(link, error) -> log message``
+        """
+
+        sem = asyncio.Semaphore(32)
+
+        async def guarded(link):
+            async with sem:
+                try:
+                    await operation(link)
+                except ControllerError as e:
+                    log.warning(fail_msg(link, e))
+
+        await asyncio.gather(*(guarded(link) for link in links))
 
     @property
     def snapshots(self):
@@ -1430,10 +1572,27 @@ class Project:
                     setattr(self, key, val)
 
             # marker_definitions is loaded separately (it is not a __init__ kwarg
-            # nor a simple attribute — it backs a read-only property).
+            # nor a simple attribute — it backs a read-only property). Each BPF
+            # is validated once here so the inherited fan-out (start_marker) can
+            # skip re-validation; an invalid definition is dropped with a warning
+            # rather than failing the open — it could not fan out anyway.
             defs = project_data.get("marker_definitions")
             if isinstance(defs, dict):
-                self._marker_definitions = defs
+                clean_defs = {}
+                for def_name, d in defs.items():
+                    bpf = d.get("bpf")
+                    if not bpf:
+                        log.warning("Dropping marker definition '%s' on load: missing bpf", def_name)
+                        continue
+                    result = validate_bpf_syntax(bpf)
+                    if not result.get("valid"):
+                        log.warning(
+                            "Dropping marker definition '%s' on load: invalid BPF (%s)",
+                            def_name, result.get("error")
+                        )
+                        continue
+                    clean_defs[def_name] = d
+                self._marker_definitions = clean_defs
 
             topology = project_data["topology"]
             for compute in topology.get("computes", []):

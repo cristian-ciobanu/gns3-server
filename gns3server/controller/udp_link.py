@@ -17,7 +17,7 @@
 
 
 from .controller_error import ControllerError, ControllerNotFoundError
-from .link import Link
+from .link import Link, _UNSET
 from .node_types import BUILTIN_NODE_TYPES
 from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
@@ -57,14 +57,20 @@ class UDPLink(Link):
 
     def _markers_for_node(self, node):
         """
-        Marker specs (name -> {bpf, tag, link_id}) for the markers whose capture
-        side is ``node`` and that are enabled. Routed by capture_node_id so a
-        marker only rides the NIO of the node whose uBridge will host it.
+        Marker specs (name -> {bpf, tag, link_id, direction, data_link_type,
+        enabled}) for the markers whose capture side is ``node``. Routed by
+        capture_node_id so a marker only rides the NIO of the node whose uBridge
+        will host it. A disabled marker is included (installed then turned
+        ``off`` at uBridge, not dropped) so the UI can toggle it instantly
+        without an NIO rebuild.
         """
         return {
-            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id}
+            name: {"bpf": m["bpf"], "tag": m.get("tag"), "link_id": self._id,
+                   "direction": m.get("direction"),
+                   "data_link_type": m.get("data_link_type", "DLT_EN10MB"),
+                   "enabled": m.get("enabled", True)}
             for name, m in self._markers.items()
-            if m.get("enabled", True) and m.get("capture_node_id") == node.id
+            if m.get("capture_node_id") == node.id
         }
 
     def _get_node_markers(self, node1, node2):
@@ -310,6 +316,31 @@ class UDPLink(Link):
             "traffic insight"
         )
 
+    def _node_by_id(self, node_id):
+        """
+        Resolve a caller-chosen capture node by id, validating it is an
+        endpoint of this link and marker-capable. Used when the caller
+        (REST/MCP) explicitly pins the observer side instead of letting
+        ``_choose_marker_side`` auto-pick.
+
+        :param node_id: node id (UUID or str) the caller requested
+        :returns: a ``self._nodes`` entry (node/adapter_number/port_number)
+        """
+
+        target = str(node_id)
+        for node in self._nodes:
+            if str(node["node"].id) != target:
+                continue
+            if node["node"].node_type not in _MARKER_CAPABLE_TYPES:
+                raise ControllerError(
+                    f"Node {node_id} ({node['node'].node_type}) cannot host a "
+                    f"marker — no uBridge bridge to attach the filter to"
+                )
+            return node
+        raise ControllerNotFoundError(
+            f"Node {node_id} is not an endpoint of link {self._id}"
+        )
+
     async def node_updated(self, node):
         """
         Called when a node member of the link is updated
@@ -322,7 +353,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, color=None, highlight_duration=None, inherited_from=None):
+    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True):
         """
         Attach a traffic-insight marker to this link.
 
@@ -335,6 +366,11 @@ class UDPLink(Link):
         :param name: stable filter name — echoed in MARK signals + pcap identity
         :param bpf: libpcap BPF expression
         :param tag: optional correlation id
+        :param capture_node_id: optional explicit observer node. When set the
+            marker is pinned to that endpoint's uBridge (and ``direction`` is
+            interpreted from its perspective); validated by ``_node_by_id``.
+            Omitted = auto-pick via ``_choose_marker_side``. Ignored for
+            inherited markers (project defs are link-agnostic → always auto).
         :param color: optional hex color for the Web UI (e.g. '#ff5722'); stored
             with the link and persisted in the topology, never sent to uBridge
         :param highlight_duration: optional UI-only hint (milliseconds) for how
@@ -346,18 +382,29 @@ class UDPLink(Link):
         if name in self._markers:
             raise ControllerError(f"Marker '{name}' already exists on link {self._id}")
 
-        result = validate_bpf_syntax(bpf)
-        if not result.get("valid"):
-            raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+        # Validate the BPF only for private per-link markers. An inherited copy
+        # (``inherited_from`` set) fans out from a definition whose BPF was
+        # already validated once at create/update (and on project load), so
+        # re-validating per link would spawn one ``tcpdump -d`` per link for the
+        # same expression.
+        if not inherited_from:
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
 
-        marker_side = self._choose_marker_side()
+        if capture_node_id and not inherited_from:
+            marker_side = self._node_by_id(capture_node_id)
+        else:
+            marker_side = self._choose_marker_side()
         marker_entry = {
             "bpf": bpf,
             "tag": tag,
-            "enabled": True,
+            "enabled": enabled,
             "color": color,
             "highlight_duration": highlight_duration,
             "capture_node_id": marker_side["node"].id,
+            "direction": direction,
+            "data_link_type": data_link_type,
         }
         if inherited_from:
             marker_entry["inherited_from"] = inherited_from
@@ -365,9 +412,12 @@ class UDPLink(Link):
         if self._created:
             await self.update()
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        # Bulk fan-out passes dump=False: N per-link topology writes on a
+        # 500-link project are the dominant cost — the caller dumps once after.
+        if dump:
+            self._project.dump()
 
-    async def stop_marker(self, name, inherited=False):
+    async def stop_marker(self, name, inherited=False, dump=True):
         """
         Remove a traffic-insight marker from this link.
 
@@ -390,17 +440,33 @@ class UDPLink(Link):
                 "Delete or update it via the marker-definitions API instead."
             )
 
+        capture_node_id = self._markers[name].get("capture_node_id")
         del self._markers[name]
-        if self._created:
-            await self.update()
+        # Remove the marker filter + its pcap on the capture node directly — NOT a
+        # full NIO reapply (which would reset_packet_filters and close/reopen every
+        # sibling marker's pcap). delete_packet_filter removes just this filter;
+        # the marker is already gone from _markers, so any later reapply (filter
+        # change, node restart) won't re-add it either.
+        if capture_node_id is not None:
+            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
+            if side is not None:
+                try:
+                    await side["node"].delete(
+                        f"/adapters/{side['adapter_number']}/ports/{side['port_number']}/markers/{name}",
+                        params={"link_id": self._id},
+                    )
+                except Exception:
+                    pass  # best-effort: old compute without the route leaves the file
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        if dump:
+            self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, color=None, highlight_duration=None, inherited=False):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True):
         """
-        Update an existing marker's BPF/tag/enabled/color. Any change pushes via
-        ``self.update()``; uBridge picks up the new params on the next NIO
-        reset+reapply (same as packet filters).
+        Update an existing marker's fields and push to uBridge fine-grained — no
+        full NIO reapply, so sibling markers' pcaps stay open. bpf/tag/direction
+        rebuild just this filter (delete + add); enabled is an instant toggle;
+        color/highlight_duration are UI-only (stored, never pushed).
 
         :param name: filter name to update
         :param bpf: new BPF expression (None = keep existing)
@@ -423,10 +489,15 @@ class UDPLink(Link):
                 "Update it via the marker-definitions API instead."
             )
 
+        # Merge every changed field into the marker state first.
         if bpf is not None and bpf != marker_info["bpf"]:
-            result = validate_bpf_syntax(bpf)
-            if not result.get("valid"):
-                raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
+            # An inherited marker is synced from a definition whose BPF was
+            # already validated at create/update (or load); re-validating per
+            # link is redundant. Private markers validate here as before.
+            if not inherited:
+                result = validate_bpf_syntax(bpf)
+                if not result.get("valid"):
+                    raise ControllerError(f"Invalid BPF expression: {result.get('error', 'unknown error')}")
             marker_info["bpf"] = bpf
         if tag is not None:
             marker_info["tag"] = tag
@@ -436,8 +507,38 @@ class UDPLink(Link):
             marker_info["color"] = color
         if highlight_duration is not None:
             marker_info["highlight_duration"] = highlight_duration
+        if direction is not _UNSET:
+            marker_info["direction"] = direction  # None = clear back to both directions
 
+        # Push to uBridge fine-grained — NO full NIO reapply (which would
+        # reset_packet_filters and close/reopen every sibling marker's pcap):
+        #   * bpf/tag/direction changed → rebuild just this filter (delete + add),
+        #     reopening only this marker's pcap (expected, new BPF)
+        #   * only enabled changed      → instant toggle (enable_packet_filter)
+        #   * only UI fields changed    → nothing to push to uBridge
         if self._created:
-            await self.update()
+            ubridge_rebuild = (bpf is not None) or (tag is not None) or (direction is not _UNSET)
+            capture_node_id = marker_info.get("capture_node_id")
+            side = next((s for s in self._nodes if str(s["node"].id) == str(capture_node_id)), None)
+            if side is not None:
+                try:
+                    if ubridge_rebuild:
+                        await side["node"].put(
+                            f"/markers/{name}/rebuild",
+                            data={
+                                "bpf": marker_info["bpf"],
+                                "tag": marker_info.get("tag"),
+                                "direction": marker_info.get("direction"),
+                                "enabled": marker_info.get("enabled", True),
+                                "link_id": self._id,
+                            },
+                        )
+                    elif enabled is not None:
+                        await side["node"].put(f"/markers/{name}", data={"enabled": enabled})
+                except Exception:
+                    # Old compute without the route / node down: state is already
+                    # correct in _markers; the next NIO reapply converges uBridge.
+                    pass
         self._project.emit_notification("link.updated", self.asdict())
-        self._project.dump()
+        if dump:
+            self._project.dump()

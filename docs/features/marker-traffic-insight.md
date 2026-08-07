@@ -100,6 +100,96 @@ pcap file, and its own `link=`. The shared bridge name is irrelevant to attribut
 capable node types (`qemu`, `docker`, `vpcs`, `cloud`) already use one bridge per link; `link`
 applies uniformly to all of them.
 
+## Direction
+
+A `MARK` signal optionally carries `dir=<tx|rx>` — the matched packet's travel direction
+**relative to the capture node** (the `node=<id>` in the same signal, i.e. the node whose
+uBridge hosts the marker):
+
+| `dir` | Ingress NIO | Meaning |
+|-------|-------------|---------|
+| `tx`  | device side (`source_nio` on a generic bridge; the IOL instance on an IOU `IOL-BRIDGE`) | capture node is **sending** |
+| `rx`  | link side (`destination_nio` on a generic bridge; the NIO side on an IOU `IOL-BRIDGE`) | capture node is **receiving** |
+
+A marker is single-sided: only the chosen capture node's uBridge installs the `mark` filter,
+yet both directions of the link transit that one bridge (it carries exactly two NIOs — the
+device side and the link side), so that single uBridge observes and classifies both
+directions. The `marker.match` event forwards `dir` through unchanged; the Web UI combines it
+with the link's two endpoints and the capture `node_id` to draw an arrow:
+
+- `dir=tx` → `capture_node → far_node`
+- `dir=rx` → `far_node → capture_node`
+- `dir` absent (older uBridge) → undirected highlight (current behaviour)
+
+Because the listener ignores unknown keys, `dir` is **additive**: an older server silently
+drops it and an older uBridge simply omits it — either way the system falls back to
+undirected rendering with no error.
+
+### Choosing the capture node
+
+Since `dir` is relative to the capture node, *which* endpoint is the observer decides what
+`tx`/`rx` mean. By default the server auto-picks (first started marker-capable endpoint, in
+link-endpoint order). To pin it — e.g. so `dir=tx` unambiguously means "vpcs1 is sending" —
+pass `capture_node_id` on marker **create**:
+
+```json
+{ "bpf": "icmp", "direction": "tx", "capture_node_id": "<vpcs1 node uuid>" }
+```
+
+The value must be one of the link's two endpoints and a marker-capable type (`vpcs`, `qemu`,
+`docker`, `iou`, `dynamips`, `cloud`); any other id is rejected with `409`. Omit it to keep
+the auto-pick. The chosen id is echoed back as `capture_node_id` in the marker entry and in
+each `MARK` signal's `node=<id>`, so the Web UI always knows the observer regardless of who
+picked it.
+
+`capture_node_id` is **create-only**: it is fixed once the marker exists (changing the
+observer would silently flip the meaning of stored `direction`, so recreate the marker
+instead). It is not accepted on project-level definitions — a definition is link-agnostic and
+has no endpoints to choose from, so inherited markers always auto-pick per link.
+
+For the same reason, a definition **rejects `direction: tx|rx`** (HTTP 409): each inherited
+copy auto-picks its capture node, so a fixed tx/rx would denote different session directions
+on different links. A definition is `both` only; encode the direction you want in the BPF
+instead — e.g. `icmp and icmp[icmptype]==8` for echo requests, a packet-intrinsic property
+that is consistent on every link regardless of capture node. tx/rx remains available on
+per-link markers, where the capture node is fixed.
+
+## Pause & resume
+
+Two levels of silencing, both instant (no NIO rebuild, no pcap flush):
+
+- **Per-marker (private)** — `PUT /v3/projects/{pid}/links/{lid}/markers/{name}`
+  with `{"enabled": false}` flips that one filter off in place (uBridge
+  `enable_packet_filter … off`): no signal, no pcap, but traffic still relays —
+  a paused `mark` is a no-op tap, not a drop. `{"enabled": true}` flips it back.
+  A change to `enabled` alone is a single command (the pcap identity and emitted
+  counter are preserved). Changing `bpf`, `tag`, or `direction` rebuilds just that
+  one filter (`delete_packet_filter` + add) — only that marker's own pcap reopens
+  (a new capture session for the new BPF); changing `color`/`highlight_duration`
+  is UI-only, nothing is pushed to uBridge.
+- **Per-definition (inherited)** — `POST /v3/projects/{pid}/marker-definitions/{name}/pause`
+  and `/resume` toggle **every** inherited `global-{name}` copy across all links
+  at once (same `enable_packet_filter on|off`, fanned out per copy). Use to
+  pause or resume a whole rule independently of the others. The definition's
+  `paused` flag is persisted to the `.gns3` and echoed on the definition object,
+  so links created later inherit it already paused, and the Web UI renders the
+  per-rule button from server truth.
+
+| Action | signal | pcap | sink |
+|--------|--------|------|------|
+| per-marker `enabled: false` | stop | stop | n/a |
+| per-def `pause` (all `global-{name}` copies) | stop | stop | n/a |
+| per-def `resume` | resume | resume | n/a |
+
+## Capture files
+
+Each marker appends matches to `<project>/project-files/markers/<node_id>_<link_id>_<filter>.pcap`.
+Removing a marker — per-link `DELETE .../markers/{name}` or deleting a definition (which
+removes every inherited copy) — deletes that marker's pcap too, even with the capture node
+stopped (the filter is removed with `delete_packet_filter`, the file is unlinked). uBridge's
+`reset_packet_filters` (run on NIO/filter changes) preserves mark filters, so unrelated
+changes no longer close/reopen any marker's pcap.
+
 ## API Endpoints
 
 All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`). The
@@ -122,6 +212,8 @@ All endpoints require a JWT bearer token (`POST /v3/access/users/authenticate`).
 | POST | `/v3/projects/{pid}/marker-definitions` | Create definition (fans out to every link) | Project.Modify |
 | PUT | `/v3/projects/{pid}/marker-definitions/{name}` | Update definition (syncs all copies) | Project.Modify |
 | DELETE | `/v3/projects/{pid}/marker-definitions/{name}` | Delete definition (clears all copies) | Project.Modify |
+| POST | `/v3/projects/{pid}/marker-definitions/{name}/pause` | Pause every inherited copy (instant, persisted) | Project.Modify |
+| POST | `/v3/projects/{pid}/marker-definitions/{name}/resume` | Resume every inherited copy | Project.Modify |
 
 ### Aggregation
 
@@ -142,11 +234,16 @@ extra request.
   "name": "icmp",
   "bpf": "icmp",
   "tag": 1,
+  "direction": "tx",
+  "capture_node_id": "a37e2235-e21f-46c9-a2ab-ba0f8c5465e6",
   "color": "#ff5722",
   "highlight_duration": 800,
   "enabled": true
 }
 ```
+
+`direction` and `capture_node_id` are both optional and create-only (see
+[Direction](#direction)).
 
 **Definition create body** (`MarkerDefinitionCreate`, shared by POST and PUT):
 
@@ -183,6 +280,8 @@ extra request.
     "tag": 5,
     "color": null,
     "highlight_duration": 1200,
+    "direction": null,
+    "paused": false,
     "link_ids": ["656ed826-...", "6bd9d156-..."]
   }
 }
@@ -196,10 +295,11 @@ extra request.
 |-------|------|-------------|
 | `bpf` | string | libpcap BPF expression (required) |
 | `tag` | int \| null | Correlation id echoed in `MARK` signals |
-| `enabled` | bool | Whether the marker is active |
+| `enabled` | bool | Whether the marker is active. Toggle is instant: `false` flips the uBridge filter off in place (no signal/pcap), `true` back on — no NIO rebuild (see [Pause & resume](#pause--resume)) |
 | `color` | string \| null | Hex color render hint, e.g. `#ff5722` |
 | `highlight_duration` | int \| null | UI highlight duration in ms after a match; `null` = UI default |
-| `capture_node_id` | string | Server-chosen node whose uBridge hosts the marker |
+| `direction` | string \| null | `tx` / `rx` filter relative to the capture node; `null` = both |
+| `capture_node_id` | string | Node whose uBridge hosts the marker — caller-set on create, else auto-picked |
 | `inherited_from` | string | Source definition name — present on inherited markers only |
 
 ### Definition
@@ -210,6 +310,8 @@ extra request.
 | `tag` | int \| null | Correlation id |
 | `color` | string \| null | Hex color render hint |
 | `highlight_duration` | int \| null | UI highlight duration in ms; `null` = UI default |
+| `direction` | string \| null | `tx` / `rx` filter relative to the capture node; `null` = both |
+| `paused` | bool | Per-definition mute flag — `true` mutes every inherited copy (persisted) |
 | `link_ids` | string[] | Links currently carrying an inherited copy (GET only) |
 
 ### Notifications
@@ -217,10 +319,11 @@ extra request.
 | Event | Payload | Delivered to |
 |-------|---------|--------------|
 | `link.updated` | Link object (its `markers` field is the source of truth) | Project notification ws |
-| `marker.match` | `project_id`, `node_id`, `link_id`, `filter`, `tag`, `ts`, `len` | Project notification ws only |
+| `marker.match` | `project_id`, `node_id`, `link_id`, `filter`, `tag`, `ts`, `len`, `dir` | Project notification ws only |
 
 The `marker.match` `link_id` is taken from the signal's `link=` field (authoritative); see
-[Per-link attribution](#per-link-attribution).
+[Per-link attribution](#per-link-attribution). The `dir` field is the matched packet's travel
+direction relative to the capture node; see [Direction](#direction).
 
 ## Error Responses
 
@@ -237,6 +340,8 @@ The `marker.match` `link_id` is taken from the signal's `link=` field (authorita
   filter, the pcap filename, and `MARK` signal routing — so rename is a delete + recreate,
   not a field update. PUT ignores the body `name`; the `{name}` path parameter identifies
   the target, and only `bpf / tag / color / enabled / highlight_duration` are changeable.
+  Names are 1–32 chars (`[A-Za-z0-9][A-Za-z0-9_.-]*`); inherited copies carry a `global-`
+  prefix, so their filter names reach ~39.
 - **`global` prefix reserved.** User-chosen names may not start with `global`; inherited
   markers are stored as `global-{definition_name}` so the two namespaces cannot collide.
   Omitting `name` on create yields an auto-generated, prefix-free name.
@@ -245,6 +350,12 @@ The `marker.match` `link_id` is taken from the signal's `link=` field (authorita
 - **Render hints are not enforced.** `color` and `highlight_duration` (milliseconds, `>= 1`)
   are stored on the link and never sent to uBridge; `null` lets the UI apply its own
   default. A partial PUT (e.g. changing only `bpf`) leaves them untouched.
+- **BPF is validated once per source.** A private per-link marker validates its BPF inline
+  on create/update. A definition validates its BPF once at create/update (and once per
+  definition on project load, dropping any whose BPF has gone invalid); the inherited
+  fan-out to every link then skips re-validation, so creating a definition over *N* links
+  runs one `tcpdump -d` rather than *N*. (uBridge still runs `pcap_compile` itself at
+  install time, so an invalid expression can never slip through.)
 - **Supported node types.** A marker needs a uBridge bridge: `vpcs`, `qemu`, `docker`,
   `iou`, `dynamips`, `cloud` (one capable endpoint suffices). Types without a uBridge are
   silently skipped by the inheritance fan-out. IOU uses one shared `IOL-BRIDGE` per node but
@@ -256,3 +367,12 @@ The `marker.match` `link_id` is taken from the signal's `link=` field (authorita
 - **Persistence.** Definitions and private markers persist in the topology; inherited
   markers are re-created from definitions on project load, so reopening a project restores
   the same configuration and stale inherited copies cannot survive on disk.
+- **Log interpretation across node types.** Each node type logs its startup and link
+  operations differently — do not mistake sparse logs from one type for inactivity.
+  QEMU prints `set_link gns3-<N> on` via its QEMU monitor, which is the most visible
+  startup log among all types. VPCS, Docker, IOU, Dynamips, and Cloud each have their own
+  startup paths (fork + ubridge, container veth, iouyap, Dynamips hypervisor, and TAP
+  device respectively) and none of them emit QEMU-monitor-style logs. To verify marker
+  operations (toggle, pause, resume) on non-QEMU types, either inspect uBridge's
+  own log for `enable_packet_filter` / `marker pause` / `marker resume` commands, or
+  watch the gns3server log for the corresponding compute-route calls at INFO level.

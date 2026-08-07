@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Tuple
 from enum import Enum
 from uuid import UUID, uuid4
@@ -152,7 +152,7 @@ class MarkerCreate(BaseModel):
     name: Optional[str] = Field(
         None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-        max_length=128,
+        max_length=32,
         description='Unique marker name on the link. Auto-generated when absent.',
     )
     bpf: str
@@ -175,6 +175,66 @@ class MarkerCreate(BaseModel):
         None,
         description="Whether the marker is active. Defaults to true on creation.",
     )
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only, 'both' or null = both directions.",
+    )
+    capture_node_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "Which endpoint's uBridge hosts this marker (the 'observer'). "
+            "tx/rx in `direction` are interpreted from this node's perspective. "
+            "Must be one of the link's two endpoints and a marker-capable type. "
+            "Omitted = server auto-picks (first started marker-capable endpoint)."
+        ),
+    )
+    data_link_type: str = Field(
+        "DLT_EN10MB",
+        description=(
+            "pcap link-layer type the marker's BPF compiles against and its "
+            "capture file is written with (a uBridge `linktype` token). Defaults "
+            "to DLT_EN10MB (Ethernet), which is omitted from the uBridge command. "
+            "Only meaningful for serial links: set it to the matching serial DLT "
+            "from the port's data_link_types — DLT_C_HDLC / DLT_PPP_SERIAL / "
+            "DLT_FRELAY / DLT_ATM_RFC1483 — so the BPF offsets and pcap decode "
+            "match the encapsulation configured in IOS. Create-only (changing it "
+            "would invalidate the pcap)."
+        ),
+    )
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
+
+
+class MarkerUpdate(BaseModel):
+    """
+    Body for updating a marker — partial update, every field optional.
+
+    ``bpf`` is optional here (it is required on create). ``capture_node_id`` and
+    ``name`` are create-only / path-driven and intentionally absent; an explicit
+    ``direction: null`` clears the direction back to both (omitting keeps it).
+    """
+
+    bpf: Optional[str] = None
+    tag: Optional[int] = None
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter; 'both' or an explicit null clears it to both. Omit to keep.",
+    )
+    color: Optional[str] = Field(None, description="Hex color render hint, e.g. '#ff5722'")
+    highlight_duration: Optional[int] = Field(
+        None, ge=1, description="UI highlight duration in ms; null = UI default"
+    )
+    enabled: Optional[bool] = Field(None, description="Toggle the marker on/off (instant).")
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
 
 
 class MarkerDefinitionCreate(BaseModel):
@@ -189,7 +249,7 @@ class MarkerDefinitionCreate(BaseModel):
     name: Optional[str] = Field(
         None,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-        max_length=128,
+        max_length=32,
         description="Unique definition name. Auto-generated when absent.",
     )
     bpf: str
@@ -207,5 +267,26 @@ class MarkerDefinitionCreate(BaseModel):
             "stored with the definition, never sent to uBridge."
         ),
     )
+    direction: Optional[str] = Field(
+        None,
+        pattern=r"^(tx|rx|both)$",
+        description="Direction filter: 'tx' = capture node sending only, 'rx' = capture node receiving only, 'both' or null = both directions.",
+    )
+    data_link_type: str = Field(
+        "DLT_EN10MB",
+        description=(
+            "pcap link-layer type for inherited markers on serial links (uBridge "
+            "`linktype`). Defaults to DLT_EN10MB (Ethernet): the definition then "
+            "applies only to Ethernet links and serial links are skipped. Set a "
+            "serial DLT — DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / "
+            "DLT_ATM_RFC1483 — to also cover serial links with that encapsulation; "
+            "Ethernet links stay EN10MB regardless. Changing it re-fans-out."
+        ),
+    )
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _both_to_none(cls, v):
+        return None if v == "both" else v
 
 

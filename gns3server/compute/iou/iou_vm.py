@@ -1290,9 +1290,18 @@ class IOUVM(BaseNode):
             bridge_name=bridge_name, bay=adapter_number, unit=port_number
         )
         for name, spec in markers.items():
+            link_id = spec.get("link_id", "")
+            # Incremental: skip markers already installed on this port. A NIO
+            # update carries EVERY marker on the port (e.g. an inherited
+            # global-* copy plus a newly added private one); uBridge's
+            # add_packet_filter rejects a duplicate filter name (packet_filter.c),
+            # so we must not re-add one already here — mirrors the generic
+            # _ubridge_apply_markers guard. A fresh bridge has an empty map
+            # (cleared on _stop_ubridge) so all are installed.
+            if (name, link_id) in self._marker_filter_bridges:
+                continue
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            link_id = spec.get("link_id", "")
             pcap_path = os.path.join(
                 markers_dir, f"{self._id}_{link_id}_{name}.pcap"
             )
@@ -1308,6 +1317,12 @@ class IOUVM(BaseNode):
             # controller can tell their signals apart (contract §3.2).
             if link_id:
                 cmd += f" link {link_id}"
+            direction = spec.get("direction")
+            if direction is not None:
+                cmd += f" dir {direction}"
+            linktype = self._marker_linktype(spec.get("data_link_type"))
+            if linktype is not None:
+                cmd += f" linktype {linktype}"
             cmd += ' pcap "{path}"'.format(path=pcap_path)
             try:
                 await self._ubridge_send(cmd)
@@ -1318,9 +1333,35 @@ class IOUVM(BaseNode):
                     self.project.emit("log.warning", {"message": message})
                     continue
                 raise
+            if not spec.get("enabled", True):
+                try:
+                    await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} off")
+                except UbridgeError as e:
+                    log.warning(f"Could not turn marker '{name}' off on {location}: {e}")
             manager.register(
                 str(self.project.id), self._id, name, link_id, tag
             )
+            # Record name -> location (bridge bay unit) for instant toggle.
+            self._marker_filter_bridges[name, link_id] = location
+
+    async def _ubridge_set_marker_filter_state(self, name, enabled):
+        """IOU override: toggle every (name, link_id) entry via ``iol_bridge``."""
+
+        state = "on" if enabled else "off"
+        for (n, lid), location in list(self._marker_filter_bridges.items()):
+            if n == name:
+                await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} {state}")
+
+    async def _ubridge_delete_marker_filter(self, location, name):
+        """IOU override: remove a single marker filter via ``iol_bridge``
+        (location = ``{bridge} {bay} {unit}``), not a bridge-wide reset."""
+
+        if not (self._ubridge_hypervisor and self._ubridge_hypervisor.is_running()):
+            return
+        try:
+            await self._ubridge_send(f"iol_bridge delete_packet_filter {location} {name}")
+        except UbridgeError as e:
+            log.warning("Could not remove marker filter '%s' from %s: %s", name, location, e)
 
     async def adapter_remove_nio_binding(self, adapter_number, port_number):
         """
