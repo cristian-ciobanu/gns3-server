@@ -243,14 +243,25 @@ async def reload_all_nodes(project: Project = Depends(dep_project)) -> None:
             raise
 
 
+# Node types that need live host interface data from compute
+_HOST_INTERFACE_NODE_TYPES = {"cloud", "nat"}
+
+
 @router.get("/{node_id}", response_model=schemas.Node, dependencies=[Depends(has_privilege("Node.Audit"))])
-def get_node(node: Node = Depends(dep_node)) -> schemas.Node:
+async def get_node(node: Node = Depends(dep_node)) -> schemas.Node:
     """
     Return a node from a given project.
 
     Required privilege: Node.Audit
     """
 
+    if node.node_type in _HOST_INTERFACE_NODE_TYPES:
+        try:
+            response = await node.get()
+            await node.parse_node_response(response.json)
+        except Exception:
+            # If compute is unreachable, still return cached data
+            log.warning(f"Could not refresh node {node.id} from compute, returning cached data")
     return node.asdict()
 
 

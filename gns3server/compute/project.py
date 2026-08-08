@@ -246,6 +246,22 @@ class Project:
                 raise ComputeError(f"Could not create the capture working directory: {e}")
         return workdir
 
+    def markers_working_directory(self):
+        """
+        Returns the working directory where uBridge writes per-link marker pcaps
+        (matched packets, kept for later replay).
+
+        :returns: path to the directory
+        """
+
+        workdir = os.path.join(self._path, "project-files", "markers")
+        if not self._deleted:
+            try:
+                os.makedirs(workdir, exist_ok=True)
+            except OSError as e:
+                raise ComputeError(f"Could not create the markers working directory: {e}")
+        return workdir
+
     def add_node(self, node):
         """
         Adds a node to the project.

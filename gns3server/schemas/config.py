@@ -71,6 +71,7 @@ class QemuSettings(BaseModel):
     enable_hardware_acceleration: bool = True
     require_hardware_acceleration: bool = False
     allow_unsafe_options: bool = False
+    ovmf_firmware_dir: str = "/usr/share/OVMF"
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 
 
@@ -110,6 +111,16 @@ class ServerProtocol(str, Enum):
 
     http = "http"
     https = "https"
+
+
+class UbridgeControlTransport(str, Enum):
+
+    # TCP control channel: -H host:port. ubridge now binds loopback by default,
+    # so this is reachable only locally. Retained for backward compatibility.
+    tcp = "tcp"
+    # AF_UNIX control channel: -U socket_path, authenticated in-kernel via
+    # SO_PEERCRED (ubridge accepts only its own UID). Recommended on Linux.
+    unix = "unix"
 
 
 class BuiltinSymbolTheme(str, Enum):
@@ -153,6 +164,17 @@ class ServerSettings(BaseModel):
     udp_start_port_range: int = Field(10000, gt=0, le=65535)
     udp_end_port_range: int = Field(30000, gt=0, le=65535)
     ubridge_path: str = "ubridge"
+    # Transport for the uBridge hypervisor control channel. "unix" (-U,
+    # AF_UNIX + SO_PEERCRED) is the default — recommended on Linux for
+    # kernel-level peer authentication. "tcp" (-H) is retained for backward
+    # compatibility.
+    ubridge_control_transport: UbridgeControlTransport = UbridgeControlTransport.unix
+    # Marker (traffic-insight) UDP sink: one listener per compute process that
+    # receives ubridge MARK signals from every ubridge on this host. The host
+    # defaults to loopback because ubridge runs on the same host as the compute.
+    # port=0 lets the OS choose a free port (read back and handed to ubridge).
+    marker_listen_host: str = "127.0.0.1"
+    marker_listen_port: int = Field(3070, ge=0, le=65535)
     compute_username: str = "gns3"
     compute_password: SecretStr = SecretStr("")
     allowed_interfaces: List[str] = Field(default_factory=list)

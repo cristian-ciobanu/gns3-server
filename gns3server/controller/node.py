@@ -639,6 +639,14 @@ class Node:
             except asyncio.TimeoutError:
                 raise ControllerTimeoutError(f"Timeout when reset console {self._name}")
 
+    async def get(self, path="", **kwargs):
+        """
+        HTTP get on the node
+        """
+        return await self._compute.get(
+            f"/projects/{self._project.id}/{self._node_type}/nodes/{self._id}{path}", **kwargs
+        )
+
     async def post(self, path, data=None, **kwargs):
         """
         HTTP post on the node

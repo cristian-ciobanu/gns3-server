@@ -86,13 +86,13 @@ from .device_config import (
 )
 from .nodes import (
     get_nodes_handler, get_node_handler, start_node_handler,
-    stop_node_handler, reload_node_handler, suspend_node_handler,
+    stop_node_handler, suspend_node_handler,
     create_node_handler, delete_node_handler, update_node_handler,
     get_node_console_info_handler,
     list_node_files_handler, get_node_file_handler,
     write_node_file_handler, delete_node_file_handler,
     start_all_nodes_handler, stop_all_nodes_handler,
-    suspend_all_nodes_handler, reload_all_nodes_handler,
+    suspend_all_nodes_handler,
     duplicate_node_handler, isolate_node_handler,
     unisolate_node_handler, get_node_links_handler,
 )
@@ -101,6 +101,7 @@ from .links import (
     delete_link_handler, update_link_handler,
     reset_link_handler, start_capture_handler, stop_capture_handler,
     download_capture_file_handler,
+    link_marker_handler, marker_definition_handler,
 )
 from .templates import (
     list_templates_handler, get_template_handler, create_template_handler,
@@ -194,6 +195,12 @@ _jwt_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _jwt_username_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "mcp_jwt_username", default=None
 )
+# token_version extracted during token validation — short-lived JWTs minted for
+# download/console URLs must carry the same version, or the revocation check
+# (token_data.token_version != user.token_version) rejects them as "revoked".
+_jwt_token_version_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "mcp_jwt_token_version", default=0
+)
 
 
 # ── Token validation ──────────────────────────────────────────────────
@@ -208,8 +215,9 @@ async def _resolve_token(token: str) -> str | None:
     """
     # Try JWT first
     try:
-        username = auth_service.get_username_from_token(token)
-        _jwt_username_var.set(username)
+        token_data = auth_service.get_token_data(token)
+        _jwt_username_var.set(token_data.username)
+        _jwt_token_version_var.set(token_data.token_version)
         return token
     except Exception:
         pass
@@ -233,7 +241,8 @@ async def _resolve_token(token: str) -> str | None:
                                 user = await user_repo.get_user(db_key.user_id)
                                 if user:
                                     _jwt_username_var.set(user.username)
-                                    fresh_token = auth_service.create_access_token(user.username)
+                                    _jwt_token_version_var.set(user.token_version)
+                                    fresh_token = auth_service.create_access_token(user.username, token_version=user.token_version)
                                     return fresh_token
             except Exception:
                 pass
@@ -292,6 +301,7 @@ def _run_handler_sync(handler, params: dict[str, Any]) -> list[dict[str, Any]]:
         "server_url": _server_url(),
         "jwt_token": _jwt_token_var.get(),
         "jwt_username": _jwt_username_var.get(),
+        "jwt_token_version": _jwt_token_version_var.get(),
     }
     result = handler(params, ctx)
     return [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]
@@ -462,20 +472,6 @@ async def node_stop(
     return await asyncio.to_thread(_run_handler_sync, stop_node_handler, params)
 
 @mcp.tool()
-async def node_reload(
-    project_id: Annotated[str, Field(description="UUID of the project")],
-    node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
-    node_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — reload multiple nodes in parallel")] = None,
-) -> list[dict[str, Any]]:
-    """Reload (restart) one or more nodes. Provide node_id for single, or node_ids for batch."""
-    params = {"project_id": project_id}
-    if node_ids:
-        params["node_ids"] = node_ids
-    else:
-        params["node_id"] = node_id
-    return await asyncio.to_thread(_run_handler_sync, reload_node_handler, params)
-
-@mcp.tool()
 async def node_suspend(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str | None, Field(description="Node UUID (single mode)")] = None,
@@ -562,16 +558,18 @@ async def node_console(
     Complete workflow:
       1. Call this tool with project_id and node_id to get the WebSocket URL
       2. Connect to the returned URL using websocat in text mode (-t):
-         > websocat -t "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
+         > websocat -t --no-close "ws://<your-gns3-server-host>:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token={jwt_token}"
       3. Send device commands with \\r\\n line endings via heredoc:
-         > websocat -t "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
+         > websocat -t --no-close "ws://..." <<< $'\\r\\nenable\\r\\nshow version\\r\\nexit\\r\\n'
       4. Receive response: websocat receives and displays device output
          Use 'timeout' to avoid connection hanging:
-         > timeout 10 websocat -t "ws://..." <<< $'commands\\r\\n'
+         > timeout 10 websocat -t --no-close "ws://..." <<< $'commands\\r\\n'
 
     Key points:
       - Use \\r\\n (not \\n) to match console protocol line endings
       - Use $'...' format for escape sequences in bash
+      - --no-close keeps the WebSocket open after stdin (heredoc) hits EOF, so
+        device output is not cut off before it arrives
       - Set a timeout to prevent hanging connections
     """
     return await asyncio.to_thread(_run_handler_sync, get_node_console_info_handler, {
@@ -663,6 +661,14 @@ async def link_update(
       {"filters": {"delay": [100, 10]}}
       {"filters": {"packet_loss": [5]}}
       {"filters": {"delay": [50, 5], "packet_loss": [2]}}
+
+    To clear all filters: {"filters": {}}
+
+    Filters are applied **bidirectionally** — a packet crossing the link twice
+    (e.g. ping round-trip) is filtered in both directions independently.
+    For example, packet_loss: [50] gives ~75% observed loss (1 - 0.5²), not 50%.
+    ARP frames also pass through filters; at high loss/corrupt rates, pre-set
+    static ARP entries to avoid false "Destination Host Unreachable" errors.
     """
     params = {"project_id": project_id, "link_id": link_id, **kwargs}
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
@@ -874,16 +880,6 @@ async def node_suspend_all(
 
 
 @mcp.tool()
-async def node_reload_all(
-    project_id: Annotated[str, Field(description="UUID of the project")],
-) -> list[dict[str, Any]]:
-    """Reload (restart) all nodes in a project."""
-    return await asyncio.to_thread(_run_handler_sync, reload_all_nodes_handler, {
-        "project_id": project_id,
-    })
-
-
-@mcp.tool()
 async def node_duplicate(
     project_id: Annotated[str, Field(description="UUID of the project")],
     node_id: Annotated[str, Field(description="UUID of the node to duplicate")],
@@ -946,7 +942,9 @@ async def link_reset(
     - Force filter state (delay, packet loss, etc.) to restart fresh
     - Recover a stuck or abnormal link state
 
-    Filters are preserved but their internal application state resets.
+    This restarts the filter state machines (e.g. frequency_drop counters)
+    while keeping the filter configuration intact. Filters are preserved but
+    their internal application state resets.
     """
     params = {"project_id": project_id}
     if link_ids:
@@ -1002,6 +1000,85 @@ async def link_capture_download(
     else:
         params["link_id"] = link_id
     return await asyncio.to_thread(_run_handler_sync, download_capture_file_handler, params)
+
+
+# ── Marker (traffic-insight) tools ─────────────────────────────────────
+
+
+@mcp.tool()
+async def link_marker(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+    action: Annotated[str, Field(description="Action: create, update, or delete")],
+    bpf: Annotated[str | None, Field(description="BPF expression, e.g. 'arp', 'icmp', 'tcp port 80' (required for create)")] = None,
+    marker_name: Annotated[str | None, Field(description="Marker name (required for update/delete actions)")] = None,
+    name: Annotated[str | None, Field(description="Custom marker name for create action (auto-generated if omitted)")] = None,
+    tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
+    enabled: Annotated[bool | None, Field(description="Enable or disable the marker (for update action)")] = None,
+    direction: Annotated[str | None, Field(description="Direction filter: 'tx' (capture node sending only), 'rx' (receiving only), or 'both' (no filter — on update this clears a previously set direction). Omit to leave unchanged on update.")] = None,
+    capture_node_id: Annotated[str | None, Field(description="UUID of the endpoint whose uBridge hosts the marker (the observer; tx/rx are from its perspective). Must be a link endpoint and marker-capable. Omit to auto-pick.")] = None,
+    color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
+    highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+) -> list[dict[str, Any]]:
+    """Manage traffic-insight markers on a link.
+
+    A marker highlights packets matching a BPF expression as they cross the link.
+    Set action='create' to add a marker, 'update' to modify it, 'delete' to remove.
+
+    Create requires: project_id, link_id, action='create', bpf
+    Update requires: project_id, link_id, action='update', marker_name, and at least one of (bpf, tag, enabled, direction, color, highlight_duration)
+    Delete requires: project_id, link_id, action='delete', marker_name
+
+    To read current markers, use link_get — the response includes a 'markers' dict.
+
+    NOTE: Markers named 'global-*' are inherited from project-level marker definitions
+    and cannot be modified or deleted via this tool.
+    """
+    params = {"project_id": project_id, "link_id": link_id, "action": action}
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration"):
+        val = locals().get(opt)
+        if val is not None:
+            params[opt] = val
+    return await asyncio.to_thread(_run_handler_sync, link_marker_handler, params)
+
+
+@mcp.tool()
+async def marker_definition(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    action: Annotated[str, Field(description="Action: create, update, delete, or list")],
+    bpf: Annotated[str | None, Field(description="BPF expression, e.g. 'arp', 'ospf', 'tcp port 22' (required for create)")] = None,
+    def_name: Annotated[str | None, Field(description="Definition name (required for update/delete actions)")] = None,
+    name: Annotated[str | None, Field(description="Custom definition name for create action (auto-generated if omitted)")] = None,
+    tag: Annotated[int | None, Field(description="Numeric tag for packet correlation")] = None,
+    color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
+    highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+    data_link_type: Annotated[str | None, Field(description="pcap link-layer type for serial links (DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / DLT_ATM_RFC1483). Omit = Ethernet-only (serial links skipped); setting it also covers serial links with that encapsulation")] = None,
+) -> list[dict[str, Any]]:
+    """Manage project-level marker definitions — traffic-insight rules that apply to ALL links.
+
+    A marker definition is a global BPF rule. On create, it auto-fans out to every
+    link in the project as 'global-{name}'. Updates sync to all inherited copies.
+    On delete, 'global-{name}' is removed from every link.
+
+    Create requires: project_id, action='create', bpf
+    Update requires: project_id, action='update', def_name, and at least one of (bpf, tag, color, highlight_duration, data_link_type)
+    Delete requires: project_id, action='delete', def_name
+    List requires:  project_id, action='list'
+
+    A definition has NO direction (tx/rx): it fans out to every link and auto-selects
+    its capture node on each, so a fixed direction has no consistent meaning. Encode
+    the direction you want in the BPF instead (e.g. 'icmp and icmp[icmptype]==8' for
+    echo requests only). For a capture-node-relative direction on a single link, use
+    the per-link `link_marker` tool.
+
+    Common BPF examples: 'arp', 'icmp', 'ospf', 'tcp port 22', 'udp port 53'
+    """
+    params = {"project_id": project_id, "action": action}
+    for opt in ("bpf", "def_name", "name", "tag", "color", "highlight_duration", "data_link_type"):
+        val = locals().get(opt)
+        if val is not None:
+            params[opt] = val
+    return await asyncio.to_thread(_run_handler_sync, marker_definition_handler, params)
 
 
 # ── Snapshot tools ─────────────────────────────────────────────────────
@@ -1402,7 +1479,13 @@ async def device_show_run(
 
     Use this to inspect device status, view configurations, or verify changes.
     For configuration changes use device_config_send instead.
-    Devices must be started first.
+
+    Prerequisites:
+    - Devices must be started first (use node_start or node_start_all).
+    - Each node must have a device_type:<type> tag set in GNS3
+      (e.g. device_type:cisco_ios_telnet, device_type:gns3_huawei_telnet_ce).
+      Nodes without this tag will fail with "device_type tag not found".
+      Docker/Linux nodes are not supported (use node_console instead).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:

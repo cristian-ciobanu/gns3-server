@@ -17,6 +17,7 @@
 
 import uuid
 import pytest
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI, status
 from httpx import AsyncClient
@@ -25,8 +26,7 @@ from gns3server.schemas.controller.computes import Compute
 
 pytestmark = pytest.mark.asyncio
 
-import unittest
-from tests.utils import asyncio_patch
+from tests.utils import asyncio_patch, AsyncioMagicMock
 
 
 class TestComputeRoutes:
@@ -127,6 +127,21 @@ class TestComputeFeatures:
             response = await client.get(app.url_path_for("docker_get_images", compute_id=compute_id))
             mock.assert_called_with("GET", "docker", "images")
             assert response.json() == [{"image": "docker1"}, {"image": "docker2"}]
+
+    async def test_compute_pull_docker_image(
+            self, app: FastAPI, client: AsyncClient, test_compute: Compute
+    ) -> None:
+
+        compute = MagicMock()
+        compute.forward = AsyncioMagicMock(return_value={})
+        with patch("gns3server.api.routes.controller.computes.Controller.instance") as controller:
+            controller.return_value.get_compute.return_value = compute
+            response = await client.post(
+                app.url_path_for("docker_pull_image", compute_id=test_compute.compute_id),
+                json={"image": "nginx:latest"}
+            )
+            compute.forward.assert_called_with("POST", "docker", "images/pull", data={"image": "nginx:latest"})
+            assert response.status_code == status.HTTP_204_NO_CONTENT
 
     async def test_compute_list_virtualbox_vms(self, app: FastAPI, client: AsyncClient) -> None:
 

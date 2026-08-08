@@ -1882,3 +1882,19 @@ async def test_memory(compute_project, manager):
                 "Cmd": ["/bin/sh"]
             })
         assert vm._cid == "e90e34656806"
+
+@pytest.mark.asyncio
+async def test_stop_exited_container_no_stop_query(vm):
+
+    vm._ubridge_hypervisor = None
+    vm._fix_permissions = MagicMock()
+
+    with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="exited"):
+        with asyncio_patch("gns3server.compute.docker.Docker.query") as mock_query:
+            vm._permissions_fixed = False
+            await vm.stop()
+            assert not any(
+                call.args[:2] == ("POST", "containers/e90e34656842/stop")
+                for call in mock_query.mock_calls
+            )
+    assert vm.status == "stopped"

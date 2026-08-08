@@ -8,6 +8,8 @@ import uuid
 import configparser
 import base64
 import stat
+import resource
+import platform
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -33,6 +35,19 @@ from gns3server.services.authentication import DEFAULT_JWT_SECRET_KEY
 
 sys._called_from_test = True
 sys.original_platform = sys.platform
+
+
+def pytest_configure(config):
+    """
+    Increases the maximum number of open file descriptors before running tests (Unix only).
+    """
+
+    if platform.system() != "Windows":
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        # Set soft limit to hard limit, or a safe high number like 4096
+        new_soft = min(4096, hard)
+        if soft < new_soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
 @pytest_asyncio.fixture(loop_scope="class", scope="class")
@@ -325,9 +340,9 @@ def on_gns3vm(linux_platform):
     """
 
     with patch("gns3server.utils.interfaces.interfaces", return_value=[
-            {"name": "eth0", "special": False, "type": "ethernet"},
-            {"name": "eth1", "special": False, "type": "ethernet"},
-            {"name": "virbr0", "special": True, "type": "ethernet"}]):
+            {"name": "eth0", "special": False, "type": "ethernet", "ip_addresses": [], "status": "up", "speed": 1000, "mtu": 1500, "flags": ["up", "broadcast", "running", "multicast"]},
+            {"name": "eth1", "special": False, "type": "ethernet", "ip_addresses": [], "status": "down", "speed": 0, "mtu": 1500, "flags": ["broadcast"]},
+            {"name": "virbr0", "special": True, "type": "ethernet", "ip_addresses": [], "status": "up", "speed": 10000, "mtu": 1500, "flags": ["up", "broadcast", "running", "multicast"]}]):
         with patch("socket.gethostname", return_value="gns3vm"):
             yield
 
