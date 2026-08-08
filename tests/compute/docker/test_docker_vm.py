@@ -1883,7 +1883,7 @@ async def test_memory(compute_project, manager):
             })
         assert vm._cid == "e90e34656806"
 
-
+@pytest.mark.asyncio
 async def test_stop_exited_container_no_stop_query(vm):
 
     vm._ubridge_hypervisor = None

@@ -2674,7 +2674,6 @@ class QemuVM(BaseNode):
         command.extend(self._aux_options())
         command.extend(self._monitor_options())
         command.extend(await self._network_options())
-        command.extend((await self._network_options()))
         # bios options must be last to have predictable NIC numbering, see https://github.com/GNS3/gns3-server/issues/2838
         command.extend(self._bios_option())
         if self.on_close != "save_vm_state":

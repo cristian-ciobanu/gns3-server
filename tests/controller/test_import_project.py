@@ -21,7 +21,6 @@ import uuid
 import json
 import zipfile
 import pytest
-import aiohttp
 
 from pathlib import Path
 from tests.utils import asyncio_patch, AsyncioMagicMock
@@ -29,6 +28,7 @@ from unittest.mock import patch, MagicMock
 
 from gns3server.utils.asyncio import aiozipstream
 from gns3server.controller.project import Project
+from gns3server.controller.controller_error import ControllerError
 from gns3server.controller.export_project import export_project
 from gns3server.controller.import_project import import_project, _move_files_to_compute
 from gns3server.version import __version__
@@ -189,11 +189,12 @@ async def test_import_project_containing_absolute_symlink(controller, export_pro
     symlink_target = "/tmp/anywhere"
     zip_path = await export_project_with_symlink(symlink_target)
 
-    with pytest.raises(aiohttp.web.HTTPConflict):
+    with pytest.raises(ControllerError):
         with open(zip_path, "rb") as f:
             await import_project(controller, project_id, f)
 
 
+@pytest.mark.asyncio
 async def test_import_project_containing_escaping_symlink(controller, export_project_with_symlink):
     """
     Test importing a project containing a symlink that escapes the project directory.
@@ -204,11 +205,12 @@ async def test_import_project_containing_escaping_symlink(controller, export_pro
     symlink_target = "../../../../symlink_target"
     zip_path = await export_project_with_symlink(symlink_target)
 
-    with pytest.raises(aiohttp.web.HTTPConflict):
+    with pytest.raises(ControllerError):
         with open(zip_path, "rb") as f:
             await import_project(controller, project_id, f)
 
 
+@pytest.mark.asyncio
 async def test_import_upgrade(tmpdir, controller):
     """
     Topology made for previous GNS3 version are upgraded during the process

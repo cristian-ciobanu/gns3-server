@@ -713,6 +713,7 @@ async def test_delete_does_not_start_nodes(project):
     assert not project.start_all.called
 
 
+@pytest.mark.asyncio
 async def test_dump(projects_dir):
 
     directory = projects_dir
