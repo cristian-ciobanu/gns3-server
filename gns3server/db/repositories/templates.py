@@ -52,6 +52,9 @@ class TemplatesRepository(BaseRepository):
 
         super().__init__(db_session)
 
+    def configs_path(self) -> str:
+        return os.path.join(os.getcwd(), "configs")
+
     async def get_template(self, template_id: UUID) -> Union[None, models.Template]:
 
         query = select(models.Template).\

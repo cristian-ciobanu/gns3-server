@@ -175,6 +175,9 @@ class TemplatesService:
             if builtin_template["template_id"] == template_id:
                 return jsonable_encoder(builtin_template)
 
+    def _base_path(self):
+        return self._templates_repo.configs_path()
+
     async def get_templates(self) -> List[dict]:
 
         templates = []
@@ -342,3 +345,45 @@ class TemplatesService:
             self._controller.notification.controller_emit("template.deleted", {"template_id": str(template_id)})
         else:
             raise ControllerNotFoundError(f"Template '{template_id}' not found")
+
+    def _template_path(self, template_id: str) -> str:
+        return os.path.join(self._base_path(), str(template_id))
+
+    def list_files(self, template_id: str):
+        path = self._template_path(template_id)
+
+        if not os.path.exists(path):
+            return []
+
+        return [
+            {"filename": f}
+            for f in sorted(os.listdir(path))
+            if os.path.isfile(os.path.join(path, f))
+        ]
+
+    def get_file(self, template_id: str, filename: str):
+        safe_filename = os.path.basename(filename)
+        path = os.path.join(self._template_path(template_id), safe_filename)
+
+        if not os.path.isfile(path):
+            raise ControllerNotFoundError(f"File '{safe_filename}' not found")
+
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except OSError as e:
+            raise ControllerError(str(e))
+
+    def update_file(self, template_id: str, filename: str, content: str):
+        safe_filename = os.path.basename(filename)
+
+        dir_path = self._template_path(template_id)
+        path = os.path.join(dir_path, safe_filename)
+
+        os.makedirs(dir_path, exist_ok=True)
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as e:
+            raise ControllerError(str(e))
