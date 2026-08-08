@@ -1434,7 +1434,7 @@ class Project:
 
         if self._status != "opened":
             try:
-                await self.open()
+                await self.open(auto_start=False)
             except ControllerError as e:
                 # ignore missing images or other conflicts when deleting a project
                 log.warning(f"Conflict while deleting project: {e}")
@@ -1524,9 +1524,12 @@ class Project:
         return os.path.join(self.path, self._filename)
 
     @locking
-    async def open(self):
+    async def open(self, auto_start=True):
         """
         Load topology elements
+
+        :param auto_start: whether the nodes may be started when the project
+            has auto start enabled
         """
 
         if self._closing is True:
@@ -1692,7 +1695,7 @@ class Project:
         self._loading = False
         self.emit_controller_notification("project.opened", self.asdict())
         # Should we start the nodes when project is open
-        if self._auto_start:
+        if self._auto_start and auto_start:
             # Start all in the background without waiting for completion
             # we ignore errors because we want to let the user open
             # their project and fix it

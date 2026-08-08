@@ -1,5 +1,14 @@
 # Change Log
 
+## 2.2.61 30/07/2026
+
+* Sync appliances
+* fix(import): unvalidated symlink creation in import_project
+* fix(qemu): fix addition of QEMU RNG device causes interface names to change
+* fix(qemu): remove trailing space from RNG object argument
+* fix: do not start nodes when deleting a project
+* fix: correct always-true state check in DockerVM.stop()
+
 ## 2.2.60 15/07/2026
 
 * Sync appliances

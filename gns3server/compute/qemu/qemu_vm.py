@@ -2341,7 +2341,7 @@ class QemuVM(BaseNode):
             options.extend(["-drive", "if=pflash,format=raw,file={}".format(ovmf_vars_node_path)])
 
             # edk2 firmware requires a Random Number Generator (RNG) device in order to turn network adapters on
-            options.extend(["-object", "rng-random,filename=/dev/urandom,id=rng0 "])
+            options.extend(["-object", "rng-random,filename=/dev/urandom,id=rng0"])
             options.extend(["-device", "virtio-rng-pci,rng=rng0"])
         return options
 
@@ -2665,7 +2665,6 @@ class QemuVM(BaseNode):
             elif sys.platform.startswith("darwin"):
                 command.extend(["-enable-hax"])
         command.extend(["-boot", f"order={self._boot_priority}"])
-        command.extend(self._bios_option())
         command.extend(self._cdrom_option())
         command.extend(await self._disk_options())
         command.extend(self._linux_boot_options())
@@ -2675,6 +2674,9 @@ class QemuVM(BaseNode):
         command.extend(self._aux_options())
         command.extend(self._monitor_options())
         command.extend(await self._network_options())
+        command.extend((await self._network_options()))
+        # bios options must be last to have predictable NIC numbering, see https://github.com/GNS3/gns3-server/issues/2838
+        command.extend(self._bios_option())
         if self.on_close != "save_vm_state":
             await self._clear_save_vm_stated()
         else:
