@@ -485,6 +485,38 @@ async def project_ws_notifications(
                 await project.close()
 
 
+@router.websocket("/{project_id}/notifications/markers/ws")
+async def project_marker_ws_notifications(
+        project_id: UUID,
+        websocket: WebSocket,
+        current_user: schemas.User = Depends(has_privilege_on_websocket("Project.Audit"))
+) -> None:
+    """
+    Receive marker notifications (e.g. marker.match) for a project on a
+    dedicated WebSocket, separate from the main project stream so high-frequency
+    marker.matches do not block topology events (node.*/link.*).
+
+    Required privilege: Project.Audit
+    """
+
+    if current_user is None:
+        return
+
+    controller = Controller.instance()
+    project = controller.get_project(str(project_id))
+
+    log.info(f"New client has connected to the marker notification stream for project ID '{project.id}' (WebSocket method)")
+    try:
+        with controller.notification.project_marker_queue(project.id) as queue:
+            while True:
+                notification = await queue.get_json(5)
+                await websocket.send_text(notification)
+    except (ConnectionClosed, WebSocketDisconnect):
+        log.info(f"Client has disconnected from the marker notification stream for project ID '{project.id}' (WebSocket method)")
+    except WebSocketException as e:
+        log.warning(f"Error while sending marker event to WebSocket client: {e}")
+
+
 @router.get("/{project_id}/export", dependencies=[Depends(has_privilege("Project.Audit"))])
 async def export_project(
     project: Project = Depends(dep_project),
