@@ -35,6 +35,7 @@ class ControllerSettings(BaseModel):
     jwt_secret_key: str = None
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 1440  # 24 hours
+    jwt_refresh_token_expire_minutes: int = 43200  # 30 days
     default_admin_username: str = "admin"
     default_admin_password: SecretStr = SecretStr("admin")
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
@@ -70,6 +71,7 @@ class QemuSettings(BaseModel):
     enable_hardware_acceleration: bool = True
     require_hardware_acceleration: bool = False
     allow_unsafe_options: bool = False
+    ovmf_firmware_dir: str = "/usr/share/OVMF"
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 
 
@@ -109,6 +111,16 @@ class ServerProtocol(str, Enum):
 
     http = "http"
     https = "https"
+
+
+class UbridgeControlTransport(str, Enum):
+
+    # TCP control channel: -H host:port. ubridge now binds loopback by default,
+    # so this is reachable only locally. Retained for backward compatibility.
+    tcp = "tcp"
+    # AF_UNIX control channel: -U socket_path, authenticated in-kernel via
+    # SO_PEERCRED (ubridge accepts only its own UID). Recommended on Linux.
+    unix = "unix"
 
 
 class BuiltinSymbolTheme(str, Enum):
@@ -152,6 +164,17 @@ class ServerSettings(BaseModel):
     udp_start_port_range: int = Field(10000, gt=0, le=65535)
     udp_end_port_range: int = Field(30000, gt=0, le=65535)
     ubridge_path: str = "ubridge"
+    # Transport for the uBridge hypervisor control channel. "unix" (-U,
+    # AF_UNIX + SO_PEERCRED) is the default — recommended on Linux for
+    # kernel-level peer authentication. "tcp" (-H) is retained for backward
+    # compatibility.
+    ubridge_control_transport: UbridgeControlTransport = UbridgeControlTransport.unix
+    # Marker (traffic-insight) UDP sink: one listener per compute process that
+    # receives ubridge MARK signals from every ubridge on this host. The host
+    # defaults to loopback because ubridge runs on the same host as the compute.
+    # port=0 lets the OS choose a free port (read back and handed to ubridge).
+    marker_listen_host: str = "127.0.0.1"
+    marker_listen_port: int = Field(3070, ge=0, le=65535)
     compute_username: str = "gns3"
     compute_password: SecretStr = SecretStr("")
     allowed_interfaces: List[str] = Field(default_factory=list)
@@ -162,7 +185,31 @@ class ServerSettings(BaseModel):
     skills_repo_url: str = "https://github.com/gns3/gns3-skills.git"
     skills_repo_branch: str = "main"
     skills_auto_update: bool = True
+
+    # MCP (Model Context Protocol) transport security settings
+    # DNS rebinding protection is disabled by default to allow connections
+    # from any host (aligns with GNS3 server's 0.0.0.0 binding).
+    # Users with security requirements can enable protection and specify
+    # allowed hosts using "host:*" port wildcard patterns.
+    mcp_enable_dns_rebinding_protection: bool = False
+    mcp_allowed_hosts: list[str] = Field(default_factory=list)
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
+
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
+
+    @field_validator("mcp_allowed_hosts", mode="before")
+    @classmethod
+    def split_mcp_allowed_hosts(cls, v):
+        if v and isinstance(v, str):
+            return v.split(",")
+        return list()
+
+    @field_validator("mcp_allowed_origins", mode="before")
+    @classmethod
+    def split_mcp_allowed_origins(cls, v):
+        if v and isinstance(v, str):
+            return v.split(",")
+        return list()
 
     @field_validator("additional_images_paths", mode="before")
     @classmethod

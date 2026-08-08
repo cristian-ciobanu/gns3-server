@@ -33,6 +33,7 @@ from gns3server.controller.controller_error import (
     ControllerForbiddenError,
 )
 
+
 TEMPLATE_TYPE_TO_SCHEMA = {
     "cloud": schemas.CloudTemplate,
     "ethernet_hub": schemas.EthernetHubTemplate,
@@ -262,6 +263,7 @@ class TemplatesService:
     async def get_template(self, template_id: UUID) -> dict:
 
         db_template = await self._templates_repo.get_template(template_id)
+
         if db_template:
             template = db_template.asjson()
         else:
@@ -270,9 +272,13 @@ class TemplatesService:
             raise ControllerNotFoundError(f"Template '{template_id}' not found")
         return template
 
-    async def _remove_image(self, template_id: UUID, image_path:str) -> None:
+    async def _remove_image(self, template_id: UUID, image_path: str) -> None:
 
+        if not image_path:
+            return
         image = await self._templates_repo.get_image(image_path)
+        if image is None:
+            return
         await self._templates_repo.remove_image_from_template(template_id, image)
 
     async def update_template(self, template_id: UUID, template_update: schemas.TemplateUpdate) -> dict:

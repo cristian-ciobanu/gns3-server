@@ -24,3 +24,14 @@
 
 ### uBridge Permission
 - **[uBridge Permission Issue](./gns3-ubridge-permission.md)** - Docker containers fail to start due to missing CAP_NET_ADMIN/CAP_NET_RAW capabilities on uBridge
+- **[Docker iptables FORWARD blocks bridge](./docker-iptables-forward-bridge.md)** - Docker sets FORWARD chain to DROP, blocking kernel bridge forwarding; `sudo iptables -P FORWARD ACCEPT` to fix
+
+### Docker Container Stop Delay
+- **[Docker Container Stop Delay](./docker-container-stop-delay.md)** - Some containers take ~5s to stop because they don't handle SIGTERM (AlpiNet, OstinatoWireshark)
+
+### MCP Service
+- **[MCP Service Design](./mcp-service-design.md)** - MCP (Model Context Protocol) service architecture using FastMCP with SSE transport, JWT auth, 29 tools across 5 domains
+- **[MCP Tool Description Location](./mcp-tool-description-guide.md)** - Where to define MCP tool descriptions: in `@mcp.tool()` functions in `__init__.py`, not in `*_TOOLS` arrays
+
+### Python Code Verification
+- **[Import Validation](./python-import-validation.md)** - Use actual module imports (`python -c "from ... import ..."`) instead of `py_compile` to catch missing imports

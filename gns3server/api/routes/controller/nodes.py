@@ -24,6 +24,7 @@ import ipaddress
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Request, Response, status, Query, HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from typing import List, Callable, Optional
 from uuid import UUID
@@ -242,14 +243,25 @@ async def reload_all_nodes(project: Project = Depends(dep_project)) -> None:
             raise
 
 
+# Node types that need live host interface data from compute
+_HOST_INTERFACE_NODE_TYPES = {"cloud", "nat"}
+
+
 @router.get("/{node_id}", response_model=schemas.Node, dependencies=[Depends(has_privilege("Node.Audit"))])
-def get_node(node: Node = Depends(dep_node)) -> schemas.Node:
+async def get_node(node: Node = Depends(dep_node)) -> schemas.Node:
     """
     Return a node from a given project.
 
     Required privilege: Node.Audit
     """
 
+    if node.node_type in _HOST_INTERFACE_NODE_TYPES:
+        try:
+            response = await node.get()
+            await node.parse_node_response(response.json)
+        except Exception:
+            # If compute is unreachable, still return cached data
+            log.warning(f"Could not refresh node {node.id} from compute, returning cached data")
     return node.asdict()
 
 
@@ -523,17 +535,30 @@ async def delete_disk_image(
 
 
 @router.get("/{node_id}/files", response_model=List[schemas.NodeFile], dependencies=[Depends(has_privilege("Node.Audit"))])
-async def list_node_files(node: Node = Depends(dep_node)) -> List[schemas.NodeFile]:
+async def list_node_files(
+    node: Node = Depends(dep_node),
+    path: str = Query("", description="Subdirectory path within node directory"),
+    recursive: bool = Query(False, description="Recursively list all files")
+) -> List[schemas.NodeFile]:
     """
     List files in a node directory with detailed metadata.
+
+    By default lists only the current directory level (non-recursive).
+    Use recursive=true for a full recursive listing.
 
     Required privilege: Node.Audit
     """
 
     node_type = node.node_type
+    url = f"/projects/{node.project.id}/nodes/{node_type}/{node.id}/files"
+    params = {}
+    if path:
+        params["path"] = path
+    if recursive:
+        params["recursive"] = "true"
     res = await node.compute.http_query(
-        "GET",
-        f"/projects/{node.project.id}/nodes/{node_type}/{node.id}/files",
+        "GET", url,
+        params=params if params else None,
         timeout=None
     )
     return res.json
@@ -550,14 +575,32 @@ async def get_file(file_path: str, node: Node = Depends(dep_node)) -> Response:
     path = force_unix_path(file_path)
 
     # Raise error if user try to escape
-    if path[0] == ".":
+    if path.startswith(".."):
         raise ControllerForbiddenError("It is forbidden to get a file outside the project directory")
 
     node_type = node.node_type
     path = f"/project-files/{node_type}/{node.id}/{path}"
 
-    res = await node.compute.http_query("GET", f"/projects/{node.project.id}/files{path}", timeout=None, raw=True)
-    return Response(res.body, media_type="application/octet-stream", status_code=res.status)
+    compute_resp = await node.compute.http_query(
+        "GET", f"/projects/{node.project.id}/files{path}",
+        timeout=None, stream=True
+    )
+
+    async def streamer():
+        try:
+            async for chunk in compute_resp.content.iter_chunked(65536):
+                yield chunk
+        except (IOError, OSError, asyncio.TimeoutError) as e:
+            log.error(f"Error streaming file '{path}' from compute: {e}")
+            raise
+        finally:
+            compute_resp.close()
+
+    return StreamingResponse(
+        streamer(),
+        media_type="application/octet-stream",
+        status_code=compute_resp.status,
+    )
 
 
 @router.post(
@@ -575,15 +618,43 @@ async def post_file(file_path: str, request: Request, node: Node = Depends(dep_n
     path = force_unix_path(file_path)
 
     # Raise error if user try to escape
-    if path[0] == ".":
+    if path.startswith(".."):
         raise ControllerForbiddenError("Cannot write outside the node directory")
 
     node_type = node.node_type
     path = f"/project-files/{node_type}/{node.id}/{path}"
 
-    data = await request.body()  # FIXME: are we handling timeout or large files correctly?
-    await node.compute.http_query("POST", f"/projects/{node.project.id}/files{path}", data=data, timeout=None, raw=True)
-    # FIXME: response with correct status code (from compute)
+    # Stream request body directly to compute node
+    await node.compute.http_query(
+        "POST", f"/projects/{node.project.id}/files{path}",
+        data=request.stream(), timeout=None
+    )
+
+
+@router.delete(
+    "/{node_id}/files/{file_path:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_privilege("Node.Modify"))]
+)
+async def delete_node_file(file_path: str, node: Node = Depends(dep_node)) -> None:
+    """
+    Delete a file from the node directory.
+
+    Required privilege: Node.Modify
+    """
+
+    path = force_unix_path(file_path)
+
+    if path.startswith(".."):
+        raise ControllerForbiddenError("It is forbidden to delete a file outside the project directory")
+
+    node_type = node.node_type
+    path = f"/project-files/{node_type}/{node.id}/{path}"
+
+    await node.compute.http_query(
+        "DELETE", f"/projects/{node.project.id}/files{path}",
+        timeout=None
+    )
 
 
 @router.websocket("/{node_id}/console/ws")

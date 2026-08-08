@@ -29,6 +29,10 @@ Adapted gns3fy module for GNS3-Copilot
 This module is based on the upstream gns3fy project
 (https://github.com/davidban77/gns3fy).
 
+⚠️ WARNING: This module is shared with the MCP (Model Context Protocol) service.
+The Gns3Connector class is used by MCP handlers to make HTTP calls.
+Modifications to this file must be tested with BOTH gns3-copilot AND MCP.
+
 Modifications made for GNS3-Copilot:
 - Adjusted pydantic usages and dataclass configuration to reduce dependency
   conflicts with langchain (pydantic version/api differences)
@@ -55,7 +59,7 @@ from typing import Any
 from typing import ParamSpec
 from typing import TypeVar
 from typing import cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import jwt
 import requests
@@ -70,6 +74,7 @@ R = TypeVar("R")
 F = TypeVar("F", bound=Callable[..., Any])
 
 config = ConfigDict(validate_assignment=True, extra="ignore")
+
 
 NODE_TYPES = [
     "cloud",
@@ -187,6 +192,10 @@ class Gns3Connector:
         Creates the requests.Session object and applies the necessary parameters
         """
         self.session = requests.Session()  # pragma: no cover
+        # Increase connection pool size to support concurrent MCP batch operations
+        adapter = requests.adapters.HTTPAdapter(pool_connections=500, pool_maxsize=1000)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.session.headers["Accept"] = "application/json"  # pragma: no cover
 
         # Set authentication based on API version
@@ -287,6 +296,7 @@ class Gns3Connector:
         """
         Executes HTTP operations and handles GNS3-specific error logic.
         """
+
         # Handle JWT authentication
         if (
             self.auth_type == "jwt"
@@ -304,7 +314,7 @@ class Gns3Connector:
             "headers": headers,
             "params": params,
             "verify": verify,
-            "timeout": 10.0,  # Fixed 10-second timeout for all GNS3 API requests
+            "timeout": 30.0,  # Main request timeout (auth call uses 10s)
         }
         if data is not None:
             kwargs["data"] = data
@@ -315,6 +325,7 @@ class Gns3Connector:
         _response: requests.Response = caller(url, **kwargs)
 
         self.api_calls += 1
+
 
         try:
             _response.raise_for_status()
@@ -707,6 +718,80 @@ class Gns3Connector:
         _url = f"{self.base_url}/projects/{project_id}"
         self.http_call("delete", _url)
         return None
+
+    def update_project(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        """
+        Update a project's properties.
+
+        **Required Attributes:**
+
+        - `project_id`
+
+        **Optional Attributes:**
+
+        - `name`, `auto_close`, `auto_open`, `auto_start`
+        - `scene_height`, `scene_width`, `zoom`
+        - `show_layers`, `snap_to_grid`, `show_grid`, `grid_size`, `drawing_grid_size`
+        - `show_interface_labels`, `supplier`, `variables`
+
+        **Returns**
+
+        JSON project information
+        """
+        _url = f"{self.base_url}/projects/{project_id}"
+        _response = self.http_call("put", _url, json_data=kwargs)
+        return cast(dict[str, Any], _response.json())
+
+    def duplicate_project(self, project_id: str, **kwargs: Any) -> dict[str, Any]:
+        """
+        Duplicate a project from a given project_id.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `name` (in kwargs)
+
+        **Returns**
+
+        JSON project information
+        """
+        _url = f"{self.base_url}/projects/{project_id}/duplicate"
+        if "name" not in kwargs:
+            raise ValueError("Parameter 'name' is mandatory")
+        _response = self.http_call("post", _url, json_data=kwargs)
+        return cast(dict[str, Any], _response.json())
+
+    def get_project_file(self, project_id: str, file_path: str) -> str:
+        """
+        Get the content of a file in a project.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `file_path`
+
+        **Returns**
+
+        File content as text string
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
+        _response = self.http_call("get", _url)
+        return _response.text
+
+    def write_project_file(self, project_id: str, file_path: str, content: str) -> None:
+        """
+        Write content to a file in a project. Creates the file if it doesn't exist.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `file_path`
+        - `content`
+        """
+        encoded_path = quote(file_path, safe="/")
+        _url = f"{self.base_url}/projects/{project_id}/files/{encoded_path}"
+        self.http_call("post", _url, data=content, headers={"Content-Type": "text/plain"})
 
     def get_computes(self) -> list[dict[str, Any]]:
         """
@@ -1101,6 +1186,96 @@ class Link:
         _response = _conn.http_call("get", _url)
 
         return cast(list[dict[str, Any]], _response.json())
+
+    def reset(self) -> None:
+        """
+        Reset the link, clearing its state (counters, filters, etc.).
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/links/{self.link_id}/reset"
+        _response = _conn.http_call("post", _url)
+        self._update(_response.json())
+
+    def start_capture(
+        self,
+        data_link_type: str = "DLT_EN10MB",
+        capture_file_name: str | None = None,
+        wireshark: bool = False,
+    ) -> None:
+        """
+        Start packet capture on the link.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+
+        **Optional Attributes:**
+
+        - `data_link_type` Data link type (default: DLT_EN10MB)
+        - `capture_file_name` Name of the capture file (optional)
+        - `wireshark` Open Wireshark automatically (default: False)
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+        if not self.link_id:
+            raise ValueError("Need to submit link_id")
+
+        _url = (
+            f"{_conn.base_url}/projects/{_project_id}/links/"
+            f"{self.link_id}/capture/start"
+        )
+        _data: dict[str, Any] = {
+            "data_link_type": data_link_type,
+            "wireshark": wireshark,
+        }
+        if capture_file_name:
+            _data["capture_file_name"] = capture_file_name
+        _response = _conn.http_call("post", _url, json_data=_data)
+        self._update(_response.json())
+
+    def stop_capture(self) -> None:
+        """
+        Stop packet capture on the link.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `link_id`
+        """
+        _conn = self.connector
+        _project_id = self.project_id
+
+        if _conn is None:
+            raise ValueError("Gns3Connector not assigned under 'connector'")
+        if _project_id is None:
+            raise ValueError("Need to submit project_id")
+
+        _url = (
+            f"{_conn.base_url}/projects/{_project_id}/links/"
+            f"{self.link_id}/capture/stop"
+        )
+        _conn.http_call("post", _url)
 
 
 @dataclass(config=config)
@@ -1613,6 +1788,64 @@ class Node:
         _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files/{path}"
 
         return cast(str, _conn.http_call("get", _url).text)
+
+    @verify_connector_and_id
+    def list_files(self, path: str = "", recursive: bool = False) -> list[dict[str, Any]]:
+        """
+        List files in the node directory with metadata (name, size, type, modified time).
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `node_id`
+
+        **Optional Attributes:**
+
+        - `path`: Subdirectory path within node directory (default: "")
+        - `recursive`: Recursively list all files (default: False)
+
+        **Returns:**
+
+        List of file objects with metadata.
+        """
+        _conn = self.connector
+        assert _conn is not None
+        _project_id = self.project_id
+        assert _project_id is not None
+        _node_id = self.node_id
+        assert _node_id is not None
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files"
+        _params: dict[str, str] = {}
+        if path:
+            _params["path"] = path
+        if recursive:
+            _params["recursive"] = "true"
+        _response = _conn.http_call("get", _url, params=_params if _params else None)
+        return cast(list[dict[str, Any]], _response.json())
+
+    @verify_connector_and_id
+    def delete_file(self, path: str) -> None:
+        """
+        Delete a file from the node directory.
+
+        **Required Attributes:**
+
+        - `project_id`
+        - `connector`
+        - `node_id`
+        - `path`: Node's relative path of the file to delete
+        """
+        _conn = self.connector
+        assert _conn is not None
+        _project_id = self.project_id
+        assert _project_id is not None
+        _node_id = self.node_id
+        assert _node_id is not None
+
+        _url = f"{_conn.base_url}/projects/{_project_id}/nodes/{_node_id}/files/{path}"
+        _conn.http_call("delete", _url)
 
     @verify_connector_and_id
     def write_file(self, path: str, data: Any) -> None:

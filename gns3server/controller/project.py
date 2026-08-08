@@ -37,10 +37,12 @@ from .snapshot import Snapshot
 from .drawing import Drawing
 from .topology import project_to_topology, load_topology
 from .udp_link import UDPLink
+from .link import _UNSET
 from ..config import Config
 from ..utils.path import check_path_allowed, get_default_project_directory
 from ..utils.application_id import get_next_application_id
 from ..utils.asyncio.pool import Pool
+from ..utils.packet_filter_validation import validate_bpf_syntax
 from ..utils.asyncio import locking
 from ..utils.asyncio import aiozipstream
 from ..utils.asyncio import wait_run_in_executor
@@ -158,6 +160,7 @@ class Project:
             self.dump()
 
         self._iou_id_lock = asyncio.Lock()
+        self._preallocated_udp_ports = {}  # compute_id -> list of pre-allocated UDP ports
         log.debug(f'Project "{self.name}" [{self._id}] loaded')
         self.emit_controller_notification("project.created", self.asdict())
 
@@ -197,9 +200,11 @@ class Project:
             self.emit_controller_notification("project.updated", self.asdict())
             self.dump()
 
-            # update on computes
-            for compute in list(self._project_created_on_compute):
-                await compute.put(f"/projects/{self._id}", {"variables": self.variables})
+            # Only notify computes if variables actually changed and have content
+            # None and empty list are semantically equivalent (no variables) and don't affect running nodes
+            if "variables" in kwargs and kwargs["variables"]:
+                for compute in list(self._project_created_on_compute):
+                    await compute.put(f"/projects/{self._id}", {"variables": self.variables})
 
     def reset(self):
         """
@@ -208,12 +213,14 @@ class Project:
         self._allocated_node_names = set()
         self._nodes = {}
         self._links = {}
+        self._marker_definitions = {}  # name → {bpf, tag, color, highlight_duration}
         self._drawings = {}
         self._snapshots = {}
         self._computes = []
         self._load_snapshot_config()
         # Create the project on demand on the compute node
         self._project_created_on_compute = set()
+        self._preallocated_udp_ports = {}
 
     @property
     def scene_height(self):
@@ -428,7 +435,21 @@ class Project:
 
     @name.setter
     def name(self, val):
+        old_filename = self._filename
         self._name = val
+        self._filename = val + ".gns3"
+
+        # Rename the .gns3 file on disk when the project name changes
+        if old_filename != self._filename:
+            old_path = os.path.join(self._path, old_filename)
+            new_path = os.path.join(self._path, self._filename)
+            if os.path.exists(old_path):
+                try:
+                    shutil.move(old_path, new_path)
+                    log.info(f"Project file renamed from '{old_filename}' to '{self._filename}'")
+                except OSError as e:
+                    log.warning(f"Could not rename project file from '{old_filename}' to '{self._filename}': {e}")
+                    self._filename = old_filename
 
     @property
     def id(self):
@@ -545,13 +566,11 @@ class Project:
         """
         Create a node from a template.
         """
-
         template["x"] = x
         template["y"] = y
         node_type = template.pop("template_type")
 
         if compute_id:
-            # use a custom compute_id
             compute = self.controller.get_compute(compute_id)
         else:
             compute = self.controller.get_compute(template.pop("compute_id"))
@@ -568,15 +587,12 @@ class Project:
 
         node = Node(self, compute, name, node_id=node_id, node_type=node_type, **kwargs)
         if compute not in self._project_created_on_compute:
-            # For a local server we send the project path
             if compute.id == "local":
                 data = {"name": self._name, "project_id": self._id, "path": self._path}
             else:
                 data = {"name": self._name, "project_id": self._id}
-
             if self._variables:
                 data["variables"] = self._variables
-
             await compute.post("/projects", data=data)
             self._project_created_on_compute.add(compute)
 
@@ -602,16 +618,15 @@ class Project:
 
         if node_type == "iou":
             async with self._iou_id_lock:
-                # wait for an IOU node to be completely created before adding a new one
-                # this is important otherwise we allocate the same application ID (used
-                # to generate MAC addresses) when creating multiple IOU node at the same time
+                # IOU application IDs must be allocated serially to avoid duplicates.
+                # The lock must also cover _create_node() because get_next_application_id()
+                # checks in-memory nodes (self._nodes), which are only registered
+                # after _create_node() completes.
                 if "properties" in kwargs.keys():
-                    # allocate a new application id for nodes loaded from the project
                     kwargs.get("properties")["application_id"] = get_next_application_id(
                         self._controller.projects, self._computes
                     )
                 elif "application_id" not in kwargs.keys() and not kwargs.get("properties"):
-                    # allocate a new application id for nodes added to the project
                     kwargs["application_id"] = get_next_application_id(self._controller.projects, self._computes)
                 node = await self._create_node(compute, name, node_id, node_type, **kwargs)
         else:
@@ -735,6 +750,83 @@ class Project:
         self.dump()
         self.emit_notification("drawing.deleted", drawing.asdict())
 
+    async def _create_link_from_topology_data(self, link_data):
+        """
+        Create a link from topology data (used during project loading).
+
+        Extracted into a separate method so links can be created in parallel
+        via Pool() during project.open().
+
+        :param link_data: Link data from the topology file
+        """
+        link = await self.add_link(link_id=link_data["link_id"])
+        if "filters" in link_data:
+            try:
+                await link.update_filters(link_data["filters"])
+            except ControllerError as e:
+                log.warning(
+                    "Dropping invalid filters on link %s: %s",
+                    link_data.get("link_id"), e
+                )
+        # Restore traffic-insight markers directly into link state (mirrors how
+        # filters are restored via update_filters). The capture_node_id persisted
+        # last time is reused for NIO routing; no side resolution is possible here
+        # because the link's nodes are added later. The marker is applied to
+        # uBridge by _ubridge_apply_markers when create() runs. Invalid BPF is
+        # dropped (like invalid filters).
+        for name, marker in (link_data.get("markers") or {}).items():
+            bpf = marker.get("bpf")
+            if not bpf:
+                log.warning("Dropping marker %s on link %s: missing bpf", name, link_data.get("link_id"))
+                continue
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                log.warning(
+                    "Dropping marker %s on link %s: invalid BPF (%s)",
+                    name, link_data.get("link_id"), result.get("error")
+                )
+                continue
+            link._markers[name] = {
+                "bpf": bpf,
+                "tag": marker.get("tag"),
+                "enabled": marker.get("enabled", True),
+                "color": marker.get("color"),
+                "highlight_duration": marker.get("highlight_duration"),
+                "capture_node_id": marker.get("capture_node_id"),
+                "direction": marker.get("direction"),
+            }
+        if "link_style" in link_data:
+            await link.update_link_style(link_data["link_style"])
+        if "show_filters_icon" in link_data:
+            await link.update_show_filters_icon(link_data["show_filters_icon"])
+        for node_link in link_data.get("nodes", []):
+            node = self.get_node(node_link["node_id"])
+            port = node.get_port(node_link["adapter_number"], node_link["port_number"])
+            if port is None:
+                log.warning(
+                    "Port {}/{} for {} not found".format(
+                        node_link["adapter_number"], node_link["port_number"], node.name
+                    )
+                )
+                continue
+            if port.link is not None:
+                log.warning(
+                    "Port {}/{} is already connected to link ID {}".format(
+                        node_link["adapter_number"], node_link["port_number"], port.link.id
+                    )
+                )
+                continue
+            await link.add_node(
+                node,
+                node_link["adapter_number"],
+                node_link["port_number"],
+                label=node_link.get("label"),
+                dump=False,
+            )
+        if len(link.nodes) != 2:
+            # a link should have 2 attached nodes, this can happen with corrupted projects
+            await self.delete_link(link.id, force_delete=True)
+
     @open_required
     async def add_link(self, link_id=None, dump=True):
         """
@@ -749,6 +841,35 @@ class Project:
         if dump:
             self.dump()
         return link
+
+    async def preallocate_udp_ports_for_compute(self, compute, count):
+        """
+        Pre-allocate UDP ports from a compute in a single batch call.
+
+        Used during project loading to reduce HTTP round-trips when
+        creating many links.
+
+        :param compute: Compute instance
+        :param count: Number of UDP ports to pre-allocate
+        """
+        if count <= 0:
+            return
+        response = await compute.post(f"/projects/{self._id}/ports/udp/batch", data={"count": count})
+        ports = response.json["udp_ports"]
+        self._preallocated_udp_ports.setdefault(compute.id, [])
+        self._preallocated_udp_ports[compute.id].extend(ports)
+
+    def pop_preallocated_udp_port(self, compute_id):
+        """
+        Pop a pre-allocated UDP port for a compute.
+
+        :param compute_id: Compute ID
+        :returns: UDP port number or None if no pre-allocated port is available
+        """
+        ports = self._preallocated_udp_ports.get(compute_id, [])
+        if ports:
+            return ports.pop()
+        return None
 
     @open_required
     async def delete_link(self, link_id, force_delete=False):
@@ -780,6 +901,285 @@ class Project:
         if self._status == "closed":
             return self._get_closed_data("links", "link_id")
         return self._links
+
+    @property
+    def markers(self):
+        """
+        Project-level read-only aggregation of all markers across every link.
+
+        Each entry is keyed ``"{link_id}/{marker_name}"`` so the flat dict is
+        globally unique within the project.  The value is a clone of the link's
+        per-marker dict plus ``link_id`` and ``node_id`` (the capture-side node)
+        for convenience — the frontend can filter/group by link or node without
+        extra round-trips.
+
+        :returns: dict[str, dict] — keyed by "{link_id}/{marker_name}"
+        """
+        result = {}
+        for link_id, link in self._links.items():
+            for name, info in link.markers.items():
+                key = f"{link_id}/{name}"
+                result[key] = {
+                    **info,
+                    "link_id": link_id,
+                    "node_id": info.get("capture_node_id"),
+                }
+        return result
+
+    async def pause_marker_definition(self, name):
+        """
+        Pause every inherited copy of a definition (``global-{name}``) on every
+        link: toggle each filter off in place via ``update_marker(enabled=False)``
+        — uBridge ``enable_packet_filter off``, no NIO rebuild, pcap/emitted
+        preserved. The definition's ``paused`` flag is persisted, so links
+        created later inherit the marker already paused.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = True
+        marker_name = f"global-{name}"
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=False, inherited=True, dump=False),
+            lambda link, e: f"Failed to pause marker {marker_name} on link {link.id}: {e}",
+        )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def resume_marker_definition(self, name):
+        """Resume every inherited copy of a definition (toggle on)."""
+
+        if name not in self._marker_definitions:
+            raise ControllerError(f"Marker definition '{name}' not found")
+        self._marker_definitions[name]["paused"] = False
+        marker_name = f"global-{name}"
+        affected = [
+            link for link in self._links.values()
+            if marker_name in link.markers and link.markers[marker_name].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.update_marker(marker_name, enabled=True, inherited=True, dump=False),
+            lambda link, e: f"Failed to resume marker {marker_name} on link {link.id}: {e}",
+        )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    @property
+    def marker_definitions(self):
+        """
+        :returns: dict of project-level marker definitions (name → {bpf, tag, color, highlight_duration})
+        """
+        return self._marker_definitions
+
+    def _validate_marker_definition_bpf(self, name, bpf):
+        """
+        Validate a marker definition's BPF once, here, so the fan-out to every
+        link (``_apply_def_to_all_links`` → ``inherit_marker`` → ``start_marker``)
+        and the per-link sync (``update_marker_definition`` → ``update_marker``)
+        can skip re-validation for the inherited copies — otherwise one
+        ``tcpdump -d`` subprocess runs per link for the same expression. A
+        private per-link marker still validates in ``start_marker``/``update_marker``.
+        """
+        result = validate_bpf_syntax(bpf)
+        if not result.get("valid"):
+            raise ControllerError(
+                f"Marker definition '{name}': invalid BPF — {result.get('error', 'unknown error')}"
+            )
+
+    def _validate_marker_definition_direction(self, name, direction):
+        """
+        Reject tx/rx on a marker definition: a definition fans out to every link
+        and auto-selects its capture node on each (``_choose_marker_side``),
+        while tx/rx is relative to that node, so a fixed direction has no
+        consistent meaning across links. Only 'both' (the default, = ``None``)
+        is allowed — encode the direction in the BPF instead (e.g.
+        ``icmp[icmptype]==8`` for echo requests), or use a per-link marker whose
+        capture node is pinned.
+        """
+        if direction in ("tx", "rx"):
+            raise ControllerError(
+                f"Marker definition '{name}': direction '{direction}' is not allowed. "
+                "A definition fans out to every link and auto-selects its capture node on each, "
+                "but tx/rx is relative to that node, so a fixed direction has no consistent "
+                "meaning across links. Keep 'both' (the default) and encode the direction in "
+                "the BPF instead, e.g. 'icmp and icmp[icmptype]==8' for echo requests only. "
+                "For a capture-node-relative direction on a single link, use a per-link marker."
+            )
+
+    async def create_marker_definition(self, name, bpf, tag=None, direction=None, color=None, highlight_duration=None, data_link_type="DLT_EN10MB"):
+        """
+        Create a project-level marker definition and fan out to every existing
+        link that has a capable node.  Links without a capable node are silently
+        skipped.
+        """
+
+        if name in self._marker_definitions:
+            raise ControllerError(
+                f"Marker definition '{name}' already exists in this project"
+            )
+
+        self._validate_marker_definition_bpf(name, bpf)
+        self._validate_marker_definition_direction(name, direction)
+        self._marker_definitions[name] = {"bpf": bpf, "tag": tag, "direction": direction, "color": color, "highlight_duration": highlight_duration, "data_link_type": data_link_type, "paused": False}
+        await self._apply_def_to_all_links(name)
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def update_marker_definition(self, name, bpf=None, tag=None, direction=_UNSET, color=None, highlight_duration=None, data_link_type=_UNSET):
+        """
+        Update a marker definition and sync every inherited copy on every link.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerNotFoundError(
+                f"Marker definition '{name}' not found in this project"
+            )
+
+        d = self._marker_definitions[name]
+        if bpf is not None:
+            self._validate_marker_definition_bpf(name, bpf)
+            d["bpf"] = bpf
+        if tag is not None:
+            d["tag"] = tag
+        if color is not None:
+            d["color"] = color
+        if highlight_duration is not None:
+            d["highlight_duration"] = highlight_duration
+        if direction is not _UNSET:
+            self._validate_marker_definition_direction(name, direction)
+            d["direction"] = direction  # None = clear back to both directions
+        if data_link_type is not _UNSET:
+            d["data_link_type"] = data_link_type
+
+        # Links that currently carry an inherited copy of this definition.
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+
+        if data_link_type is not _UNSET:
+            # data_link_type decides which links host an inherited copy (serial
+            # links are skipped unless a WAN encapsulation is chosen), so a change
+            # needs a full re-fan-out: drop every copy, then re-apply.
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.stop_marker(f"global-{name}", inherited=True, dump=False),
+                lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+            )
+            await self._apply_def_to_all_links(name)
+        else:
+            # Sync: update every inherited copy across all links.
+            await self._marker_apply_concurrently(
+                affected,
+                lambda link: link.update_marker(
+                    f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
+                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
+                    dump=False
+                ),
+                lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
+            )
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def delete_marker_definition(self, name):
+        """
+        Delete a marker definition and remove every inherited copy from every link.
+        """
+
+        if name not in self._marker_definitions:
+            raise ControllerNotFoundError(
+                f"Marker definition '{name}' not found in this project"
+            )
+
+        del self._marker_definitions[name]
+
+        affected = [
+            link for link in self._links.values()
+            if f"global-{name}" in link.markers
+            and link.markers[f"global-{name}"].get("inherited_from") == name
+        ]
+        await self._marker_apply_concurrently(
+            affected,
+            lambda link: link.stop_marker(f"global-{name}", inherited=True),
+            # A missing compute or broken link shouldn't block the delete.
+            lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
+        )
+
+        self.dump()
+        self.emit_notification("project.updated", self.asdict())
+
+    async def _apply_def_to_all_links(self, def_name):
+        """
+        Fan out a single marker definition to every existing link in the project.
+        Links that have no capable node (``_MARKER_CAPABLE_TYPES``) are silently
+        skipped — the marker can only live on a uBridge bridge.
+        """
+
+        d = self._marker_definitions[def_name]
+        # dump=False: per-link topology writes are the dominant cost on large
+        # projects — the callers (create/update_marker_definition) dump once
+        # after the fan-out.
+        await self._marker_apply_concurrently(
+            list(self._links.values()),
+            lambda link: link.inherit_marker(def_name, d, dump=False),
+            lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
+        )
+
+    async def apply_defs_to_new_link(self, link):
+        """
+        Apply every active marker definition to a newly created link so it
+        inherits project-level rules automatically.
+
+        Deliberately serial: all definitions share the same link, and each
+        ``inherit_marker`` pushes the link's full marker set — concurrent
+        pushes would race (a later push overwriting an earlier one's spec and
+        losing markers).
+        """
+
+        for def_name, d in self._marker_definitions.items():
+            try:
+                # dump=False: the caller (link create / project open) dumps once
+                # after; per-def dumps here would be N full topology writes.
+                await link.inherit_marker(def_name, d, dump=False)
+            except ControllerError as e:
+                log.warning(
+                    "Marker definition '%s' could not be applied to new link %s: %s",
+                    def_name, link.id, e
+                )
+
+    async def _marker_apply_concurrently(self, links, operation, fail_msg):
+        """
+        Run an async per-link marker operation across *links* with bounded
+        concurrency. A serial loop takes N sequential compute round-trips — a
+        definition over 1000 links would take minutes on remote computes — so
+        fan out in parallel batches. Links are independent (own ``_markers`` /
+        ``_link_data``), so this is race-free; per-link ``ControllerError`` is
+        logged and skipped, preserving the serial loop's isolation semantics.
+        ``Project.dump`` is synchronous and writes atomically (tmp + rename),
+        so concurrent dumps from the fan-out cannot corrupt the topology file.
+
+        :param links: iterable of links to operate on
+        :param operation: async callable ``(link) -> coroutine``
+        :param fail_msg: callable ``(link, error) -> log message``
+        """
+
+        sem = asyncio.Semaphore(32)
+
+        async def guarded(link):
+            async with sem:
+                try:
+                    await operation(link)
+                except ControllerError as e:
+                    log.warning(fail_msg(link, e))
+
+        await asyncio.gather(*(guarded(link) for link in links))
 
     @property
     def snapshots(self):
@@ -1034,7 +1434,7 @@ class Project:
 
         if self._status != "opened":
             try:
-                await self.open()
+                await self.open(auto_start=False)
             except ControllerError as e:
                 # ignore missing images or other conflicts when deleting a project
                 log.warning(f"Conflict while deleting project: {e}")
@@ -1124,9 +1524,12 @@ class Project:
         return os.path.join(self.path, self._filename)
 
     @locking
-    async def open(self):
+    async def open(self, auto_start=True):
         """
         Load topology elements
+
+        :param auto_start: whether the nodes may be started when the project
+            has auto start enabled
         """
 
         if self._closing is True:
@@ -1171,6 +1574,29 @@ class Project:
                 if val is not None:
                     setattr(self, key, val)
 
+            # marker_definitions is loaded separately (it is not a __init__ kwarg
+            # nor a simple attribute — it backs a read-only property). Each BPF
+            # is validated once here so the inherited fan-out (start_marker) can
+            # skip re-validation; an invalid definition is dropped with a warning
+            # rather than failing the open — it could not fan out anyway.
+            defs = project_data.get("marker_definitions")
+            if isinstance(defs, dict):
+                clean_defs = {}
+                for def_name, d in defs.items():
+                    bpf = d.get("bpf")
+                    if not bpf:
+                        log.warning("Dropping marker definition '%s' on load: missing bpf", def_name)
+                        continue
+                    result = validate_bpf_syntax(bpf)
+                    if not result.get("valid"):
+                        log.warning(
+                            "Dropping marker definition '%s' on load: invalid BPF (%s)",
+                            def_name, result.get("error")
+                        )
+                        continue
+                    clean_defs[def_name] = d
+                self._marker_definitions = clean_defs
+
             topology = project_data["topology"]
             for compute in topology.get("computes", []):
                 compute_id = compute.get("compute_id")
@@ -1205,56 +1631,41 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
-            pool = Pool(concurrency=5)
+            pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
+            # Pre-allocate UDP ports for all links in batch to reduce HTTP round-trips
+            ports_per_compute = {}
             for link_data in topology.get("links", []):
                 if "link_id" not in link_data.keys():
-                    # skip the link
                     continue
-                link = await self.add_link(link_id=link_data["link_id"])
-                if "filters" in link_data:
-                    try:
-                        await link.update_filters(link_data["filters"])
-                    except ControllerError as e:
-                        log.warning(
-                            "Dropping invalid filters on link %s: %s",
-                            link_data.get("link_id"), e
-                        )
-                if "link_style" in link_data:
-                    await link.update_link_style(link_data["link_style"])
-                if "show_filters_icon" in link_data:
-                    await link.update_show_filters_icon(link_data["show_filters_icon"])
                 for node_link in link_data.get("nodes", []):
-                    node = self.get_node(node_link["node_id"])
-                    port = node.get_port(node_link["adapter_number"], node_link["port_number"])
-                    if port is None:
-                        log.warning(
-                            "Port {}/{} for {} not found".format(
-                                node_link["adapter_number"], node_link["port_number"], node.name
-                            )
-                        )
-                        continue
-                    if port.link is not None:
-                        log.warning(
-                            "Port {}/{} is already connected to link ID {}".format(
-                                node_link["adapter_number"], node_link["port_number"], port.link.id
-                            )
-                        )
-                        continue
-                    await link.add_node(
-                        node,
-                        node_link["adapter_number"],
-                        node_link["port_number"],
-                        label=node_link.get("label"),
-                        dump=False,
-                    )
-                if len(link.nodes) != 2:
-                    # a link should have 2 attached nodes, this can happen with corrupted projects
-                    await self.delete_link(link.id, force_delete=True)
+                    node = self._nodes.get(node_link["node_id"])
+                    if node:
+                        ports_per_compute[node.compute.id] = ports_per_compute.get(node.compute.id, 0) + 1
+            for compute in self.computes:
+                count = ports_per_compute.get(compute.id, 0)
+                if count > 0:
+                    await self.preallocate_udp_ports_for_compute(compute, count)
+            # Create links in parallel for improved performance
+            pool = Pool(concurrency=100)
+            for link_data in topology.get("links", []):
+                if "link_id" not in link_data.keys():
+                    continue
+                pool.append(self._create_link_from_topology_data, link_data)
+            await pool.join()
+            # Release any pre-allocated UDP ports that were not consumed by links
+            for compute_id, ports in self._preallocated_udp_ports.items():
+                if ports:
+                    log.warning(f"Releasing {len(ports)} unconsumed pre-allocated UDP ports on compute {compute_id}")
+            self._preallocated_udp_ports.clear()
             for drawing_data in topology.get("drawings", []):
                 await self.add_drawing(dump=False, **drawing_data)
+
+            # Note: project-level marker definitions are applied to each link
+            # inside UDPLink.create() (the inheritance hook), so they are
+            # already present once links are loaded — no separate fan-out here.
 
             self.dump()
         # We catch all error to be able to roll back the .gns3 to the previous state
@@ -1284,7 +1695,7 @@ class Project:
         self._loading = False
         self.emit_controller_notification("project.opened", self.asdict())
         # Should we start the nodes when project is open
-        if self._auto_start:
+        if self._auto_start and auto_start:
             # Start all in the background without waiting for completion
             # we ignore errors because we want to let the user open
             # their project and fix it
@@ -1388,6 +1799,10 @@ class Project:
         :param reset_mac_addresses: Reset MAC addresses for the duplicated project
         """
 
+        # We don't duplicate a running project
+        if self.is_running():
+            raise ControllerError("Project must be stopped in order to duplicate it")
+
         # remote replication is not supported with remote computes
         for compute in self.computes:
             if compute.id != "local":
@@ -1404,7 +1819,11 @@ class Project:
         # copy dir
         await wait_run_in_executor(shutil.copytree, self.path, new_project_path.as_posix(), symlinks=True, ignore_dangling_symlinks=True)
         log.info("Project content copied from '{}' to '{}' in {}s".format(self.path, new_project_path, time.time() - t0))
-        topology = json.loads(new_project_path.joinpath('{}.gns3'.format(self.name)).read_bytes())
+
+        # Read the topology file using the actual filename (self._filename), not self.name
+        # This handles the case where a project has been renamed but we need to read the actual file
+        old_gns3_file = new_project_path.joinpath(self._filename)
+        topology = json.loads(old_gns3_file.read_bytes())
         project_name = name or topology["name"]
         # If the project name is already used we generate a new one
         project_name = self.controller.get_free_project_name(project_name)
@@ -1428,7 +1847,8 @@ class Project:
         if os.path.isdir(snapshots_dir):
             await update_snapshots(snapshots_dir, new_project_path, project_name, new_project_id)
 
-        os.remove(new_project_path.joinpath('{}.gns3'.format(self.name)))
+        # Remove the old .gns3 file (which has the original project name)
+        os.remove(old_gns3_file)
         project = await self.controller.load_project(dot_gns3_path, load=False)
         log.info("Project '{}': fast duplicated in {:.4f} seconds".format(project.name, time.time() - t0))
         return project
@@ -1507,21 +1927,23 @@ class Project:
     @open_required
     async def start_all(self):
         """
-        Start all nodes
+        Start all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
         pool = Pool(concurrency=3)
         for node in self.nodes.values():
-            pool.append(node.start)
+            if not node.is_always_running():
+                pool.append(node.start)
         await pool.join()
 
     @open_required
     async def stop_all(self):
         """
-        Stop all nodes
+        Stop all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
         pool = Pool(concurrency=3)
         for node in self.nodes.values():
-            pool.append(node.stop)
+            if not node.is_always_running():
+                pool.append(node.stop)
         await pool.join()
 
     @open_required
@@ -1601,6 +2023,7 @@ class Project:
             "links": len(self._links),
             "drawings": len(self._drawings),
             "snapshots": len(self._snapshots),
+            "markers": sum(len(link.markers) for link in self._links.values()),
         }
 
     def asdict(self):
@@ -1625,6 +2048,7 @@ class Project:
             "supplier": self._supplier,
             "variables": self._variables,
             "created_by": self._created_by,
+            "marker_definitions": self._marker_definitions,
         }
 
     def __repr__(self):

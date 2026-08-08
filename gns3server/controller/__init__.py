@@ -29,7 +29,7 @@ try:
 except ImportError:
     from importlib import resources as importlib_resources
 
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, DirDeletedEvent, FileDeletedEvent
 from watchdog.observers import Observer
 
 from ..config import Config
@@ -71,6 +71,9 @@ class _ProjectsDirectoryEventHandler(FileSystemEventHandler):
         self._handle_event(event)
 
     def on_moved(self, event):
+        self._handle_event(event)
+
+    def on_deleted(self, event: DirDeletedEvent | FileDeletedEvent) -> None:
         self._handle_event(event)
 
     def _handle_event(self, event):
@@ -446,6 +449,12 @@ class Controller:
             return  # Monitor was stopped, skip the scan
         try:
             await self.load_projects()
+            # Remove stale projects that no longer exist on disk
+            for project_id in list(self._projects):
+                project = self._projects[project_id]
+                if not os.path.exists(project.path):
+                    log.info(f"Removing stale project '{project.name}' ('{project.path}' no longer exists)")
+                    del self._projects[project.id]
         except Exception as e:
             log.warning(f"Projects directory rescan failed: {e}")
 
@@ -741,6 +750,9 @@ class Controller:
         topo_data.pop("version")
         topo_data.pop("revision")
         topo_data.pop("type")
+        # marker_definitions is restored by Project.open() from the topology
+        # file; it must not be passed to Project.__init__.
+        topo_data.pop("marker_definitions", None)
 
         if topo_data["project_id"] in self._projects:
             project = self._projects[topo_data["project_id"]]

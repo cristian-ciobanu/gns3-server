@@ -20,7 +20,7 @@ from .common import ErrorMessage
 from .version import Version
 
 # Controller schemas
-from .controller.links import LinkCreate, LinkUpdate, Link, UDPPortInfo, EthernetPortInfo, LinkCapture
+from .controller.links import LinkCreate, LinkUpdate, Link, UDPPortInfo, EthernetPortInfo, LinkCapture, MarkerCreate, MarkerUpdate, MarkerDefinitionCreate
 from .controller.computes import ComputeCreate, ComputeUpdate, ComputeVirtualBoxVM, ComputeVMwareVM, ComputeDockerImage, AutoIdlePC, Compute
 from .controller.templates import TemplateCreate, TemplateUpdate, TemplateUsage, Template
 from .controller.images import Image, ImageType
@@ -57,7 +57,7 @@ except ImportError:
 
 from .controller.rbac import RoleCreate, RoleUpdate, Role, Privilege, ACECreate, ACEUpdate, ACE
 from .controller.pools import Resource, ResourceCreate, ResourcePoolCreate, ResourcePoolUpdate, ResourcePool
-from .controller.tokens import Token
+from .controller.tokens import Token, ApiKeyCreate, RefreshTokenRequest
 from .controller.snapshots import SnapshotCreate, Snapshot
 from .controller.iou_license import IOULicense
 from .controller.capabilities import Capabilities
@@ -91,7 +91,7 @@ from .controller.templates.dynamips_templates import (
 )
 
 # Compute schemas
-from .compute.nios import UDPNIO, TAPNIO, EthernetNIO
+from .compute.nios import UDPNIO, TAPNIO, EthernetNIO, MarkerToggle, MarkerRebuild
 from .compute.atm_switch_nodes import ATMSwitchCreate, ATMSwitchUpdate, ATMSwitch
 from .compute.cloud_nodes import CloudCreate, CloudUpdate, Cloud
 from .compute.docker_nodes import DockerCreate, DockerUpdate, Docker
