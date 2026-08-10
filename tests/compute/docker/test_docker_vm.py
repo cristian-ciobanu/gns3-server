@@ -1440,9 +1440,12 @@ async def test_add_ubridge_connection(vm):
         call.send('bridge create bridge0'),
         call.send("bridge add_nio_tap bridge0 tap-gns3-e0"),
         call.send('docker move_to_ns tap-gns3-e0 42 eth0'),
-        call.send('bridge add_nio_udp bridge0 4242 127.0.0.1 4343'),
-        call.send('bridge start_capture bridge0 "/tmp/capture.pcap"'),
-        call.send('bridge start bridge0')
+        call.send_batch_sync([
+            'bridge add_nio_udp bridge0 4242 127.0.0.1 4343',
+            'bridge start_capture bridge0 "/tmp/capture.pcap"',
+            'bridge start bridge0',
+            'bridge reset_packet_filters bridge0',
+        ]),
     ]
     assert 'bridge0' in vm._bridges
     # We need to check any_order otherwise mock is confused by asyncio
