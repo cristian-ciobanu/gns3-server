@@ -1049,11 +1049,14 @@ class DockerVM(BaseNode):
 
             state = await self._get_container_state()
             if state != "stopped" and state != "exited":
-                # t=5 number of seconds to wait before killing the container
+                # SIGKILL immediately. GNS3 has already persisted container state
+                # (permissions via _fix_permissions, /gns3volumes) before this
+                # point, and the business process (often an interactive shell)
+                # ignores SIGTERM — so a stop grace period buys nothing but latency.
                 try:
-                    await self.manager.query("POST", f"containers/{self._cid}/stop", params={"t": 5})
+                    await self.manager.query("POST", f"containers/{self._cid}/kill")
                     log.info(f"Docker container '{self._name}' [{self._image}] stopped")
-                except DockerHttp304Error:
+                except DockerHttp409Error:
                     # Container is already stopped
                     pass
         # Ignore runtime error because when closing the server
