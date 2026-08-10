@@ -98,6 +98,10 @@ class Compute:
         self.name = name
         # Cache of interfaces on remote host
         self._interfaces_cache = None
+        # Cached resolution of self._host — socket.gethostbyname is a blocking
+        # call; resolving it on every host_ip access (several times per link
+        # via get_ip_on_same_subnet) freezes the event loop for all coroutines.
+        self._host_ip_cache = None
         self._connection_failure = 0
 
     def _session(self):
@@ -224,14 +228,17 @@ class Compute:
         """
         Return the IP associated to the host
         """
-        try:
-            return socket.gethostbyname(self._host)
-        except socket.gaierror:
-            return "0.0.0.0"
+        if self._host_ip_cache is None:
+            try:
+                self._host_ip_cache = socket.gethostbyname(self._host)
+            except socket.gaierror:
+                self._host_ip_cache = "0.0.0.0"
+        return self._host_ip_cache
 
     @host.setter
     def host(self, host):
         self._host = host
+        self._host_ip_cache = None  # invalidate; re-resolve on next access
         if self._console_host is None:
             self._console_host = host
 

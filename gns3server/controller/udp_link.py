@@ -17,6 +17,8 @@
 
 
 import asyncio
+import time
+import logging
 
 from .controller_error import ControllerError, ControllerNotFoundError
 from .link import Link, _UNSET
@@ -30,6 +32,9 @@ from gns3server.utils.packet_filter_validation import validate_bpf_syntax, Filte
 _MARKER_CAPABLE_TYPES = frozenset({
     "vpcs", "qemu", "docker", "iou", "dynamips", "cloud",
 })
+
+
+log = logging.getLogger(__name__)
 
 
 class UDPLink(Link):
@@ -96,10 +101,12 @@ class UDPLink(Link):
         port_number2 = self._nodes[1]["port_number"]
 
         # Get an IP allowing communication between both host
+        _t0 = time.perf_counter()
         try:
             (node1_host, node2_host) = await node1.compute.get_ip_on_same_subnet(node2.compute)
         except ValueError as e:
             raise ControllerError(f"Cannot get an IP address on same subnet: {e}")
+        _t1 = time.perf_counter()
 
         # Reserve a UDP port on both sides in parallel. Pre-allocated ports
         # (used during batch project loading) are popped from memory; otherwise
@@ -114,6 +121,7 @@ class UDPLink(Link):
         self._node1_port, self._node2_port = await asyncio.gather(
             _allocate_port(node1.compute), _allocate_port(node2.compute)
         )
+        _t2 = time.perf_counter()
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
         node1_markers, node2_markers = self._get_node_markers(node1, node2)
@@ -171,6 +179,11 @@ class UDPLink(Link):
             if cleanup:
                 await asyncio.gather(*cleanup, return_exceptions=True)
             raise errors[0]
+        _t3 = time.perf_counter()
+        log.info(
+            "UDPLink.create timing get_ip=%.3fms ports=%.3fms nio=%.3fms total=%.3fms",
+            1000 * (_t1 - _t0), 1000 * (_t2 - _t1), 1000 * (_t3 - _t2), 1000 * (_t3 - _t0)
+        )
         self._created = True
         # New links automatically inherit every active project-level marker
         # definition so the user doesn't have to reconfigure.
