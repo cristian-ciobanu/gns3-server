@@ -838,7 +838,7 @@ class Project:
         batch HTTP call per compute instead of one round-trip per link.
         """
 
-        link = await self.add_link(link_id=link_data["link_id"])
+        link = await self.add_link(link_id=link_data["link_id"], dump=False)
         if "filters" in link_data:
             try:
                 await link.update_filters(link_data["filters"])
@@ -865,10 +865,14 @@ class Project:
                 "capture_node_id": marker.get("capture_node_id"),
                 "direction": marker.get("direction"),
             }
+        # Set style/icon directly: the update_* helpers unconditionally dump
+        # the whole topology and emit "link.updated", neither of which is
+        # appropriate mid-prepare (the link is finalised, notified and the
+        # project dumped once at the end of open).
         if "link_style" in link_data:
-            await link.update_link_style(link_data["link_style"])
+            link._link_style = link_data["link_style"]
         if "show_filters_icon" in link_data:
-            await link.update_show_filters_icon(link_data["show_filters_icon"])
+            link._show_filters_icon = link_data["show_filters_icon"]
         for node_link in link_data.get("nodes", []):
             node = self.get_node(node_link["node_id"])
             port = node.get_port(node_link["adapter_number"], node_link["port_number"])
@@ -1706,11 +1710,14 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
+            _stage_t0 = time.time()
             pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
+            log.info("Project open stage timing: nodes=%d created in %.2fs", len(nodes_to_create), time.time() - _stage_t0)
             # Pre-allocate UDP ports for all links in batch to reduce HTTP round-trips
+            _stage_t1 = time.time()
             ports_per_compute = {}
             for link_data in topology.get("links", []):
                 if "link_id" not in link_data.keys():
@@ -1723,6 +1730,7 @@ class Project:
                 count = ports_per_compute.get(compute.id, 0)
                 if count > 0:
                     await self.preallocate_udp_ports_for_compute(compute, count)
+            log.info("Project open stage timing: preallocate ports in %.2fs", time.time() - _stage_t1)
             # Create links via the bulk path: build every link locally (no NIO
             # HTTP), then dispatch all NIOs to each compute in a single batch
             # request. This replaces one HTTP round-trip per link (~5000 for a
@@ -1740,6 +1748,7 @@ class Project:
 
             prepared = await asyncio.gather(*[_prepare_one(d) for d in link_data_list])
             valid = [p for p in prepared if p is not None]
+            log.info("Project open stage timing: prepare %d links in %.2fs", len(link_data_list), time.time() - _stage_t1)
 
             # Group the prepared NIO entries by destination compute and send
             # each compute a single /nios/batch request.
@@ -1763,8 +1772,13 @@ class Project:
                 )
 
             if per_compute:
+                _stage_t2 = time.time()
                 await asyncio.gather(
                     *[_dispatch_batch(c, n) for c, n in per_compute.items()]
+                )
+                log.info(
+                    "Project open stage timing: batch dispatch %d NIOs across %d compute(s) in %.2fs",
+                    sum(len(n) for n in per_compute.values()), len(per_compute), time.time() - _stage_t2
                 )
 
             # Finalise every link: wire node/port back-references, mark created,
