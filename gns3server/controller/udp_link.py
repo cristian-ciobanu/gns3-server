@@ -16,6 +16,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+import asyncio
+
 from .controller_error import ControllerError, ControllerNotFoundError
 from .link import Link, _UNSET
 from .node_types import BUILTIN_NODE_TYPES
@@ -99,25 +101,25 @@ class UDPLink(Link):
         except ValueError as e:
             raise ControllerError(f"Cannot get an IP address on same subnet: {e}")
 
-        # Reserve a UDP port on both side
-        # Try pre-allocated ports first (used during batch project loading)
-        port = self._project.pop_preallocated_udp_port(node1.compute.id)
-        if port is not None:
-            self._node1_port = port
-        else:
-            response = await node1.compute.post(f"/projects/{self._project.id}/ports/udp")
-            self._node1_port = response.json["udp_port"]
-        port = self._project.pop_preallocated_udp_port(node2.compute.id)
-        if port is not None:
-            self._node2_port = port
-        else:
-            response = await node2.compute.post(f"/projects/{self._project.id}/ports/udp")
-            self._node2_port = response.json["udp_port"]
+        # Reserve a UDP port on both sides in parallel. Pre-allocated ports
+        # (used during batch project loading) are popped from memory; otherwise
+        # each side falls back to a single HTTP round-trip to its compute.
+        async def _allocate_port(compute):
+            port = self._project.pop_preallocated_udp_port(compute.id)
+            if port is not None:
+                return port
+            response = await compute.post(f"/projects/{self._project.id}/ports/udp")
+            return response.json["udp_port"]
+
+        self._node1_port, self._node2_port = await asyncio.gather(
+            _allocate_port(node1.compute), _allocate_port(node2.compute)
+        )
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
         node1_markers, node2_markers = self._get_node_markers(node1, node2)
 
-        # Create the tunnel on both side
+        # Build the tunnel specs for both sides. Index 0 is always node1 so
+        # that update()/delete() keep addressing self._link_data[0]/[1].
         self._link_data.append(
             {
                 "lport": self._node1_port,
@@ -129,8 +131,6 @@ class UDPLink(Link):
                 "suspend": self._suspended,
             }
         )
-        await node1.post(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", data=self._link_data[0], timeout=120)
-
         self._link_data.append(
             {
                 "lport": self._node2_port,
@@ -142,14 +142,35 @@ class UDPLink(Link):
                 "suspend": self._suspended,
             }
         )
-        try:
-            await node2.post(
+
+        # Create the NIO tunnel on both sides in parallel. The two ends are
+        # independent once the ports and peer addresses are known -- each node
+        # talks to its own compute/uBridge with no shared lock between them --
+        # so the two POSTs overlap. If either fails, roll back whichever side
+        # succeeded before re-raising the first error.
+        results = await asyncio.gather(
+            node1.post(
+                f"/adapters/{adapter_number1}/ports/{port_number1}/nio", data=self._link_data[0], timeout=120
+            ),
+            node2.post(
                 f"/adapters/{adapter_number2}/ports/{port_number2}/nio", data=self._link_data[1], timeout=120
-            )
-        except Exception as e:
-            # We clean the first NIO
-            await node1.delete(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", timeout=120)
-            raise e
+            ),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            cleanup = []
+            if not isinstance(results[0], Exception):
+                cleanup.append(
+                    node1.delete(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", timeout=120)
+                )
+            if not isinstance(results[1], Exception):
+                cleanup.append(
+                    node2.delete(f"/adapters/{adapter_number2}/ports/{port_number2}/nio", timeout=120)
+                )
+            if cleanup:
+                await asyncio.gather(*cleanup, return_exceptions=True)
+            raise errors[0]
         self._created = True
         # New links automatically inherit every active project-level marker
         # definition so the user doesn't have to reconfigure.
