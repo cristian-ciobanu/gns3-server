@@ -73,7 +73,7 @@ class NIOUDP(NIO):
             )
         )
 
-        log.info(
+        log.debug(
             "NIO UDP {name} created with lport={lport}, rhost={rhost}, rport={rport}".format(
                 name=self._name, lport=self._lport, rhost=self._rhost, rport=self._rport
             )

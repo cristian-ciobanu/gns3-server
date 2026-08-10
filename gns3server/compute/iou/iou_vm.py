@@ -162,7 +162,7 @@ class IOUVM(BaseNode):
 
         super().__init__(name, node_id, project, manager, console=console, console_type=console_type)
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: assigned with application ID {application_id}'.format(
                 name=self._name, id=self._id, application_id=application_id
             )
@@ -238,7 +238,7 @@ class IOUVM(BaseNode):
 
         self._path = self.manager.get_abs_image_path(path, self.project.path)
         self._loader = None
-        log.info(f'IOU "{self._name}" [{self._id}]: IOU image updated to "{self._path}"')
+        log.debug(f'IOU "{self._name}" [{self._id}]: IOU image updated to "{self._path}"')
 
     @property
     def use_default_iou_values(self):
@@ -260,9 +260,9 @@ class IOUVM(BaseNode):
 
         self._use_default_iou_values = state
         if state:
-            log.info(f'IOU "{self._name}" [{self._id}]: uses the default IOU image values')
+            log.debug(f'IOU "{self._name}" [{self._id}]: uses the default IOU image values')
         else:
-            log.info(f'IOU "{self._name}" [{self._id}]: does not use the default IOU image values')
+            log.debug(f'IOU "{self._name}" [{self._id}]: does not use the default IOU image values')
 
     async def update_default_iou_values(self):
         """
@@ -430,7 +430,7 @@ class IOUVM(BaseNode):
         if self._ram == ram:
             return
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: RAM updated from {old_ram}MB to {new_ram}MB'.format(
                 name=self._name, id=self._id, old_ram=self._ram, new_ram=ram
             )
@@ -459,7 +459,7 @@ class IOUVM(BaseNode):
         if self._nvram == nvram:
             return
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: NVRAM updated from {old_nvram}KB to {new_nvram}KB'.format(
                 name=self._name, id=self._id, old_nvram=self._nvram, new_nvram=nvram
             )
@@ -574,7 +574,7 @@ class IOUVM(BaseNode):
 
         config = configparser.ConfigParser()
         try:
-            log.info(f"Checking IOU license in '{self.iourc_path}'")
+            log.debug(f"Checking IOU license in '{self.iourc_path}'")
             with open(self.iourc_path, encoding="utf-8") as f:
                 config.read_file(f)
         except OSError as e:
@@ -724,9 +724,9 @@ class IOUVM(BaseNode):
                 await self._start_l1_keepalive_responder()
             try:
                 if self._loader:
-                    log.info(f"Starting IOU: {command} with loader {self._loader}")
+                    log.debug(f"Starting IOU: {command} with loader {self._loader}")
                 else:
-                    log.info(f"Starting IOU: {command}")
+                    log.debug(f"Starting IOU: {command}")
                 self.command_line = " ".join(command)
                 self._iou_process = await asyncio.create_subprocess_exec(
                     *self._loader, *command,
@@ -736,7 +736,7 @@ class IOUVM(BaseNode):
                     cwd=self.working_dir,
                     env=env,
                 )
-                log.info(f"IOU instance {self._id} started PID={self._iou_process.pid}")
+                log.debug(f"IOU instance {self._id} started PID={self._iou_process.pid}")
                 self._started = True
                 self.status = "started"
                 callback = functools.partial(self._termination_callback, "IOU")
@@ -920,7 +920,7 @@ class IOUVM(BaseNode):
         """
 
         if self._iou_process:
-            log.info(f'Stopping IOU process for IOU VM "{self.name}" PID={self._iou_process.pid}')
+            log.debug(f'Stopping IOU process for IOU VM "{self.name}" PID={self._iou_process.pid}')
             try:
                 self._iou_process.terminate()
             # Sometime the process can already be dead when we garbage collect
@@ -979,7 +979,7 @@ class IOUVM(BaseNode):
                                 iou_id=self.application_id,
                             )
                         )
-            log.info("IOU {name} [id={id}]: NETMAP file created".format(name=self._name, id=self._id))
+            log.debug("IOU {name} [id={id}]: NETMAP file created".format(name=self._name, id=self._id))
         except OSError as e:
             raise IOUError(f"Could not create {netmap_path}: {e}")
 
@@ -1030,7 +1030,7 @@ class IOUVM(BaseNode):
             )
             self._l1_keepalive_transport = transport
             self._l1_keepalive_task = asyncio.create_task(self._send_l1_keepalives(protocol))
-            log.info(
+            log.debug(
                 'IOU "%s" [%s]: L1 keepalive responder listening on %s',
                 self._name,
                 self._id,
@@ -1150,7 +1150,7 @@ class IOUVM(BaseNode):
         for _ in range(0, ethernet_adapters):
             self._ethernet_adapters.append(EthernetAdapter(interfaces=4))
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: number of Ethernet adapters changed to {adapters}'.format(
                 name=self._name, id=self._id, adapters=len(self._ethernet_adapters)
             )
@@ -1180,7 +1180,7 @@ class IOUVM(BaseNode):
         for _ in range(0, serial_adapters):
             self._serial_adapters.append(SerialAdapter(interfaces=4))
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: number of Serial adapters changed to {adapters}'.format(
                 name=self._name, id=self._id, adapters=len(self._serial_adapters)
             )
@@ -1214,7 +1214,7 @@ class IOUVM(BaseNode):
             )
 
         adapter.add_nio(port_number, nio)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: {nio} added to {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, nio=nio, adapter_number=adapter_number, port_number=port_number
             )
@@ -1393,7 +1393,7 @@ class IOUVM(BaseNode):
         if isinstance(nio, NIOUDP):
             self.manager.port_manager.release_udp_port(nio.lport, self._project)
         adapter.remove_nio(port_number)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: {nio} removed from {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, nio=nio, adapter_number=adapter_number, port_number=port_number
             )
@@ -1463,9 +1463,9 @@ class IOUVM(BaseNode):
 
         self._l1_keepalives = state
         if state:
-            log.info(f'IOU "{self._name}" [{self._id}]: has activated layer 1 keepalive messages')
+            log.debug(f'IOU "{self._name}" [{self._id}]: has activated layer 1 keepalive messages')
         else:
-            log.info(f'IOU "{self._name}" [{self._id}]: has deactivated layer 1 keepalive messages')
+            log.debug(f'IOU "{self._name}" [{self._id}]: has deactivated layer 1 keepalive messages')
 
     async def _enable_l1_keepalives(self, command):
         """
@@ -1700,7 +1700,7 @@ class IOUVM(BaseNode):
                 try:
                     config = startup_config_content.decode("utf-8", errors="replace")
                     with open(config_path, "wb") as f:
-                        log.info(f"saving startup-config to {config_path}")
+                        log.debug(f"saving startup-config to {config_path}")
                         f.write(config.encode("utf-8"))
                 except (binascii.Error, OSError) as e:
                     raise IOUError(f"Could not save the startup configuration {config_path}: {e}")
@@ -1710,7 +1710,7 @@ class IOUVM(BaseNode):
                 try:
                     config = private_config_content.decode("utf-8", errors="replace")
                     with open(config_path, "wb") as f:
-                        log.info(f"saving private-config to {config_path}")
+                        log.debug(f"saving private-config to {config_path}")
                         f.write(config.encode("utf-8"))
                 except (binascii.Error, OSError) as e:
                     raise IOUError(f"Could not save the private configuration {config_path}: {e}")
@@ -1734,7 +1734,7 @@ class IOUVM(BaseNode):
             )
 
         nio.start_packet_capture(output_file, data_link_type)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: starting packet capture on {adapter_number}/{port_number} to {output_file}'.format(
                 name=self._name,
                 id=self._id,
@@ -1768,7 +1768,7 @@ class IOUVM(BaseNode):
         if not nio.capturing:
             return
         nio.stop_packet_capture()
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: stopping packet capture on {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, adapter_number=adapter_number, port_number=port_number
             )
