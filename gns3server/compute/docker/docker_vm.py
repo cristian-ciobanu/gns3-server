@@ -27,6 +27,7 @@ import aiohttp
 import subprocess
 import os
 import re
+import time
 
 from gns3server.utils.asyncio.ssh_server import AsyncioSSHServer
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
@@ -1215,6 +1216,7 @@ class DockerVM(BaseNode):
         return int(result["State"]["Pid"])
 
     async def _connect_nio(self, adapter_number, nio):
+        _t0 = time.perf_counter()
 
         bridge_name = f"bridge{adapter_number}"
         await self._ubridge_send(
@@ -1222,6 +1224,7 @@ class DockerVM(BaseNode):
                 bridge_name=bridge_name, lport=nio.lport, rhost=nio.rhost, rport=nio.rport
             )
         )
+        _t1 = time.perf_counter()
 
         if nio.capturing:
             await self._ubridge_send(
@@ -1230,8 +1233,17 @@ class DockerVM(BaseNode):
                 )
             )
         await self._ubridge_send(f"bridge start {bridge_name}")
+        _t2 = time.perf_counter()
         await self._ubridge_apply_filters(bridge_name, nio.filters)
+        _t3 = time.perf_counter()
         await self._ubridge_apply_markers(bridge_name, nio)
+        _t4 = time.perf_counter()
+        log.info(
+            "NIO timing [adapter=%d] add_nio_udp=%.3fms start=%.3fms filters=%.3fms markers=%.3fms total=%.3fms",
+            adapter_number,
+            1000 * (_t1 - _t0), 1000 * (_t2 - _t1),
+            1000 * (_t3 - _t2), 1000 * (_t4 - _t3),
+            1000 * (_t4 - _t0))
 
     async def adapter_add_nio_binding(self, adapter_number, nio):
         """
