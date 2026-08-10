@@ -160,6 +160,11 @@ class Project:
             self.dump()
 
         self._iou_id_lock = asyncio.Lock()
+        # Serialise the "ensure project exists on this compute" check in
+        # _create_node: without it, concurrent node creations all pass the
+        # `compute not in _project_created_on_compute` check before any has
+        # registered, and each fires a redundant POST /projects at the compute.
+        self._create_node_lock = asyncio.Lock()
         self._preallocated_udp_ports = {}  # compute_id -> list of pre-allocated UDP ports
         log.debug(f'Project "{self.name}" [{self._id}] loaded')
         self.emit_controller_notification("project.created", self.asdict())
@@ -586,15 +591,21 @@ class Project:
     async def _create_node(self, compute, name, node_id, node_type=None, **kwargs):
 
         node = Node(self, compute, name, node_id=node_id, node_type=node_type, **kwargs)
-        if compute not in self._project_created_on_compute:
-            if compute.id == "local":
-                data = {"name": self._name, "project_id": self._id, "path": self._path}
-            else:
-                data = {"name": self._name, "project_id": self._id}
-            if self._variables:
-                data["variables"] = self._variables
-            await compute.post("/projects", data=data)
-            self._project_created_on_compute.add(compute)
+        # Hold the lock across the check + POST + register so that concurrent
+        # node creations on the same compute don't all race past the check and
+        # each POST /projects (the compute-side sync handler then instantiated
+        # the Project N times). Once one creation registers the compute, the
+        # rest see it in the set and return immediately.
+        async with self._create_node_lock:
+            if compute not in self._project_created_on_compute:
+                if compute.id == "local":
+                    data = {"name": self._name, "project_id": self._id, "path": self._path}
+                else:
+                    data = {"name": self._name, "project_id": self._id}
+                if self._variables:
+                    data["variables"] = self._variables
+                await compute.post("/projects", data=data)
+                self._project_created_on_compute.add(compute)
 
         await node.create()
         self._nodes[node.id] = node
@@ -1710,11 +1721,12 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
-            log.info("Loading %d nodes...", len(nodes_to_create))
+            log.info("Project '%s' [%s]: loading %d nodes...", self._name, self._id, len(nodes_to_create))
             pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
+            log.info("Project '%s' [%s]: loaded %d nodes", self._name, self._id, len(nodes_to_create))
             # Pre-allocate UDP ports for all links in batch to reduce HTTP round-trips
             ports_per_compute = {}
             for link_data in topology.get("links", []):
@@ -1733,7 +1745,7 @@ class Project:
             # request. This replaces one HTTP round-trip per link (~5000 for a
             # 2500-link topology) with one round-trip per compute.
             link_data_list = [d for d in topology.get("links", []) if "link_id" in d.keys()]
-            log.info("Creating %d links...", len(link_data_list))
+            log.info("Project '%s' [%s]: creating %d links...", self._name, self._id, len(link_data_list))
             sem = asyncio.Semaphore(100)
 
             async def _prepare_one(data):
@@ -1785,6 +1797,7 @@ class Project:
                 await asyncio.gather(
                     *[self.apply_defs_to_new_link(link) for link, _ in valid]
                 )
+            log.info("Project '%s' [%s]: created %d links", self._name, self._id, len(valid))
             # Release any pre-allocated UDP ports that were not consumed by links
             for compute_id, ports in self._preallocated_udp_ports.items():
                 if ports:
