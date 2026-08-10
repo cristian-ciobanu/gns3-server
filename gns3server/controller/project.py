@@ -2072,7 +2072,7 @@ class Project:
         """
         Start all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=20)
         for node in self.nodes.values():
             if not node.is_always_running():
                 pool.append(node.start)
@@ -2083,7 +2083,7 @@ class Project:
         """
         Stop all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=100)
         for node in self.nodes.values():
             if not node.is_always_running():
                 pool.append(node.stop)
@@ -2094,7 +2094,7 @@ class Project:
         """
         Suspend all nodes
         """
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=50)
         for node in self.nodes.values():
             pool.append(node.suspend)
         await pool.join()
@@ -2105,7 +2105,7 @@ class Project:
         Reset console for all nodes
         """
 
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=20)
         for node in self.nodes.values():
             pool.append(node.reset_console)
         await pool.join()
