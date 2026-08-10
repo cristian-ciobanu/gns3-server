@@ -229,7 +229,7 @@ class DockerVM(BaseNode):
         else:
             self._mac_address = mac_address
 
-        log.info('Docker container "{name}" [{id}]: MAC address changed to {mac_addr}'.format(
+        log.debug('Docker container "{name}" [{id}]: MAC address changed to {mac_addr}'.format(
             name=self._name,
             id=self._id,
             mac_addr=self._mac_address)
@@ -349,7 +349,7 @@ class DockerVM(BaseNode):
         except OSError as e:
             raise DockerError(f"Cannot access resources: {e}")
 
-        log.info(f'Mount resources from "{resources_path}"')
+        log.debug(f'Mount resources from "{resources_path}"')
         binds = [{
             "Type": "bind",
             "Source": resources_path,
@@ -583,11 +583,11 @@ class DockerVM(BaseNode):
                 log.error(f"Failed to clean up conflicting container '{self.docker_name}': {e}")
                 raise
         self._cid = result["Id"]
-        log.info(f"Docker container '{self._name}' [{self._id}] created")
+        log.debug(f"Docker container '{self._name}' [{self._id}] created")
         if self._cpus > 0:
-            log.info(f"CPU limit set to {self._cpus} CPUs")
+            log.debug(f"CPU limit set to {self._cpus} CPUs")
         if self._memory > 0:
-            log.info(f"Memory limit set to {self._memory} MB")
+            log.debug(f"Memory limit set to {self._memory} MB")
         return True
 
     def _format_env(self, variables, env):
@@ -705,7 +705,7 @@ class DockerVM(BaseNode):
 
         self._permissions_fixed = False
         self.status = "started"
-        log.info(
+        log.debug(
             "Docker container '{name}' [{image}] started listen for {console_type} on {console}".format(
                 name=self._name, image=self._image, console=self.console, console_type=self.console_type
             )
@@ -751,7 +751,7 @@ class DockerVM(BaseNode):
         """
 
         state = await self._get_container_state()
-        log.info(f"Docker container '{self._name}' fix ownership, state = {state}")
+        log.debug(f"Docker container '{self._name}' fix ownership, state = {state}")
         if state == "stopped" or state == "exited":
             # We need to restart it to fix permissions
             await self.manager.query("POST", f"containers/{self._cid}/start")
@@ -1011,7 +1011,7 @@ class DockerVM(BaseNode):
         """
 
         await self.manager.query("POST", f"containers/{self._cid}/restart")
-        log.info("Docker container '{name}' [{image}] restarted".format(name=self._name, image=self._image))
+        log.debug("Docker container '{name}' [{image}] restarted".format(name=self._name, image=self._image))
 
     async def _clean_servers(self):
         """
@@ -1056,7 +1056,7 @@ class DockerVM(BaseNode):
                 # ignores SIGTERM — so a stop grace period buys nothing but latency.
                 try:
                     await self.manager.query("POST", f"containers/{self._cid}/kill")
-                    log.info(f"Docker container '{self._name}' [{self._image}] stopped")
+                    log.debug(f"Docker container '{self._name}' [{self._image}] stopped")
                 except DockerHttp409Error:
                     # Container is already stopped
                     pass
@@ -1073,7 +1073,7 @@ class DockerVM(BaseNode):
 
         await self.manager.query("POST", f"containers/{self._cid}/pause")
         self.status = "suspended"
-        log.info(f"Docker container '{self._name}' [{self._image}] paused")
+        log.debug(f"Docker container '{self._name}' [{self._image}] paused")
 
     async def unpause(self):
         """
@@ -1082,7 +1082,7 @@ class DockerVM(BaseNode):
 
         await self.manager.query("POST", f"containers/{self._cid}/unpause")
         self.status = "started"
-        log.info(f"Docker container '{self._name}' [{self._image}] unpaused")
+        log.debug(f"Docker container '{self._name}' [{self._image}] unpaused")
 
     async def close(self):
         """
@@ -1134,7 +1134,7 @@ class DockerVM(BaseNode):
                 # Container deletion failed - log warning but don't block project close
                 # The stale container will be cleaned up when the project is opened again
                 log.warning(f"Failed to delete Docker container '{self.docker_name}': {e}")
-            log.info("Docker container '{name}' [{image}] removed".format(name=self._name, image=self._image))
+            log.debug("Docker container '{name}' [{image}] removed".format(name=self._name, image=self._image))
 
             if release_nio_udp_ports:
                 for adapter in self._ethernet_adapters:
@@ -1205,7 +1205,7 @@ class DockerVM(BaseNode):
         except UbridgeError as e:
             raise UbridgeNamespaceError(e)
         else:
-            log.info(f"Created adapter {adapter_number} with MAC address {mac_address} in namespace {self._namespace}")
+            log.debug(f"Created adapter {adapter_number} with MAC address {mac_address} in namespace {self._namespace}")
 
         if nio:
             await self._connect_nio(adapter_number, nio)
@@ -1325,7 +1325,7 @@ class DockerVM(BaseNode):
 
         adapter.remove_nio(0)
 
-        log.info(
+        log.debug(
             "Docker VM '{name}' [{id}]: {nio} removed from adapter {adapter_number}".format(
                 name=self.name, id=self.id, nio=adapter.host_ifc, adapter_number=adapter_number
             )
@@ -1382,7 +1382,7 @@ class DockerVM(BaseNode):
         for adapter_number in range(0, adapters):
             self._ethernet_adapters.append(EthernetAdapter())
 
-        log.info(
+        log.debug(
             'Docker container "{name}" [{id}]: number of Ethernet adapters changed to {adapters}'.format(
                 name=self._name, id=self._id, adapters=adapters
             )
@@ -1439,7 +1439,7 @@ class DockerVM(BaseNode):
         if self.status == "started" and self.ubridge:
             await self._start_ubridge_capture(adapter_number, output_file)
 
-        log.info(
+        log.debug(
             "Docker VM '{name}' [{id}]: starting packet capture on adapter {adapter_number}".format(
                 name=self.name, id=self.id, adapter_number=adapter_number
             )
@@ -1459,7 +1459,7 @@ class DockerVM(BaseNode):
         if self.status == "started" and self.ubridge:
             await self._stop_ubridge_capture(adapter_number)
 
-        log.info(
+        log.debug(
             "Docker VM '{name}' [{id}]: stopping packet capture on adapter {adapter_number}".format(
                 name=self.name, id=self.id, adapter_number=adapter_number
             )
