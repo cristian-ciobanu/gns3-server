@@ -258,27 +258,34 @@ class TestBatchNIOEdgeCases:
         node.add_nio.assert_called_once_with(nio, 0)
 
     @pytest.mark.asyncio
-    async def test_dynamips_create_nio_passes_node_arg(self):
+    async def test_dynamips_create_nio_is_async_and_needs_await(self):
         """
-        Dynamips.create_nio(self, node, nio_settings) exposes 2 bound-method
-        params vs. the standard 1.  The batch handler detects this via the
-        parameter count on the bound method and passes the extra 'node'
-        argument.
+        Dynamips.create_nio is async (returns a coroutine) unlike the sync
+        base version.  The batch handler must await it.
         """
         import inspect
+        import asyncio as _asyncio
 
         class _FakeDynamips:
             async def create_nio(self, node, nio_settings):
-                pass
+                return {"type": "nio_udp", "node": node}
 
         class _FakeBase:
-            async def create_nio(self, nio_settings):
-                pass
+            def create_nio(self, nio_settings):
+                return {"type": "nio_udp"}
 
         dyn = _FakeDynamips()
         base = _FakeBase()
         assert len(inspect.signature(dyn.create_nio).parameters) == 2   # Dynamips
         assert len(inspect.signature(base.create_nio).parameters) == 1  # standard
+        assert inspect.iscoroutinefunction(dyn.create_nio)
+        assert not inspect.iscoroutinefunction(base.create_nio)
+
+        # Verify the batch logic: 2 params → await, 1 param → no await
+        d_result = await dyn.create_nio("r1", {"type": "nio_udp"})
+        b_result = base.create_nio({"type": "nio_udp"})
+        assert d_result["node"] == "r1"
+        assert b_result["type"] == "nio_udp"
 
     @pytest.mark.asyncio
     async def test_qemu_dispatch_to_adapter_add_nio_binding(self):

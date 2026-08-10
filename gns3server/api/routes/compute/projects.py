@@ -189,15 +189,12 @@ async def create_batch_nios(
     for entry in batch.nios:
         node = project.get_node(entry.node_id)
         nio_settings = jsonable_encoder(entry.nio, exclude_unset=True)
-        # Dynamips.create_nio takes an extra positional `node` argument that
-        # the base signature does not include. Detect it via parameter count.
-        # Dynamips.create_nio(self, node, nio_settings) exposes one extra
-        # positional on the bound method compared to the standard signature
-        # (self, nio_settings).  Detect it: standard == 1 bound param,
-        # Dynamips == 2 bound params (node + nio_settings).
+        # Dynamips.create_nio(self, node, nio_settings) is async and takes an
+        # extra positional 'node'.  Detect via bound-method parameter count:
+        # standard == 1, Dynamips == 2.  Await the async variant.
         sig = inspect.signature(node.manager.create_nio)
         if len(sig.parameters) >= 2:
-            nio = node.manager.create_nio(node, nio_settings)
+            nio = await node.manager.create_nio(node, nio_settings)
         else:
             nio = node.manager.create_nio(nio_settings)
         await _add_nio_binding(node, entry.adapter_number, entry.port_number, nio)
