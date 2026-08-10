@@ -1209,7 +1209,7 @@ async def test_stop(vm):
         with asyncio_patch("gns3server.compute.docker.Docker.query") as mock_query:
             vm._permissions_fixed = False
             await vm.stop()
-            mock_query.assert_called_with("POST", "containers/e90e34656842/stop", params={"t": 5})
+            mock_query.assert_called_with("POST", "containers/e90e34656842/kill")
     assert mock.stop.called
     assert vm._ubridge_hypervisor is None
     assert vm._fix_permissions.called
@@ -1222,7 +1222,7 @@ async def test_stop_paused_container(vm):
         with asyncio_patch("gns3server.compute.docker.DockerVM.unpause") as mock_unpause:
             with asyncio_patch("gns3server.compute.docker.Docker.query") as mock_query:
                 await vm.stop()
-                mock_query.assert_called_with("POST", "containers/e90e34656842/stop", params={"t": 5})
+                mock_query.assert_called_with("POST", "containers/e90e34656842/kill")
                 assert mock_unpause.called
 
 
@@ -1894,7 +1894,7 @@ async def test_stop_exited_container_no_stop_query(vm):
             vm._permissions_fixed = False
             await vm.stop()
             assert not any(
-                call.args[:2] == ("POST", "containers/e90e34656842/stop")
+                call.args[:2] == ("POST", "containers/e90e34656842/kill")
                 for call in mock_query.mock_calls
             )
     assert vm.status == "stopped"
