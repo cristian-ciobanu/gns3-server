@@ -21,6 +21,7 @@ API routes for projects.
 import os
 import shutil
 import urllib.parse
+import inspect
 
 import logging
 
@@ -149,6 +150,13 @@ async def _add_nio_binding(node, adapter_number, port_number, nio):
         await node.adapter_add_nio_binding(adapter_number, port_number, nio)
     elif manager_name == "VPCS":
         await node.port_add_nio_binding(port_number, nio)
+    elif manager_name == "Dynamips":
+        # Dynamips routers use slot_add_nio_binding(slot, port, nio);
+        # Dynamips switches/hubs use add_nio(nio, port_number).
+        if hasattr(node, "slot_add_nio_binding"):
+            await node.slot_add_nio_binding(adapter_number, port_number, nio)
+        else:
+            await node.add_nio(nio, port_number)
     elif manager_name == "Builtin":
         # ethernet_switch / ethernet_hub / cloud / nat: add_nio(nio, port_number)
         await node.add_nio(nio, port_number)
@@ -180,7 +188,14 @@ async def create_batch_nios(
     added = 0
     for entry in batch.nios:
         node = project.get_node(entry.node_id)
-        nio = node.manager.create_nio(jsonable_encoder(entry.nio, exclude_unset=True))
+        nio_settings = jsonable_encoder(entry.nio, exclude_unset=True)
+        # Dynamips.create_nio takes an extra positional `node` argument that
+        # the base signature does not include. Detect it via parameter count.
+        sig = inspect.signature(node.manager.create_nio)
+        if len(sig.parameters) == 3:
+            nio = node.manager.create_nio(node, nio_settings)
+        else:
+            nio = node.manager.create_nio(nio_settings)
         await _add_nio_binding(node, entry.adapter_number, entry.port_number, nio)
         added += 1
     return {"added": added}

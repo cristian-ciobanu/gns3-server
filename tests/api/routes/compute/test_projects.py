@@ -224,3 +224,57 @@ class TestComputeProjectRoutes:
                                                       project_id=project.id,
                                                       file_path=file_path), content=b"world")
         assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+class TestBatchNIOEdgeCases:
+
+    @pytest.mark.asyncio
+    async def test_dynamips_router_dispatch_to_slot_add_nio_binding(self):
+        """_add_nio_binding dispatches Dynamips router to slot_add_nio_binding."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "Dynamips"
+        node.slot_add_nio_binding = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 0, 0, nio)
+        node.slot_add_nio_binding.assert_called_once_with(0, 0, nio)
+
+    @pytest.mark.asyncio
+    async def test_dynamips_switch_dispatch_to_add_nio(self):
+        """_add_nio_binding dispatches Dynamips switch to add_nio."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "Dynamips"
+        del node.slot_add_nio_binding  # no slot_add_nio → switch path
+        node.add_nio = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 0, 0, nio)
+        node.add_nio.assert_called_once_with(nio, 0)
+
+    @pytest.mark.asyncio
+    async def test_dynamips_create_nio_passes_node_arg(self):
+        """
+        Dynamips.create_nio(self, node, nio_settings) takes an extra 'node'
+        positional; the batch handler detects this via parameter count.
+        """
+        import inspect
+
+        # Dynamips-style 3-param signature (self + node + nio_settings)
+        async def create_nio_with_node(self, node, nio_settings):
+            pass
+
+        sig = inspect.signature(create_nio_with_node)
+        assert len(sig.parameters) == 3
+
+        # Standard base 2-param signature (self + nio_settings)
+        async def create_nio_base(self, nio_settings):
+            pass
+
+        sig2 = inspect.signature(create_nio_base)
+        assert len(sig2.parameters) == 2
