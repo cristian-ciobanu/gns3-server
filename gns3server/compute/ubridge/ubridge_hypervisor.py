@@ -18,24 +18,11 @@ import re
 import time
 import logging
 import asyncio
-import threading
-import concurrent.futures
-import socket as _socket
 
 from gns3server.utils.asyncio import locking
 from .ubridge_error import UbridgeError
 
 log = logging.getLogger(__name__)
-
-# Dedicated thread pool for blocking ubridge socket I/O.  Every node gets
-# its own ubridge process + socket, so N nodes can send commands in true
-# OS-thread parallelism.  The default asyncio executor caps at ~32 threads;
-# sizing for the large-topology case (2500+ links → thousands of NIO add
-# calls across hundreds of nodes).
-_ubridge_sync_pool = concurrent.futures.ThreadPoolExecutor(
-    max_workers=500,
-    thread_name_prefix="ubridge-sync",
-)
 
 
 class UBridgeHypervisor:
@@ -70,8 +57,6 @@ class UBridgeHypervisor:
         self._timeout = timeout
         self._reader = None
         self._writer = None
-        self._recv_buf = b""  # leftover bytes from last sync recv
-        self._send_lock = threading.Lock()
 
     async def connect(self, timeout=10):
         """
@@ -281,72 +266,3 @@ class UBridgeHypervisor:
 
         log.debug(f"returned result {data}")
         return data
-
-    def send_batch_sync(self, commands):
-        """
-        Send multiple commands to uBridge using blocking socket I/O.  Designed
-        to run inside ``loop.run_in_executor`` so that a single per-node batch
-        doesn't bounce through the event loop between every command, and
-        batches for *different* nodes run in parallel across the thread pool.
-
-        :param commands: iterable of command strings
-        :raises UbridgeError: if any command fails
-        """
-        if self._writer is None:
-            raise UbridgeError("Not connected")
-        transport = self._writer.transport
-        if transport is None or transport.is_closing():
-            raise UbridgeError("Transport closed")
-        tr_sock = transport.get_extra_info("socket")
-        if tr_sock is None:
-            raise UbridgeError("No underlying socket for sync send_batch")
-
-        # Python 3.13's transport socket wrapper (trsock) rejects
-        # setblocking(), so dup the underlying fd into a plain socket
-        # that the executor thread can drive in blocking mode.
-        sock = _socket.fromfd(tr_sock.fileno(), tr_sock.family, _socket.SOCK_STREAM)
-
-        # Serialise access to this hypervisor's socket — only one batch (sync
-        # or async) talks to uBridge at a time.  The node-level async lock
-        # (:func:`_ubridge_send`) is held for the entire executor call, so no
-        # async ``send()`` can interleave.
-        with self._send_lock:
-            sock.setblocking(True)
-            try:
-                for command in commands:
-                    cmd = (command.strip() + "\n").encode()
-                    sock.sendall(cmd)
-
-                    # Read until the terminating line (100-… or 2xx-…)
-                    buf = self._recv_buf
-                    while True:
-                        try:
-                            chunk = sock.recv(4096)
-                        except BlockingIOError:
-                            continue
-                        if not chunk:
-                            raise UbridgeError(
-                                f"uBridge closed connection during '{command}'"
-                            )
-                        buf += chunk
-                        decoded = buf.decode("utf-8", errors="replace")
-                        # Last complete line determines termination
-                        tail = decoded.rsplit("\r\n", 1)[-1]
-                        if tail and tail[0] in "12" and tail[1:3].isdigit() and len(tail) >= 4 and tail[3] == "-":
-                            break
-
-                    # Check for error codes (2xx-…)
-                    last_line = decoded.strip().split("\r\n")[-1]
-                    if self.error_re.match(last_line):
-                        raise UbridgeError(last_line[4:])
-
-                    # Keep any leftover bytes (after the trailing \r\n) for the
-                    # next read in the batch
-                    trailer_start = decoded.rfind("\r\n")
-                    if trailer_start >= 0:
-                        self._recv_buf = buf[trailer_start + 2:]
-                    else:
-                        self._recv_buf = b""
-            finally:
-                sock.setblocking(False)
-                sock.detach()  # release the dup'd fd, don't close transport

@@ -38,7 +38,6 @@ from gns3server.utils.hostname import is_rfc1123_hostname_valid
 from gns3server.utils import macaddress_to_int, int_to_macaddress
 
 from gns3server.compute.ubridge.ubridge_error import UbridgeError, UbridgeNamespaceError
-from gns3server.compute.ubridge.ubridge_hypervisor import _ubridge_sync_pool
 from ..base_node import BaseNode
 
 from ..adapters.ethernet_adapter import EthernetAdapter
@@ -1218,40 +1217,19 @@ class DockerVM(BaseNode):
     async def _connect_nio(self, adapter_number, nio):
 
         bridge_name = f"bridge{adapter_number}"
-
-        # Build the command batch for this NIO. We send everything in one
-        # executor call so that a single async-lock acquisition covers the
-        # whole batch, and different nodes' batches can overlap in the
-        # thread pool via blocking socket I/O.
-        commands = [
-            f"bridge add_nio_udp {bridge_name} {nio.lport} {nio.rhost} {nio.rport}",
-        ]
-        if nio.capturing:
-            commands.append(f'bridge start_capture {bridge_name} "{nio.pcap_output_file}"')
-        commands.append(f"bridge start {bridge_name}")
-        commands.append(f"bridge reset_packet_filters {bridge_name}")
-        for packet_filter in self._build_filter_list(nio.filters):
-            commands.append(f"bridge add_packet_filter {bridge_name} {packet_filter}")
-
-        # Hold the per-node ubridge lock across the entire executor batch so
-        # that no async _ubridge_send for this node can interleave with the
-        # sync socket writes. The lock is created lazily (mirrors the
-        # @locking decorator on _ubridge_send).
-        lock_name = "___ubridge_send_lock"
-        if not hasattr(self, lock_name):
-            setattr(self, lock_name, asyncio.Lock())
-        async with getattr(self, lock_name):
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                _ubridge_sync_pool,  # dedicated 500-worker thread pool
-                self._ubridge_hypervisor.send_batch_sync,
-                commands,
+        await self._ubridge_send(
+            "bridge add_nio_udp {bridge_name} {lport} {rhost} {rport}".format(
+                bridge_name=bridge_name, lport=nio.lport, rhost=nio.rhost, rport=nio.rport
             )
-
-        # Traffic-insight markers are rare — keep them on the async path so
-        # they benefit from the existing marker-management logic.  The
-        # per-node lock is already released at this point, but markers
-        # serialise themselves via _ubridge_send's own @locking.
+        )
+        if nio.capturing:
+            await self._ubridge_send(
+                'bridge start_capture {bridge_name} "{pcap_file}"'.format(
+                    bridge_name=bridge_name, pcap_file=nio.pcap_output_file
+                )
+            )
+        await self._ubridge_send(f"bridge start {bridge_name}")
+        await self._ubridge_apply_filters(bridge_name, nio.filters)
         await self._ubridge_apply_markers(bridge_name, nio)
 
     async def adapter_add_nio_binding(self, adapter_number, nio):
