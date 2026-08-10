@@ -260,24 +260,25 @@ class TestBatchNIOEdgeCases:
     @pytest.mark.asyncio
     async def test_dynamips_create_nio_passes_node_arg(self):
         """
-        Dynamips.create_nio(self, node, nio_settings) takes an extra 'node'
-        positional; the batch handler detects this via parameter count.
+        Dynamips.create_nio(self, node, nio_settings) exposes 2 bound-method
+        params vs. the standard 1.  The batch handler detects this via the
+        parameter count on the bound method and passes the extra 'node'
+        argument.
         """
         import inspect
 
-        # Dynamips-style 3-param signature (self + node + nio_settings)
-        async def create_nio_with_node(self, node, nio_settings):
-            pass
+        class _FakeDynamips:
+            async def create_nio(self, node, nio_settings):
+                pass
 
-        sig = inspect.signature(create_nio_with_node)
-        assert len(sig.parameters) == 3
+        class _FakeBase:
+            async def create_nio(self, nio_settings):
+                pass
 
-        # Standard base 2-param signature (self + nio_settings)
-        async def create_nio_base(self, nio_settings):
-            pass
-
-        sig2 = inspect.signature(create_nio_base)
-        assert len(sig2.parameters) == 2
+        dyn = _FakeDynamips()
+        base = _FakeBase()
+        assert len(inspect.signature(dyn.create_nio).parameters) == 2   # Dynamips
+        assert len(inspect.signature(base.create_nio).parameters) == 1  # standard
 
     @pytest.mark.asyncio
     async def test_qemu_dispatch_to_adapter_add_nio_binding(self):
