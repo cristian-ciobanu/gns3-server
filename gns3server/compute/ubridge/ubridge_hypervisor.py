@@ -20,6 +20,7 @@ import logging
 import asyncio
 import threading
 import concurrent.futures
+import socket as _socket
 
 from gns3server.utils.asyncio import locking
 from .ubridge_error import UbridgeError
@@ -296,9 +297,14 @@ class UBridgeHypervisor:
         transport = self._writer.transport
         if transport is None or transport.is_closing():
             raise UbridgeError("Transport closed")
-        sock = transport.get_extra_info("socket")
-        if sock is None:
+        tr_sock = transport.get_extra_info("socket")
+        if tr_sock is None:
             raise UbridgeError("No underlying socket for sync send_batch")
+
+        # Python 3.13's transport socket wrapper (trsock) rejects
+        # setblocking(), so dup the underlying fd into a plain socket
+        # that the executor thread can drive in blocking mode.
+        sock = _socket.fromfd(tr_sock.fileno(), tr_sock.family, _socket.SOCK_STREAM)
 
         # Serialise access to this hypervisor's socket — only one batch (sync
         # or async) talks to uBridge at a time.  The node-level async lock
@@ -343,3 +349,4 @@ class UBridgeHypervisor:
                         self._recv_buf = b""
             finally:
                 sock.setblocking(False)
+                sock.detach()  # release the dup'd fd, don't close transport
