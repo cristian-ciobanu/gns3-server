@@ -1372,6 +1372,7 @@ class Project:
             log.warning(f"Closing project '{self.name}' ignored because it is being loaded")
             return
         self._closing = True
+        log.info("Project '%s' [%s]: closing...", self._name, self._id)
         try:
             await self.stop_all()
         except HTTPException as e:
@@ -1395,6 +1396,7 @@ class Project:
 
         self.reset()
         self._closing = False
+        log.info("Project '%s' [%s]: closed", self._name, self._id)
 
     def _clean_pictures(self):
         """
@@ -2072,22 +2074,30 @@ class Project:
         """
         Start all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
-        pool = Pool(concurrency=20)
-        for node in self.nodes.values():
-            if not node.is_always_running():
-                pool.append(node.start)
+        nodes_to_start = [n for n in self.nodes.values() if not n.is_always_running()]
+        if not nodes_to_start:
+            return
+        log.info("Project '%s' [%s]: starting %d nodes...", self._name, self._id, len(nodes_to_start))
+        pool = Pool(concurrency=3)
+        for node in nodes_to_start:
+            pool.append(node.start)
         await pool.join()
+        log.info("Project '%s' [%s]: started %d nodes", self._name, self._id, len(nodes_to_start))
 
     @open_required
     async def stop_all(self):
         """
         Stop all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
+        nodes_to_stop = [n for n in self.nodes.values() if not n.is_always_running()]
+        if not nodes_to_stop:
+            return
+        log.info("Project '%s' [%s]: stopping %d nodes...", self._name, self._id, len(nodes_to_stop))
         pool = Pool(concurrency=100)
-        for node in self.nodes.values():
-            if not node.is_always_running():
-                pool.append(node.stop)
+        for node in nodes_to_stop:
+            pool.append(node.stop)
         await pool.join()
+        log.info("Project '%s' [%s]: stopped %d nodes", self._name, self._id, len(nodes_to_stop))
 
     @open_required
     async def suspend_all(self):
@@ -2105,7 +2115,7 @@ class Project:
         Reset console for all nodes
         """
 
-        pool = Pool(concurrency=20)
+        pool = Pool(concurrency=3)
         for node in self.nodes.values():
             pool.append(node.reset_console)
         await pool.join()
