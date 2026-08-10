@@ -278,3 +278,59 @@ class TestBatchNIOEdgeCases:
 
         sig2 = inspect.signature(create_nio_base)
         assert len(sig2.parameters) == 2
+
+    @pytest.mark.asyncio
+    async def test_qemu_dispatch_to_adapter_add_nio_binding(self):
+        """_add_nio_binding dispatches Qemu to adapter_add_nio_binding."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "Qemu"
+        node.adapter_add_nio_binding = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 0, 0, nio)
+        node.adapter_add_nio_binding.assert_called_once_with(0, nio)
+
+    @pytest.mark.asyncio
+    async def test_iou_dispatch_to_adapter_add_nio_binding(self):
+        """_add_nio_binding dispatches IOU to adapter_add_nio_binding(adapter, port, nio)."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "IOU"
+        node.adapter_add_nio_binding = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 1, 2, nio)
+        node.adapter_add_nio_binding.assert_called_once_with(1, 2, nio)
+
+    @pytest.mark.asyncio
+    async def test_vpcs_dispatch_to_port_add_nio_binding(self):
+        """_add_nio_binding dispatches VPCS to port_add_nio_binding."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "VPCS"
+        node.port_add_nio_binding = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 0, 3, nio)
+        node.port_add_nio_binding.assert_called_once_with(3, nio)
+
+    @pytest.mark.asyncio
+    async def test_builtin_dispatch_to_add_nio(self):
+        """_add_nio_binding dispatches Builtin nodes to add_nio(nio, port)."""
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import _add_nio_binding
+
+        node = MagicMock()
+        type(node.manager).__name__ = "Builtin"
+        node.add_nio = AsyncMock()
+        nio = MagicMock()
+
+        await _add_nio_binding(node, 0, 0, nio)
+        node.add_nio.assert_called_once_with(nio, 0)
