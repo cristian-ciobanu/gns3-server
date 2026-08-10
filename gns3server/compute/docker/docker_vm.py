@@ -1275,7 +1275,7 @@ class DockerVM(BaseNode):
             await self._connect_nio(adapter_number, nio)
 
         adapter.add_nio(0, nio)
-        log.info(
+        log.debug(
             "Docker container '{name}' [{id}]: {nio} added to adapter {adapter_number}".format(
                 name=self.name, id=self._id, nio=nio, adapter_number=adapter_number
             )
