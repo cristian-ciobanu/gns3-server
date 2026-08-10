@@ -2078,7 +2078,7 @@ class Project:
         if not nodes_to_start:
             return
         log.info("Project '%s' [%s]: starting %d nodes...", self._name, self._id, len(nodes_to_start))
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=10)
         for node in nodes_to_start:
             pool.append(node.start)
         await pool.join()
