@@ -827,6 +827,81 @@ class Project:
             # a link should have 2 attached nodes, this can happen with corrupted projects
             await self.delete_link(link.id, force_delete=True)
 
+    async def _prepare_link_from_topology(self, link_data):
+        """
+        Build a link locally from topology data WITHOUT dispatching NIOs to the
+        computes.  Returns ``(link, entries)`` where ``entries`` is the list of
+        ``(node, adapter_number, port_number, nio_data)`` tuples produced by
+        ``UDPLink._prepare()``, or ``None`` if the link is invalid/incomplete.
+
+        Used by the project-open bulk path so all NIOs can be sent in a single
+        batch HTTP call per compute instead of one round-trip per link.
+        """
+
+        link = await self.add_link(link_id=link_data["link_id"])
+        if "filters" in link_data:
+            try:
+                await link.update_filters(link_data["filters"])
+            except ControllerError as e:
+                log.warning("Dropping invalid filters on link %s: %s", link_data.get("link_id"), e)
+        for name, marker in (link_data.get("markers") or {}).items():
+            bpf = marker.get("bpf")
+            if not bpf:
+                log.warning("Dropping marker %s on link %s: missing bpf", name, link_data.get("link_id"))
+                continue
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                log.warning(
+                    "Dropping marker %s on link %s: invalid BPF (%s)",
+                    name, link_data.get("link_id"), result.get("error")
+                )
+                continue
+            link._markers[name] = {
+                "bpf": bpf,
+                "tag": marker.get("tag"),
+                "enabled": marker.get("enabled", True),
+                "color": marker.get("color"),
+                "highlight_duration": marker.get("highlight_duration"),
+                "capture_node_id": marker.get("capture_node_id"),
+                "direction": marker.get("direction"),
+            }
+        if "link_style" in link_data:
+            await link.update_link_style(link_data["link_style"])
+        if "show_filters_icon" in link_data:
+            await link.update_show_filters_icon(link_data["show_filters_icon"])
+        for node_link in link_data.get("nodes", []):
+            node = self.get_node(node_link["node_id"])
+            port = node.get_port(node_link["adapter_number"], node_link["port_number"])
+            if port is None:
+                log.warning(
+                    "Port {}/{} for {} not found".format(
+                        node_link["adapter_number"], node_link["port_number"], node.name
+                    )
+                )
+                continue
+            if port.link is not None:
+                log.warning(
+                    "Port {}/{} is already connected to link ID {}".format(
+                        node_link["adapter_number"], node_link["port_number"], port.link.id
+                    )
+                )
+                continue
+            # batch=True: attach the node without triggering per-link NIO HTTP
+            await link.add_node(
+                node,
+                node_link["adapter_number"],
+                node_link["port_number"],
+                label=node_link.get("label"),
+                dump=False,
+                batch=True,
+            )
+        if len(link.nodes) != 2:
+            # a link should have 2 attached nodes, this can happen with corrupted projects
+            await self.delete_link(link.id, force_delete=True)
+            return None
+        entries = await link._prepare()
+        return (link, entries)
+
     @open_required
     async def add_link(self, link_id=None, dump=True):
         """
@@ -1648,13 +1723,62 @@ class Project:
                 count = ports_per_compute.get(compute.id, 0)
                 if count > 0:
                     await self.preallocate_udp_ports_for_compute(compute, count)
-            # Create links in parallel for improved performance
-            pool = Pool(concurrency=100)
-            for link_data in topology.get("links", []):
-                if "link_id" not in link_data.keys():
-                    continue
-                pool.append(self._create_link_from_topology_data, link_data)
-            await pool.join()
+            # Create links via the bulk path: build every link locally (no NIO
+            # HTTP), then dispatch all NIOs to each compute in a single batch
+            # request. This replaces one HTTP round-trip per link (~5000 for a
+            # 2500-link topology) with one round-trip per compute.
+            link_data_list = [d for d in topology.get("links", []) if "link_id" in d.keys()]
+            sem = asyncio.Semaphore(100)
+
+            async def _prepare_one(data):
+                async with sem:
+                    try:
+                        return await self._prepare_link_from_topology(data)
+                    except Exception as e:
+                        log.warning("Could not load link %s: %s", data.get("link_id"), e)
+                        return None
+
+            prepared = await asyncio.gather(*[_prepare_one(d) for d in link_data_list])
+            valid = [p for p in prepared if p is not None]
+
+            # Group the prepared NIO entries by destination compute and send
+            # each compute a single /nios/batch request.
+            per_compute = {}  # compute -> list of {node_id, adapter_number, port_number, nio}
+            for link, entries in valid:
+                for node, adapter_number, port_number, nio_data in entries:
+                    per_compute.setdefault(node.compute, []).append(
+                        {
+                            "node_id": node.id,
+                            "adapter_number": adapter_number,
+                            "port_number": port_number,
+                            "nio": nio_data,
+                        }
+                    )
+
+            async def _dispatch_batch(compute, nio_entries):
+                await compute.post(
+                    f"/projects/{self._id}/nios/batch",
+                    data={"nios": nio_entries},
+                    timeout=300,
+                )
+
+            if per_compute:
+                await asyncio.gather(
+                    *[_dispatch_batch(c, n) for c, n in per_compute.items()]
+                )
+
+            # Finalise every link: wire node/port back-references, mark created,
+            # notify clients, and apply project-level marker definitions.
+            for link, _entries in valid:
+                for n in link._nodes:
+                    n["node"].add_link(link)
+                    n["port"].link = link
+                link._created = True
+                self.emit_notification("link.created", link.asdict())
+            if valid:
+                await asyncio.gather(
+                    *[self.apply_defs_to_new_link(link) for link, _ in valid]
+                )
             # Release any pre-allocated UDP ports that were not consumed by links
             for compute_id, ports in self._preallocated_udp_ports.items():
                 if ports:
