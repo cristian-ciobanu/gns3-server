@@ -325,7 +325,7 @@ class BaseNode:
         Creates the node.
         """
 
-        log.info("{module}: {name} [{id}] created".format(module=self.manager.module_name, name=self.name, id=self.id))
+        log.debug("{module}: {name} [{id}] created".format(module=self.manager.module_name, name=self.name, id=self.id))
 
     async def delete(self):
         """
@@ -374,7 +374,7 @@ class BaseNode:
         if self._closed:
             return False
 
-        log.info(
+        log.debug(
             "{module}: '{name}' [{id}]: is closing".format(module=self.manager.module_name, name=self.name, id=self.id)
         )
 
@@ -934,7 +934,7 @@ class BaseNode:
             self._ubridge_hypervisor = Hypervisor(
                 self._project, self.ubridge_path, self.working_dir, transport, server_host, self.id
             )
-        log.info(f"Starting new uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
+        log.debug(f"Starting new uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
         await self._ubridge_hypervisor.start()
         if self._ubridge_hypervisor:
             log.info(
@@ -987,7 +987,7 @@ class BaseNode:
         """
 
         if self._ubridge_hypervisor and self._ubridge_hypervisor.is_running():
-            log.info(f"Stopping uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
+            log.debug(f"Stopping uBridge hypervisor at {self._ubridge_hypervisor.endpoint}")
             await self._ubridge_hypervisor.stop()
         self._ubridge_hypervisor = None
         # uBridge is gone, so every marker filter (and its in-bridge state) is
