@@ -38,6 +38,7 @@ from gns3server.utils.hostname import is_rfc1123_hostname_valid
 from gns3server.utils import macaddress_to_int, int_to_macaddress
 
 from gns3server.compute.ubridge.ubridge_error import UbridgeError, UbridgeNamespaceError
+from gns3server.compute.ubridge.ubridge_hypervisor import _ubridge_sync_pool
 from ..base_node import BaseNode
 
 from ..adapters.ethernet_adapter import EthernetAdapter
@@ -1242,7 +1243,7 @@ class DockerVM(BaseNode):
         async with getattr(self, lock_name):
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
-                None,  # default thread-pool executor
+                _ubridge_sync_pool,  # dedicated 500-worker thread pool
                 self._ubridge_hypervisor.send_batch_sync,
                 commands,
             )

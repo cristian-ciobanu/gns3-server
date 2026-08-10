@@ -19,11 +19,22 @@ import time
 import logging
 import asyncio
 import threading
+import concurrent.futures
 
 from gns3server.utils.asyncio import locking
 from .ubridge_error import UbridgeError
 
 log = logging.getLogger(__name__)
+
+# Dedicated thread pool for blocking ubridge socket I/O.  Every node gets
+# its own ubridge process + socket, so N nodes can send commands in true
+# OS-thread parallelism.  The default asyncio executor caps at ~32 threads;
+# sizing for the large-topology case (2500+ links → thousands of NIO add
+# calls across hundreds of nodes).
+_ubridge_sync_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=500,
+    thread_name_prefix="ubridge-sync",
+)
 
 
 class UBridgeHypervisor:
