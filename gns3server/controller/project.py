@@ -1710,6 +1710,7 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
+            log.info("Loading %d nodes...", len(nodes_to_create))
             pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
@@ -1732,6 +1733,7 @@ class Project:
             # request. This replaces one HTTP round-trip per link (~5000 for a
             # 2500-link topology) with one round-trip per compute.
             link_data_list = [d for d in topology.get("links", []) if "link_id" in d.keys()]
+            log.info("Creating %d links...", len(link_data_list))
             sem = asyncio.Semaphore(100)
 
             async def _prepare_one(data):
