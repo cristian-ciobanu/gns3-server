@@ -127,13 +127,13 @@ class MarkerManager:
             if listener is None:
                 break
             received, errors = listener._received, listener._errors
-            rate = received / 10.0 if received else 0
-            log.info(
-                "marker sink: %d matches (%.0f/s), %d errors in last 10s",
-                received, rate, errors,
-            )
             listener._received = 0
             listener._errors = 0
+            if received:
+                log.info(
+                    "marker sink: %d matches (%.0f/s), %d errors in last 10s",
+                    received, received / 10.0, errors,
+                )
 
     async def stop(self):
         """Close the UDP sink and drop the whole registry."""
