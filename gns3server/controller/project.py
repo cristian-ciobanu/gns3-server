@@ -1260,6 +1260,14 @@ class Project:
         :param fail_msg: callable ``(link, error) -> log message``
         """
 
+        links = list(links)
+        if not links:
+            return
+        _t0 = time.time()
+        log.info(
+            "Project '%s' [%s]: fanning out marker operation to %d links...",
+            self._name, self._id, len(links)
+        )
         sem = asyncio.Semaphore(32)
 
         async def guarded(link):
@@ -1270,6 +1278,10 @@ class Project:
                     log.warning(fail_msg(link, e))
 
         await asyncio.gather(*(guarded(link) for link in links))
+        log.info(
+            "Project '%s' [%s]: marker fan-out done in %.2fs",
+            self._name, self._id, time.time() - _t0
+        )
 
     @property
     def snapshots(self):
@@ -1795,9 +1807,18 @@ class Project:
                     n["port"].link = link
                 link._created = True
                 self.emit_notification("link.created", link.asdict())
-            if valid:
+            if valid and self._marker_definitions:
+                _marker_t0 = time.time()
+                log.info(
+                    "Project '%s' [%s]: applying %d marker definition(s) to %d links...",
+                    self._name, self._id, len(self._marker_definitions), len(valid)
+                )
                 await asyncio.gather(
                     *[self.apply_defs_to_new_link(link) for link, _ in valid]
+                )
+                log.info(
+                    "Project '%s' [%s]: marker inheritance done in %.2fs",
+                    self._name, self._id, time.time() - _marker_t0
                 )
             log.info("Project '%s' [%s]: created %d links", self._name, self._id, len(valid))
             # Release any pre-allocated UDP ports that were not consumed by links
