@@ -22,6 +22,7 @@ import os
 import shutil
 import urllib.parse
 import inspect
+import asyncio
 
 import logging
 
@@ -281,15 +282,25 @@ async def update_batch_nios(
     and re-binds it.
     """
 
-    updated = 0
+    # Group entries by node so that different nodes' uBridge processes are
+    # updated in parallel (each node has its own AF_UNIX socket). Within a
+    # node entries are serial to respect the per-node uBridge command lock.
+    per_node = {}
     for entry in batch.nios:
-        node = project.get_node(entry.node_id)
-        nio = _get_existing_nio(node, entry.adapter_number, entry.port_number)
-        nio.filters = entry.nio.filters or {}
-        nio.markers = entry.nio.markers or {}
-        await _update_nio_binding(node, entry.adapter_number, entry.port_number, nio)
-        updated += 1
-    return {"updated": updated}
+        per_node.setdefault(entry.node_id, []).append(entry)
+
+    async def _update_one_node(node_id, entries):
+        node = project.get_node(node_id)
+        for e in entries:
+            nio = _get_existing_nio(node, e.adapter_number, e.port_number)
+            nio.filters = e.nio.filters or {}
+            nio.markers = e.nio.markers or {}
+            await _update_nio_binding(node, e.adapter_number, e.port_number, nio)
+
+    await asyncio.gather(
+        *[_update_one_node(nid, ents) for nid, ents in per_node.items()]
+    )
+    return {"updated": len(batch.nios)}
 
 
 @router.get("/projects/{project_id}/files", response_model=List[schemas.ProjectFile])
