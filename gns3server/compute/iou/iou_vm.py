@@ -162,7 +162,7 @@ class IOUVM(BaseNode):
 
         super().__init__(name, node_id, project, manager, console=console, console_type=console_type)
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: assigned with application ID {application_id}'.format(
                 name=self._name, id=self._id, application_id=application_id
             )
@@ -238,7 +238,7 @@ class IOUVM(BaseNode):
 
         self._path = self.manager.get_abs_image_path(path, self.project.path)
         self._loader = None
-        log.info(f'IOU "{self._name}" [{self._id}]: IOU image updated to "{self._path}"')
+        log.debug(f'IOU "{self._name}" [{self._id}]: IOU image updated to "{self._path}"')
 
     @property
     def use_default_iou_values(self):
@@ -260,9 +260,9 @@ class IOUVM(BaseNode):
 
         self._use_default_iou_values = state
         if state:
-            log.info(f'IOU "{self._name}" [{self._id}]: uses the default IOU image values')
+            log.debug(f'IOU "{self._name}" [{self._id}]: uses the default IOU image values')
         else:
-            log.info(f'IOU "{self._name}" [{self._id}]: does not use the default IOU image values')
+            log.debug(f'IOU "{self._name}" [{self._id}]: does not use the default IOU image values')
 
     async def update_default_iou_values(self):
         """
@@ -430,7 +430,7 @@ class IOUVM(BaseNode):
         if self._ram == ram:
             return
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: RAM updated from {old_ram}MB to {new_ram}MB'.format(
                 name=self._name, id=self._id, old_ram=self._ram, new_ram=ram
             )
@@ -459,7 +459,7 @@ class IOUVM(BaseNode):
         if self._nvram == nvram:
             return
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: NVRAM updated from {old_nvram}KB to {new_nvram}KB'.format(
                 name=self._name, id=self._id, old_nvram=self._nvram, new_nvram=nvram
             )
@@ -574,7 +574,7 @@ class IOUVM(BaseNode):
 
         config = configparser.ConfigParser()
         try:
-            log.info(f"Checking IOU license in '{self.iourc_path}'")
+            log.debug(f"Checking IOU license in '{self.iourc_path}'")
             with open(self.iourc_path, encoding="utf-8") as f:
                 config.read_file(f)
         except OSError as e:
@@ -724,9 +724,9 @@ class IOUVM(BaseNode):
                 await self._start_l1_keepalive_responder()
             try:
                 if self._loader:
-                    log.info(f"Starting IOU: {command} with loader {self._loader}")
+                    log.debug(f"Starting IOU: {command} with loader {self._loader}")
                 else:
-                    log.info(f"Starting IOU: {command}")
+                    log.debug(f"Starting IOU: {command}")
                 self.command_line = " ".join(command)
                 self._iou_process = await asyncio.create_subprocess_exec(
                     *self._loader, *command,
@@ -736,7 +736,7 @@ class IOUVM(BaseNode):
                     cwd=self.working_dir,
                     env=env,
                 )
-                log.info(f"IOU instance {self._id} started PID={self._iou_process.pid}")
+                log.debug(f"IOU instance {self._id} started PID={self._iou_process.pid}")
                 self._started = True
                 self.status = "started"
                 callback = functools.partial(self._termination_callback, "IOU")
@@ -920,7 +920,7 @@ class IOUVM(BaseNode):
         """
 
         if self._iou_process:
-            log.info(f'Stopping IOU process for IOU VM "{self.name}" PID={self._iou_process.pid}')
+            log.debug(f'Stopping IOU process for IOU VM "{self.name}" PID={self._iou_process.pid}')
             try:
                 self._iou_process.terminate()
             # Sometime the process can already be dead when we garbage collect
@@ -979,7 +979,7 @@ class IOUVM(BaseNode):
                                 iou_id=self.application_id,
                             )
                         )
-            log.info("IOU {name} [id={id}]: NETMAP file created".format(name=self._name, id=self._id))
+            log.debug("IOU {name} [id={id}]: NETMAP file created".format(name=self._name, id=self._id))
         except OSError as e:
             raise IOUError(f"Could not create {netmap_path}: {e}")
 
@@ -1030,7 +1030,7 @@ class IOUVM(BaseNode):
             )
             self._l1_keepalive_transport = transport
             self._l1_keepalive_task = asyncio.create_task(self._send_l1_keepalives(protocol))
-            log.info(
+            log.debug(
                 'IOU "%s" [%s]: L1 keepalive responder listening on %s',
                 self._name,
                 self._id,
@@ -1150,7 +1150,7 @@ class IOUVM(BaseNode):
         for _ in range(0, ethernet_adapters):
             self._ethernet_adapters.append(EthernetAdapter(interfaces=4))
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: number of Ethernet adapters changed to {adapters}'.format(
                 name=self._name, id=self._id, adapters=len(self._ethernet_adapters)
             )
@@ -1180,7 +1180,7 @@ class IOUVM(BaseNode):
         for _ in range(0, serial_adapters):
             self._serial_adapters.append(SerialAdapter(interfaces=4))
 
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: number of Serial adapters changed to {adapters}'.format(
                 name=self._name, id=self._id, adapters=len(self._serial_adapters)
             )
@@ -1214,7 +1214,7 @@ class IOUVM(BaseNode):
             )
 
         adapter.add_nio(port_number, nio)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: {nio} added to {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, nio=nio, adapter_number=adapter_number, port_number=port_number
             )
@@ -1266,7 +1266,9 @@ class IOUVM(BaseNode):
 
     async def _ubridge_apply_markers(self, adapter_number, port_number, nio):
         """
-        (Re-)apply traffic-insight markers to the IOL bridge.
+        Reconcile traffic-insight markers on the IOL bridge (diff desired
+        ``nio.markers`` against installed ``_marker_specs``): delete removed,
+        rebuild changed, toggle on/off-only changes, add new, skip unchanged.
 
         IOU uses ``iol_bridge`` (not ``bridge``) and the ``add_packet_filter``
         command carries extra ``{bay} {unit}`` positional arguments between the
@@ -1280,41 +1282,60 @@ class IOUVM(BaseNode):
         from gns3server.compute.marker.marker_manager import MarkerManager
 
         markers = nio.markers if hasattr(nio, 'markers') else {}
-        if not markers:
-            return
-
         manager = MarkerManager.instance()
         markers_dir = self.project.markers_working_directory()
         bridge_name = f"IOL-BRIDGE-{self.application_id + 512}"
         location = "{bridge_name} {bay} {unit}".format(
             bridge_name=bridge_name, bay=adapter_number, unit=port_number
         )
-        for name, spec in markers.items():
-            link_id = spec.get("link_id", "")
-            # Incremental: skip markers already installed on this port. A NIO
-            # update carries EVERY marker on the port (e.g. an inherited
-            # global-* copy plus a newly added private one); uBridge's
-            # add_packet_filter rejects a duplicate filter name (packet_filter.c),
-            # so we must not re-add one already here — mirrors the generic
-            # _ubridge_apply_markers guard. A fresh bridge has an empty map
-            # (cleared on _stop_ubridge) so all are installed.
-            if (name, link_id) in self._marker_filter_bridges:
+        desired = {(name, spec.get("link_id", "")): spec for name, spec in markers.items()}
+
+        # 1. Remove installed markers that are no longer desired.
+        # Scope to THIS port's IOL location — the map is node-wide and also
+        # holds markers on this IOU's other ports, which must not be deleted
+        # when reconciling a single NIO (see base_node for the same guard).
+        for key in list(self._marker_filter_bridges):
+            if self._marker_filter_bridges[key] != location:
                 continue
+            if key not in desired:
+                mname, link_id = key
+                installed_location = self._marker_filter_bridges.pop(key)
+                self._marker_specs.pop(key, None)
+                await self._ubridge_delete_marker_filter(installed_location, mname)
+                try:
+                    os.remove(os.path.join(markers_dir, f"{self._id}_{link_id}_{mname}.pcap"))
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    log.warning("Could not remove marker pcap for '%s' on link %s: %s", mname, link_id, e)
+                manager.unregister(self._id, mname)
+
+        # 2. Add / reconcile desired markers.
+        rebuild_fields = ("bpf", "tag", "direction", "data_link_type")
+        for (name, link_id), spec in desired.items():
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            pcap_path = os.path.join(
-                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
-            )
-            # Build the iol_bridge marker filter command:
-            #   iol_bridge add_packet_filter {br} {bay} {unit} {name} mark "{bpf}" [tag {id}] pcap "{path}"
+            enabled = spec.get("enabled", True)
+            if (name, link_id) in self._marker_filter_bridges:
+                installed_spec = self._marker_specs.get((name, link_id))
+                if installed_spec is None:
+                    continue  # installed (legacy, no spec) — skip to avoid dup
+                if any(installed_spec.get(f) != spec.get(f) for f in rebuild_fields):
+                    installed_location = self._marker_filter_bridges.get((name, link_id))
+                    await self._ubridge_delete_marker_filter(installed_location, name)
+                elif installed_spec.get("enabled", True) != enabled:
+                    await self._ubridge_set_marker_filter_state(name, enabled)
+                    self._marker_specs[(name, link_id)] = spec
+                    continue
+                else:
+                    continue
+            pcap_path = os.path.join(markers_dir, f"{self._id}_{link_id}_{name}.pcap")
+            # iol_bridge add_packet_filter {br} {bay} {unit} {name} mark "{bpf}" [tag {id}] pcap "{path}"
             cmd = 'iol_bridge add_packet_filter {loc} {name} mark "{bpf}"'.format(
                 loc=location, name=name, bpf=bpf
             )
             if tag is not None:
                 cmd += f" tag {tag}"
-            # IOU uses one per-node IOL-BRIDGE for every link, so bridge+filter
-            # are identical across this node's links — `link` is the only way the
-            # controller can tell their signals apart (contract §3.2).
             if link_id:
                 cmd += f" link {link_id}"
             direction = spec.get("direction")
@@ -1333,16 +1354,14 @@ class IOUVM(BaseNode):
                     self.project.emit("log.warning", {"message": message})
                     continue
                 raise
-            if not spec.get("enabled", True):
+            if not enabled:
                 try:
                     await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} off")
                 except UbridgeError as e:
                     log.warning(f"Could not turn marker '{name}' off on {location}: {e}")
-            manager.register(
-                str(self.project.id), self._id, name, link_id, tag
-            )
-            # Record name -> location (bridge bay unit) for instant toggle.
+            manager.register(str(self.project.id), self._id, name, link_id, tag)
             self._marker_filter_bridges[name, link_id] = location
+            self._marker_specs[name, link_id] = spec
 
     async def _ubridge_set_marker_filter_state(self, name, enabled):
         """IOU override: toggle every (name, link_id) entry via ``iol_bridge``."""
@@ -1393,7 +1412,7 @@ class IOUVM(BaseNode):
         if isinstance(nio, NIOUDP):
             self.manager.port_manager.release_udp_port(nio.lport, self._project)
         adapter.remove_nio(port_number)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: {nio} removed from {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, nio=nio, adapter_number=adapter_number, port_number=port_number
             )
@@ -1463,9 +1482,9 @@ class IOUVM(BaseNode):
 
         self._l1_keepalives = state
         if state:
-            log.info(f'IOU "{self._name}" [{self._id}]: has activated layer 1 keepalive messages')
+            log.debug(f'IOU "{self._name}" [{self._id}]: has activated layer 1 keepalive messages')
         else:
-            log.info(f'IOU "{self._name}" [{self._id}]: has deactivated layer 1 keepalive messages')
+            log.debug(f'IOU "{self._name}" [{self._id}]: has deactivated layer 1 keepalive messages')
 
     async def _enable_l1_keepalives(self, command):
         """
@@ -1700,7 +1719,7 @@ class IOUVM(BaseNode):
                 try:
                     config = startup_config_content.decode("utf-8", errors="replace")
                     with open(config_path, "wb") as f:
-                        log.info(f"saving startup-config to {config_path}")
+                        log.debug(f"saving startup-config to {config_path}")
                         f.write(config.encode("utf-8"))
                 except (binascii.Error, OSError) as e:
                     raise IOUError(f"Could not save the startup configuration {config_path}: {e}")
@@ -1710,7 +1729,7 @@ class IOUVM(BaseNode):
                 try:
                     config = private_config_content.decode("utf-8", errors="replace")
                     with open(config_path, "wb") as f:
-                        log.info(f"saving private-config to {config_path}")
+                        log.debug(f"saving private-config to {config_path}")
                         f.write(config.encode("utf-8"))
                 except (binascii.Error, OSError) as e:
                     raise IOUError(f"Could not save the private configuration {config_path}: {e}")
@@ -1734,7 +1753,7 @@ class IOUVM(BaseNode):
             )
 
         nio.start_packet_capture(output_file, data_link_type)
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: starting packet capture on {adapter_number}/{port_number} to {output_file}'.format(
                 name=self._name,
                 id=self._id,
@@ -1768,7 +1787,7 @@ class IOUVM(BaseNode):
         if not nio.capturing:
             return
         nio.stop_packet_capture()
-        log.info(
+        log.debug(
             'IOU "{name}" [{id}]: stopping packet capture on {adapter_number}/{port_number}'.format(
                 name=self._name, id=self._id, adapter_number=adapter_number, port_number=port_number
             )

@@ -89,7 +89,7 @@ class UBridgeHypervisor:
         if not connection_success:
             raise UbridgeError(f"Couldn't connect to hypervisor on {self.endpoint} :{last_exception}")
         else:
-            log.info(f"Connected to uBridge hypervisor on {self.endpoint} after {time.time() - begin:.4f} seconds")
+            log.debug(f"Connected to uBridge hypervisor on {self.endpoint} after {time.time() - begin:.4f} seconds")
 
         try:
             await asyncio.sleep(0.1)

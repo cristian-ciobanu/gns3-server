@@ -333,9 +333,9 @@ class Dynamips(BaseManager):
         port_manager = PortManager.instance()
         hypervisor = Hypervisor(self._dynamips_path, working_dir, server_host, port, port_manager.console_host, bind_console_host)
 
-        log.info(f"Creating new hypervisor {hypervisor.host}:{hypervisor.port} with working directory {working_dir}")
+        log.debug(f"Creating new hypervisor {hypervisor.host}:{hypervisor.port} with working directory {working_dir}")
         await hypervisor.start()
-        log.info(f"Hypervisor {hypervisor.host}:{hypervisor.port} has successfully started")
+        log.debug(f"Hypervisor {hypervisor.host}:{hypervisor.port} has successfully started")
         await hypervisor.connect()
         return hypervisor
 
@@ -555,7 +555,7 @@ class Dynamips(BaseManager):
         :returns: relative path to the created config file
         """
 
-        log.info(f"Creating config file {path}")
+        log.debug(f"Creating config file {path}")
         config_dir = os.path.dirname(path)
         try:
             os.makedirs(config_dir, exist_ok=True)

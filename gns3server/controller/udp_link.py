@@ -16,6 +16,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+import asyncio
+import logging
+
 from .controller_error import ControllerError, ControllerNotFoundError
 from .link import Link, _UNSET
 from .node_types import BUILTIN_NODE_TYPES
@@ -28,6 +31,9 @@ from gns3server.utils.packet_filter_validation import validate_bpf_syntax, Filte
 _MARKER_CAPABLE_TYPES = frozenset({
     "vpcs", "qemu", "docker", "iou", "dynamips", "cloud",
 })
+
+
+log = logging.getLogger(__name__)
 
 
 class UDPLink(Link):
@@ -81,9 +87,15 @@ class UDPLink(Link):
         """
         return self._markers_for_node(node1), self._markers_for_node(node2)
 
-    async def create(self):
+    async def _prepare(self):
         """
-        Create the link on the nodes
+        Local-only link setup: resolve peer addresses, reserve UDP ports and
+        build the two NIO tunnel specs (``self._link_data``). No NIO is sent to
+        the computes — the caller decides how to dispatch them (one-by-one via
+        :meth:`create`, or batched via the project-open bulk path).
+
+        :returns: list of two ``(node, adapter_number, port_number, nio_data)``
+            tuples, ready to be POSTed to each node's compute.
         """
 
         node1 = self._nodes[0]["node"]
@@ -99,25 +111,25 @@ class UDPLink(Link):
         except ValueError as e:
             raise ControllerError(f"Cannot get an IP address on same subnet: {e}")
 
-        # Reserve a UDP port on both side
-        # Try pre-allocated ports first (used during batch project loading)
-        port = self._project.pop_preallocated_udp_port(node1.compute.id)
-        if port is not None:
-            self._node1_port = port
-        else:
-            response = await node1.compute.post(f"/projects/{self._project.id}/ports/udp")
-            self._node1_port = response.json["udp_port"]
-        port = self._project.pop_preallocated_udp_port(node2.compute.id)
-        if port is not None:
-            self._node2_port = port
-        else:
-            response = await node2.compute.post(f"/projects/{self._project.id}/ports/udp")
-            self._node2_port = response.json["udp_port"]
+        # Reserve a UDP port on both sides in parallel. Pre-allocated ports
+        # (used during batch project loading) are popped from memory; otherwise
+        # each side falls back to a single HTTP round-trip to its compute.
+        async def _allocate_port(compute):
+            port = self._project.pop_preallocated_udp_port(compute.id)
+            if port is not None:
+                return port
+            response = await compute.post(f"/projects/{self._project.id}/ports/udp")
+            return response.json["udp_port"]
+
+        self._node1_port, self._node2_port = await asyncio.gather(
+            _allocate_port(node1.compute), _allocate_port(node2.compute)
+        )
 
         node1_filters, node2_filters = self._get_node_filters(node1, node2)
         node1_markers, node2_markers = self._get_node_markers(node1, node2)
 
-        # Create the tunnel on both side
+        # Build the tunnel specs for both sides. Index 0 is always node1 so
+        # that update()/delete() keep addressing self._link_data[0]/[1].
         self._link_data.append(
             {
                 "lport": self._node1_port,
@@ -129,8 +141,6 @@ class UDPLink(Link):
                 "suspend": self._suspended,
             }
         )
-        await node1.post(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", data=self._link_data[0], timeout=120)
-
         self._link_data.append(
             {
                 "lport": self._node2_port,
@@ -142,15 +152,59 @@ class UDPLink(Link):
                 "suspend": self._suspended,
             }
         )
-        try:
-            await node2.post(
-                f"/adapters/{adapter_number2}/ports/{port_number2}/nio", data=self._link_data[1], timeout=120
-            )
-        except Exception as e:
-            # We clean the first NIO
-            await node1.delete(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", timeout=120)
-            raise e
+
+        return [
+            (node1, adapter_number1, port_number1, self._link_data[0]),
+            (node2, adapter_number2, port_number2, self._link_data[1]),
+        ]
+
+    async def _commit_nios(self, entries):
+        """
+        Send the two NIO tunnel POSTs in parallel and roll back on failure.
+
+        :param entries: the two ``(node, adapter_number, port_number, nio_data)``
+            tuples returned by :meth:`_prepare`.
+        """
+
+        (node1, adapter_number1, port_number1, nio_data1), \
+            (node2, adapter_number2, port_number2, nio_data2) = entries
+
+        # The two ends are independent once the ports and peer addresses are
+        # known — each node talks to its own compute/uBridge with no shared
+        # lock between them — so the two POSTs overlap. If either fails, roll
+        # back whichever side succeeded before re-raising the first error.
+        results = await asyncio.gather(
+            node1.post(
+                f"/adapters/{adapter_number1}/ports/{port_number1}/nio", data=nio_data1, timeout=120
+            ),
+            node2.post(
+                f"/adapters/{adapter_number2}/ports/{port_number2}/nio", data=nio_data2, timeout=120
+            ),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            cleanup = []
+            if not isinstance(results[0], Exception):
+                cleanup.append(
+                    node1.delete(f"/adapters/{adapter_number1}/ports/{port_number1}/nio", timeout=120)
+                )
+            if not isinstance(results[1], Exception):
+                cleanup.append(
+                    node2.delete(f"/adapters/{adapter_number2}/ports/{port_number2}/nio", timeout=120)
+                )
+            if cleanup:
+                await asyncio.gather(*cleanup, return_exceptions=True)
+            raise errors[0]
         self._created = True
+
+    async def create(self):
+        """
+        Create the link on the nodes (interactive path: prepare + commit).
+        """
+
+        entries = await self._prepare()
+        await self._commit_nios(entries)
         # New links automatically inherit every active project-level marker
         # definition so the user doesn't have to reconfigure.
         await self._project.apply_defs_to_new_link(self)
@@ -353,7 +407,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True):
+    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True, memory_only=False):
         """
         Attach a traffic-insight marker to this link.
 
@@ -409,6 +463,12 @@ class UDPLink(Link):
         if inherited_from:
             marker_entry["inherited_from"] = inherited_from
         self._markers[name] = marker_entry
+        if memory_only:
+            # Project-open prepare / marker-def fan-out: only refresh the
+            # in-memory NIO specs so a later batch dispatch carries the new
+            # markers — no per-link update HTTP, notification or dump.
+            self._refresh_link_data()
+            return
         if self._created:
             await self.update()
         self._project.emit_notification("link.updated", self.asdict())
@@ -417,7 +477,27 @@ class UDPLink(Link):
         if dump:
             self._project.dump()
 
-    async def stop_marker(self, name, inherited=False, dump=True):
+    def _refresh_link_data(self):
+        """
+        Recompute the filters / markers / suspend fields of ``_link_data`` from
+        the current link state without pushing to computes. Used by the
+        memory-only marker path so a batch dispatch picks up the new markers.
+        """
+
+        if len(self._link_data) < 2:
+            return
+        node1 = self._nodes[0]["node"]
+        node2 = self._nodes[1]["node"]
+        node1_filters, node2_filters = self._get_node_filters(node1, node2)
+        node1_markers, node2_markers = self._get_node_markers(node1, node2)
+        self._link_data[0]["filters"] = node1_filters
+        self._link_data[0]["markers"] = node1_markers
+        self._link_data[0]["suspend"] = self._suspended
+        self._link_data[1]["filters"] = node2_filters
+        self._link_data[1]["markers"] = node2_markers
+        self._link_data[1]["suspend"] = self._suspended
+
+    async def stop_marker(self, name, inherited=False, dump=True, memory_only=False):
         """
         Remove a traffic-insight marker from this link.
 
@@ -442,6 +522,12 @@ class UDPLink(Link):
 
         capture_node_id = self._markers[name].get("capture_node_id")
         del self._markers[name]
+        if memory_only:
+            # Project-level def-delete fan-out: marker is gone from _markers;
+            # refresh _link_data so the batch dispatch drops it from uBridge
+            # via full reapply. No per-link delete round-trip, notification or dump.
+            self._refresh_link_data()
+            return
         # Remove the marker filter + its pcap on the capture node directly — NOT a
         # full NIO reapply (which would reset_packet_filters and close/reopen every
         # sibling marker's pcap). delete_packet_filter removes just this filter;
@@ -461,7 +547,7 @@ class UDPLink(Link):
         if dump:
             self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True, memory_only=False):
         """
         Update an existing marker's fields and push to uBridge fine-grained — no
         full NIO reapply, so sibling markers' pcaps stay open. bpf/tag/direction
@@ -509,6 +595,13 @@ class UDPLink(Link):
             marker_info["highlight_duration"] = highlight_duration
         if direction is not _UNSET:
             marker_info["direction"] = direction  # None = clear back to both directions
+
+        if memory_only:
+            # Project-level def sync fan-out: state is already merged into
+            # _markers; just refresh _link_data so the batch dispatch carries
+            # it. No per-link uBridge rebuild, notification or dump.
+            self._refresh_link_data()
+            return
 
         # Push to uBridge fine-grained — NO full NIO reapply (which would
         # reset_packet_filters and close/reopen every sibling marker's pcap):
