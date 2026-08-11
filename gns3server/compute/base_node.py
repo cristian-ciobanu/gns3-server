@@ -1256,7 +1256,13 @@ class BaseNode:
         desired = {(name, spec.get("link_id", "")): spec for name, spec in markers.items()}
 
         # 1. Remove installed markers that are no longer desired (marker/def delete).
+        # Scope to THIS bridge: the map is node-wide and also holds markers
+        # installed on this node's other links/NIOs. Without this guard,
+        # reconciling one NIO would delete every other link's markers + pcaps
+        # (desired only carries the current NIO's markers) — a regression.
         for key in list(self._marker_filter_bridges):
+            if self._marker_filter_bridges[key] != bridge_name:
+                continue
             if key not in desired:
                 mname, link_id = key
                 installed_bridge = self._marker_filter_bridges.pop(key)

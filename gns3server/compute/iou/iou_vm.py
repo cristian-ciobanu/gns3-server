@@ -1291,7 +1291,12 @@ class IOUVM(BaseNode):
         desired = {(name, spec.get("link_id", "")): spec for name, spec in markers.items()}
 
         # 1. Remove installed markers that are no longer desired.
+        # Scope to THIS port's IOL location — the map is node-wide and also
+        # holds markers on this IOU's other ports, which must not be deleted
+        # when reconciling a single NIO (see base_node for the same guard).
         for key in list(self._marker_filter_bridges):
+            if self._marker_filter_bridges[key] != location:
+                continue
             if key not in desired:
                 mname, link_id = key
                 installed_location = self._marker_filter_bridges.pop(key)
