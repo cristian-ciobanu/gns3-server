@@ -106,13 +106,7 @@ class Compute:
 
     def _session(self):
         if self._http_session is None or self._http_session.closed is True:
-            # Reuse TCP keep-alive for local compute (loopback) to avoid paying
-            # a TCP handshake on every HTTP request; force-close for remote
-            # computes in case intermediate firewalls/NATs drop idle connections.
-            _local = self._host in ("127.0.0.1", "::1", "localhost")
-            connector = aiohttp.TCPConnector(
-                force_close=not _local, ssl_context=self._ssl_context
-            )
+            connector = aiohttp.TCPConnector(force_close=True, ssl_context=self._ssl_context)
             self._http_session = aiohttp.ClientSession(connector=connector)
         return self._http_session
 
