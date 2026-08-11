@@ -1158,23 +1158,25 @@ class Project:
             # data_link_type decides which links host an inherited copy (serial
             # links are skipped unless a WAN encapsulation is chosen), so a change
             # needs a full re-fan-out: drop every copy, then re-apply.
-            await self._marker_apply_concurrently(
-                affected,
-                lambda link: link.stop_marker(f"global-{name}", inherited=True, dump=False),
-                lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
-            )
+            for link in affected:
+                try:
+                    await link.stop_marker(f"global-{name}", inherited=True, dump=False, memory_only=True)
+                except ControllerError as e:
+                    log.warning("Failed to remove inherited marker global-%s from link %s: %s", name, link.id, e)
             await self._apply_def_to_all_links(name)
         else:
-            # Sync: update every inherited copy across all links.
-            await self._marker_apply_concurrently(
-                affected,
-                lambda link: link.update_marker(
-                    f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
-                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
-                    dump=False
-                ),
-                lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
-            )
+            # Sync: update every inherited copy across all links in memory, then
+            # batch-push to computes (one PUT /nios/batch per compute).
+            for link in affected:
+                try:
+                    await link.update_marker(
+                        f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
+                        color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
+                        dump=False, memory_only=True
+                    )
+                except ControllerError as e:
+                    log.warning("Failed to sync marker global-%s on link %s: %s", name, link.id, e)
+            await self._batch_update_link_nios(affected)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -1195,12 +1197,13 @@ class Project:
             if f"global-{name}" in link.markers
             and link.markers[f"global-{name}"].get("inherited_from") == name
         ]
-        await self._marker_apply_concurrently(
-            affected,
-            lambda link: link.stop_marker(f"global-{name}", inherited=True),
-            # A missing compute or broken link shouldn't block the delete.
-            lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
-        )
+        for link in affected:
+            try:
+                await link.stop_marker(f"global-{name}", inherited=True, memory_only=True)
+            except ControllerError as e:
+                # A missing compute or broken link shouldn't block the delete.
+                log.warning("Failed to remove inherited marker global-%s from link %s: %s", name, link.id, e)
+        await self._batch_update_link_nios(affected)
 
         self.dump()
         self.emit_notification("project.updated", self.asdict())

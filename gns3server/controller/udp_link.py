@@ -497,7 +497,7 @@ class UDPLink(Link):
         self._link_data[1]["markers"] = node2_markers
         self._link_data[1]["suspend"] = self._suspended
 
-    async def stop_marker(self, name, inherited=False, dump=True):
+    async def stop_marker(self, name, inherited=False, dump=True, memory_only=False):
         """
         Remove a traffic-insight marker from this link.
 
@@ -522,6 +522,12 @@ class UDPLink(Link):
 
         capture_node_id = self._markers[name].get("capture_node_id")
         del self._markers[name]
+        if memory_only:
+            # Project-level def-delete fan-out: marker is gone from _markers;
+            # refresh _link_data so the batch dispatch drops it from uBridge
+            # via full reapply. No per-link delete round-trip, notification or dump.
+            self._refresh_link_data()
+            return
         # Remove the marker filter + its pcap on the capture node directly — NOT a
         # full NIO reapply (which would reset_packet_filters and close/reopen every
         # sibling marker's pcap). delete_packet_filter removes just this filter;
@@ -541,7 +547,7 @@ class UDPLink(Link):
         if dump:
             self._project.dump()
 
-    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True):
+    async def update_marker(self, name, bpf=None, tag=None, enabled=None, direction=_UNSET, color=None, highlight_duration=None, inherited=False, dump=True, memory_only=False):
         """
         Update an existing marker's fields and push to uBridge fine-grained — no
         full NIO reapply, so sibling markers' pcaps stay open. bpf/tag/direction
@@ -589,6 +595,13 @@ class UDPLink(Link):
             marker_info["highlight_duration"] = highlight_duration
         if direction is not _UNSET:
             marker_info["direction"] = direction  # None = clear back to both directions
+
+        if memory_only:
+            # Project-level def sync fan-out: state is already merged into
+            # _markers; just refresh _link_data so the batch dispatch carries
+            # it. No per-link uBridge rebuild, notification or dump.
+            self._refresh_link_data()
+            return
 
         # Push to uBridge fine-grained — NO full NIO reapply (which would
         # reset_packet_filters and close/reopen every sibling marker's pcap):
