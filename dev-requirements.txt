@@ -1,4 +1,4 @@
-pytest==9.1.1  # fix CVE-2025-71176; Python 3.10+ required
+pytest==9.1.1
 flake8==7.3.0
 pytest-timeout==2.4.0
 pytest-asyncio==1.4.0
