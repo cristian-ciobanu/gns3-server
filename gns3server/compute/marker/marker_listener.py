@@ -49,14 +49,18 @@ class MarkerListener(asyncio.DatagramProtocol):
         # MarkerManager owns this listener and the registry.
         self._manager = manager
         self.transport = None
+        self._received = 0
+        self._errors = 0
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, data, addr):
+        self._received += 1
         try:
             self._handle(data)
         except Exception:
+            self._errors += 1
             # Never let a malformed datagram kill the listener.
             log.exception("Failed to process MARK datagram from %s: %r", addr, data)
 

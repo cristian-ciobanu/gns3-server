@@ -116,10 +116,31 @@ class MarkerManager:
         self._host = host
         self._port = sock.getsockname()[1] if sock else port
         log.info("Marker signal sink listening on %s:%s", self._host, self._port)
+        self._stats_task = asyncio.create_task(self._log_stats())
+
+    async def _log_stats(self):
+        """Log marker.match throughput every 10 s so operators can tell whether
+        the single UDP sink keeps up with the aggregated uBridge traffic."""
+        while self.running:
+            await asyncio.sleep(10)
+            listener = self._listener
+            if listener is None:
+                break
+            received, errors = listener._received, listener._errors
+            rate = received / 10.0 if received else 0
+            log.info(
+                "marker sink: %d matches (%.0f/s), %d errors in last 10s",
+                received, rate, errors,
+            )
+            listener._received = 0
+            listener._errors = 0
 
     async def stop(self):
         """Close the UDP sink and drop the whole registry."""
 
+        if hasattr(self, "_stats_task") and self._stats_task:
+            self._stats_task.cancel()
+            self._stats_task = None
         if self._transport:
             self._transport.close()
             self._transport = None
