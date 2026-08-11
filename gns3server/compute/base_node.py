@@ -103,6 +103,10 @@ class BaseNode:
         # marker filter name -> uBridge bridge_name (recorded at apply time so
         # _ubridge_set_marker_filter_state can toggle on/off without an NIO rebuild).
         self._marker_filter_bridges = {}
+        # Parallel store of the installed marker spec (bpf/tag/direction/enabled/...)
+        # keyed by (name, link_id) so _ubridge_apply_markers can reconcile: detect
+        # deletions and field changes instead of being add-only.
+        self._marker_specs = {}
 
         if self._console is not None:
             # use a previously allocated console port
@@ -994,6 +998,7 @@ class BaseNode:
         # gone too — clear the map so the next apply re-installs them all rather
         # than skipping them as "already installed".
         self._marker_filter_bridges.clear()
+        self._marker_specs.clear()
 
     async def add_ubridge_udp_connection(self, bridge_name, source_nio, destination_nio):
         """
@@ -1176,6 +1181,7 @@ class BaseNode:
         if nio is not None and getattr(nio, "markers", None):
             nio.markers.pop(name, None)
         bridge_name = self._marker_filter_bridges.pop((name, link_id), None)
+        self._marker_specs.pop((name, link_id), None)
         if bridge_name is not None:
             await self._ubridge_delete_marker_filter(bridge_name, name)
         try:
@@ -1223,34 +1229,71 @@ class BaseNode:
 
     async def _ubridge_apply_markers(self, bridge_name, nio):
         """
-        Install the traffic-insight markers carried by *nio* onto bridge
-        *bridge_name* that aren't already there. uBridge's ``reset_packet_filters``
-        preserves mark filters (contract), so on an NIO update we add only the new
-        ones — re-adding an existing marker would either duplicate it or
-        close/reopen its pcap. Called from ``add_ubridge_udp_connection`` (fresh
-        bridge, empty map → installs all) and ``update_ubridge_udp_connection``
-        (incremental).
+        Reconcile the traffic-insight markers carried by *nio* onto bridge
+        *bridge_name* with what is already installed there.
+
+        uBridge's ``reset_packet_filters`` preserves mark filters (contract), so
+        a plain re-add would duplicate them; instead this diffs the desired
+        ``nio.markers`` against the installed ``_marker_specs``:
+
+          * installed but no longer desired  → delete filter + unlink pcap
+          * desired with changed bpf/tag/direction/data_link_type → rebuild
+            (delete + add; the marker's own pcap reopens for the new BPF)
+          * desired with only ``enabled`` changed → instant on/off toggle
+            (sibling and own pcap stay open)
+          * desired and unchanged              → skip
+          * desired and new                    → add
+
+        Called from ``add_ubridge_udp_connection`` (fresh bridge, empty maps →
+        installs all) and ``update_ubridge_udp_connection`` / the batch NIO
+        update path (incremental reconcile).
         """
         from gns3server.compute.marker.marker_manager import MarkerManager
 
         markers = nio.markers if hasattr(nio, 'markers') else {}
-        if not markers:
-            return
-
         manager = MarkerManager.instance()
         markers_dir = self.project.markers_working_directory()
-        for name, spec in markers.items():
-            link_id = spec.get("link_id", "")
-            # Incremental: skip markers already on this bridge. uBridge keeps mark
-            # filters across reset_packet_filters, so re-adding would duplicate (or
-            # reopen the pcap). A fresh bridge has an empty map → installs all.
-            if (name, link_id) in self._marker_filter_bridges:
-                continue
+        desired = {(name, spec.get("link_id", "")): spec for name, spec in markers.items()}
+
+        # 1. Remove installed markers that are no longer desired (marker/def delete).
+        for key in list(self._marker_filter_bridges):
+            if key not in desired:
+                mname, link_id = key
+                installed_bridge = self._marker_filter_bridges.pop(key)
+                self._marker_specs.pop(key, None)
+                await self._ubridge_delete_marker_filter(installed_bridge, mname)
+                try:
+                    os.remove(os.path.join(markers_dir, f"{self._id}_{link_id}_{mname}.pcap"))
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    log.warning("Could not remove marker pcap for '%s' on link %s: %s", mname, link_id, e)
+                manager.unregister(self._id, mname)
+
+        # 2. Add newly-desired markers; rebuild ones whose filter fields changed.
+        rebuild_fields = ("bpf", "tag", "direction", "data_link_type")
+        for (name, link_id), spec in desired.items():
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            pcap_path = os.path.join(
-                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
-            )
+            enabled = spec.get("enabled", True)
+            if (name, link_id) in self._marker_filter_bridges:
+                installed_spec = self._marker_specs.get((name, link_id))
+                if installed_spec is None:
+                    # Installed but no recorded spec (legacy / pre-reconcile state):
+                    # cannot diff, skip to avoid a duplicate add.
+                    continue
+                if any(installed_spec.get(f) != spec.get(f) for f in rebuild_fields):
+                    # A filter field changed → rebuild (delete + re-add).
+                    installed_bridge = self._marker_filter_bridges.get((name, link_id))
+                    await self._ubridge_delete_marker_filter(installed_bridge, name)
+                elif installed_spec.get("enabled", True) != enabled:
+                    # Only the on/off state changed → instant toggle, pcap preserved.
+                    await self._ubridge_set_marker_filter_state(name, enabled)
+                    self._marker_specs[(name, link_id)] = spec
+                    continue
+                else:
+                    continue  # unchanged
+            pcap_path = os.path.join(markers_dir, f"{self._id}_{link_id}_{name}.pcap")
             try:
                 await self._ubridge_add_marker_filter(bridge_name, name, bpf, pcap_path, tag, link_id,
                                                      direction=spec.get("direction"),
@@ -1268,22 +1311,19 @@ class BaseNode:
             # A disabled marker is installed but turned off (a paused tap), not
             # dropped — so the UI can flip it back on instantly with
             # enable_packet_filter, no NIO rebuild (ubridge contract §3.2).
-            if not spec.get("enabled", True):
+            if not enabled:
                 try:
                     await self._ubridge_send(f"bridge enable_packet_filter {bridge_name} {name} off")
                 except UbridgeError as e:
                     # Old ubridge without enable_packet_filter: leave it installed
                     # (on) rather than fail the whole link/marker apply.
                     log.warning(f"Could not turn marker '{name}' off on {bridge_name}: {e}")
-            manager.register(
-                str(self.project.id), self._id, name, link_id, tag
-            )
+            manager.register(str(self.project.id), self._id, name, link_id, tag)
             # Remember which bridge hosts this filter so an instant on/off toggle
-            # (no NIO rebuild) can resolve it by name alone.
-            # keyed (name, link_id) so a node that hosts markers for several links
-            # (e.g. IOU with one IOL-BRIDGE and many bays/units) records each
-            # copy independently — toggle below iterates all matching entries.
+            # (no NIO rebuild) can resolve it by name alone, and keep the spec so
+            # the next reconcile can detect changes.
             self._marker_filter_bridges[name, link_id] = bridge_name
+            self._marker_specs[name, link_id] = spec
 
     async def _ubridge_set_marker_filter_state(self, name, enabled):
         """

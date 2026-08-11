@@ -1266,7 +1266,9 @@ class IOUVM(BaseNode):
 
     async def _ubridge_apply_markers(self, adapter_number, port_number, nio):
         """
-        (Re-)apply traffic-insight markers to the IOL bridge.
+        Reconcile traffic-insight markers on the IOL bridge (diff desired
+        ``nio.markers`` against installed ``_marker_specs``): delete removed,
+        rebuild changed, toggle on/off-only changes, add new, skip unchanged.
 
         IOU uses ``iol_bridge`` (not ``bridge``) and the ``add_packet_filter``
         command carries extra ``{bay} {unit}`` positional arguments between the
@@ -1280,41 +1282,55 @@ class IOUVM(BaseNode):
         from gns3server.compute.marker.marker_manager import MarkerManager
 
         markers = nio.markers if hasattr(nio, 'markers') else {}
-        if not markers:
-            return
-
         manager = MarkerManager.instance()
         markers_dir = self.project.markers_working_directory()
         bridge_name = f"IOL-BRIDGE-{self.application_id + 512}"
         location = "{bridge_name} {bay} {unit}".format(
             bridge_name=bridge_name, bay=adapter_number, unit=port_number
         )
-        for name, spec in markers.items():
-            link_id = spec.get("link_id", "")
-            # Incremental: skip markers already installed on this port. A NIO
-            # update carries EVERY marker on the port (e.g. an inherited
-            # global-* copy plus a newly added private one); uBridge's
-            # add_packet_filter rejects a duplicate filter name (packet_filter.c),
-            # so we must not re-add one already here — mirrors the generic
-            # _ubridge_apply_markers guard. A fresh bridge has an empty map
-            # (cleared on _stop_ubridge) so all are installed.
-            if (name, link_id) in self._marker_filter_bridges:
-                continue
+        desired = {(name, spec.get("link_id", "")): spec for name, spec in markers.items()}
+
+        # 1. Remove installed markers that are no longer desired.
+        for key in list(self._marker_filter_bridges):
+            if key not in desired:
+                mname, link_id = key
+                installed_location = self._marker_filter_bridges.pop(key)
+                self._marker_specs.pop(key, None)
+                await self._ubridge_delete_marker_filter(installed_location, mname)
+                try:
+                    os.remove(os.path.join(markers_dir, f"{self._id}_{link_id}_{mname}.pcap"))
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    log.warning("Could not remove marker pcap for '%s' on link %s: %s", mname, link_id, e)
+                manager.unregister(self._id, mname)
+
+        # 2. Add / reconcile desired markers.
+        rebuild_fields = ("bpf", "tag", "direction", "data_link_type")
+        for (name, link_id), spec in desired.items():
             bpf = spec.get("bpf", "")
             tag = spec.get("tag")
-            pcap_path = os.path.join(
-                markers_dir, f"{self._id}_{link_id}_{name}.pcap"
-            )
-            # Build the iol_bridge marker filter command:
-            #   iol_bridge add_packet_filter {br} {bay} {unit} {name} mark "{bpf}" [tag {id}] pcap "{path}"
+            enabled = spec.get("enabled", True)
+            if (name, link_id) in self._marker_filter_bridges:
+                installed_spec = self._marker_specs.get((name, link_id))
+                if installed_spec is None:
+                    continue  # installed (legacy, no spec) — skip to avoid dup
+                if any(installed_spec.get(f) != spec.get(f) for f in rebuild_fields):
+                    installed_location = self._marker_filter_bridges.get((name, link_id))
+                    await self._ubridge_delete_marker_filter(installed_location, name)
+                elif installed_spec.get("enabled", True) != enabled:
+                    await self._ubridge_set_marker_filter_state(name, enabled)
+                    self._marker_specs[(name, link_id)] = spec
+                    continue
+                else:
+                    continue
+            pcap_path = os.path.join(markers_dir, f"{self._id}_{link_id}_{name}.pcap")
+            # iol_bridge add_packet_filter {br} {bay} {unit} {name} mark "{bpf}" [tag {id}] pcap "{path}"
             cmd = 'iol_bridge add_packet_filter {loc} {name} mark "{bpf}"'.format(
                 loc=location, name=name, bpf=bpf
             )
             if tag is not None:
                 cmd += f" tag {tag}"
-            # IOU uses one per-node IOL-BRIDGE for every link, so bridge+filter
-            # are identical across this node's links — `link` is the only way the
-            # controller can tell their signals apart (contract §3.2).
             if link_id:
                 cmd += f" link {link_id}"
             direction = spec.get("direction")
@@ -1333,16 +1349,14 @@ class IOUVM(BaseNode):
                     self.project.emit("log.warning", {"message": message})
                     continue
                 raise
-            if not spec.get("enabled", True):
+            if not enabled:
                 try:
                     await self._ubridge_send(f"iol_bridge enable_packet_filter {location} {name} off")
                 except UbridgeError as e:
                     log.warning(f"Could not turn marker '{name}' off on {location}: {e}")
-            manager.register(
-                str(self.project.id), self._id, name, link_id, tag
-            )
-            # Record name -> location (bridge bay unit) for instant toggle.
+            manager.register(str(self.project.id), self._id, name, link_id, tag)
             self._marker_filter_bridges[name, link_id] = location
+            self._marker_specs[name, link_id] = spec
 
     async def _ubridge_set_marker_filter_state(self, name, enabled):
         """IOU override: toggle every (name, link_id) entry via ``iol_bridge``."""
