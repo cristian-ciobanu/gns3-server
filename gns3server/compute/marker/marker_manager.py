@@ -17,6 +17,7 @@
 
 import asyncio
 import logging
+import socket
 
 from gns3server.compute.marker.marker_listener import MarkerListener
 from gns3server.compute.notification_manager import NotificationManager
@@ -75,10 +76,20 @@ class MarkerManager:
             return
         loop = asyncio.get_running_loop()
         self._listener = MarkerListener(self)
+
+        def _configure_transport(transport):
+            sock = transport.get_extra_info("socket")
+            if sock is not None:
+                # Raise the UDP receive buffer from the default ~208 KB to 8 MB
+                # so that 1000+ uBridge processes can burst marker.match signals
+                # without kernel-side datagram loss.
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+
         try:
             self._transport, _ = await loop.create_datagram_endpoint(
                 lambda: self._listener, local_addr=(host, port)
             )
+            _configure_transport(self._transport)
         except OSError:
             if port != 0:
                 log.warning(
@@ -88,6 +99,7 @@ class MarkerManager:
                     self._transport, _ = await loop.create_datagram_endpoint(
                         lambda: self._listener, local_addr=(host, 0)
                     )
+                    _configure_transport(self._transport)
                 except OSError as e:
                     log.error(
                         "Marker listener startup failed: %s. Traffic insight signals are unavailable.", e
@@ -104,10 +116,31 @@ class MarkerManager:
         self._host = host
         self._port = sock.getsockname()[1] if sock else port
         log.info("Marker signal sink listening on %s:%s", self._host, self._port)
+        self._stats_task = asyncio.create_task(self._log_stats())
+
+    async def _log_stats(self):
+        """Log marker.match throughput every 10 s so operators can tell whether
+        the single UDP sink keeps up with the aggregated uBridge traffic."""
+        while self.running:
+            await asyncio.sleep(10)
+            listener = self._listener
+            if listener is None:
+                break
+            received, errors = listener._received, listener._errors
+            listener._received = 0
+            listener._errors = 0
+            if received:
+                log.info(
+                    "marker sink: %d matches (%.0f/s), %d errors in last 10s",
+                    received, received / 10.0, errors,
+                )
 
     async def stop(self):
         """Close the UDP sink and drop the whole registry."""
 
+        if hasattr(self, "_stats_task") and self._stats_task:
+            self._stats_task.cancel()
+            self._stats_task = None
         if self._transport:
             self._transport.close()
             self._transport = None

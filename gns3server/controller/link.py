@@ -114,7 +114,7 @@ class Link:
         """
         return self._markers
 
-    async def inherit_marker(self, def_name, marker_def, dump=True):
+    async def inherit_marker(self, def_name, marker_def, dump=True, memory_only=False):
         """
         Apply a project-level marker definition to this link.
 
@@ -148,6 +148,7 @@ class Link:
             enabled=not marker_def.get("paused", False),
             inherited_from=def_name,
             dump=dump,
+            memory_only=memory_only,
         )
 
     def _persist_markers(self):
@@ -257,11 +258,14 @@ class Link:
         """
         return self._created
 
-    async def add_node(self, node, adapter_number, port_number, label=None, dump=True):
+    async def add_node(self, node, adapter_number, port_number, label=None, dump=True, batch=False):
         """
         Add a node to the link
 
         :param dump: Dump project on disk
+        :param batch: When True, do not create the link on the computes once
+            both nodes are attached — the caller drives creation via the
+            project-open bulk path. Used to avoid one HTTP round-trip per link.
         """
 
         port = node.get_port(adapter_number, port_number)
@@ -305,7 +309,7 @@ class Link:
             {"node": node, "adapter_number": adapter_number, "port_number": port_number, "port": port, "label": label}
         )
 
-        if len(self._nodes) == 2:
+        if len(self._nodes) == 2 and not batch:
             await self.create()
             for n in self._nodes:
                 n["node"].add_link(self)

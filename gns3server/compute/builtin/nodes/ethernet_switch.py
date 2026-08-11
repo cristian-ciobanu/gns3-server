@@ -183,7 +183,7 @@ class EthernetSwitch(BaseNode):
         """
 
         await self.start()
-        log.info(f'Ethernet switch "{self._name}" [{self._id}] has been created')
+        log.debug(f'Ethernet switch "{self._name}" [{self._id}] has been created')
 
     async def start(self):
         """
@@ -290,7 +290,7 @@ class EthernetSwitch(BaseNode):
         self._started = False
 
         await self._stop_ubridge()
-        log.info(f'Ethernet switch "{self._name}" [{self._id}] has been closed')
+        log.debug(f'Ethernet switch "{self._name}" [{self._id}] has been closed')
         return True
 
     # ------------------------------------------------------------------ #
@@ -310,7 +310,7 @@ class EthernetSwitch(BaseNode):
         if not isinstance(nio, NIOUDP):
             raise NodeError("Ethernet switch ports only support UDP NIOs")
 
-        log.info(
+        log.debug(
             'Ethernet switch "{name}" [{id}]: NIO {nio} bound to port {port}'.format(
                 name=self._name, id=self._id, nio=nio, port=port_number
             )
@@ -397,7 +397,7 @@ class EthernetSwitch(BaseNode):
         if isinstance(nio, NIOUDP):
             self.manager.port_manager.release_udp_port(nio.lport, self._project)
 
-        log.info(
+        log.debug(
             'Ethernet switch "{name}" [{id}]: NIO {nio} removed from port {port}'.format(
                 name=self._name, id=self._id, nio=nio, port=port_number
             )
@@ -512,7 +512,7 @@ class EthernetSwitch(BaseNode):
         if self._ubridge_hypervisor and self._ubridge_hypervisor.is_running():
             ubridge_bridge = self._ubridge_bridge_name(port_number)
             await self._ubridge_send(f'bridge start_capture {ubridge_bridge} "{output_file}"')
-        log.info(
+        log.debug(
             'Ethernet switch "{name}" [{id}]: starting packet capture on port {port}'.format(
                 name=self.name, id=self.id, port=port_number
             )
@@ -532,7 +532,7 @@ class EthernetSwitch(BaseNode):
         if self._ubridge_hypervisor and self._ubridge_hypervisor.is_running():
             ubridge_bridge = self._ubridge_bridge_name(port_number)
             await self._ubridge_send(f"bridge stop_capture {ubridge_bridge}")
-        log.info(
+        log.debug(
             'Ethernet switch "{name}" [{id}]: stopping packet capture on port {port}'.format(
                 name=self.name, id=self.id, port=port_number
             )
