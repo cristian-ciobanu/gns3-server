@@ -914,6 +914,15 @@ class Project:
             # a link should have 2 attached nodes, this can happen with corrupted projects
             await self.delete_link(link.id, force_delete=True)
             return None
+        # Apply project-level marker definitions onto the link's memory
+        # (memory_only) before _prepare() so the inherited markers ride the
+        # batch NIO dispatch — zero extra HTTP round-trips.  The final
+        # apply_defs_to_new_link in finalize is removed.
+        for def_name, d in self._marker_definitions.items():
+            try:
+                await link.inherit_marker(def_name, d, dump=False, memory_only=True)
+            except ControllerError as e:
+                log.warning("Marker definition '%s' could not be applied to link %s: %s", def_name, link.id, e)
         entries = await link._prepare()
         return (link, entries)
 
@@ -1850,19 +1859,6 @@ class Project:
                     n["port"].link = link
                 link._created = True
                 self.emit_notification("link.created", link.asdict())
-            if valid and self._marker_definitions:
-                _marker_t0 = time.time()
-                log.info(
-                    "Project '%s' [%s]: applying %d marker definition(s) to %d links...",
-                    self._name, self._id, len(self._marker_definitions), len(valid)
-                )
-                await asyncio.gather(
-                    *[self.apply_defs_to_new_link(link) for link, _ in valid]
-                )
-                log.info(
-                    "Project '%s' [%s]: marker inheritance done in %.2fs",
-                    self._name, self._id, time.time() - _marker_t0
-                )
             log.info("Project '%s' [%s]: created %d links", self._name, self._id, len(valid))
             # Release any pre-allocated UDP ports that were not consumed by links
             for compute_id, ports in self._preallocated_udp_ports.items():
