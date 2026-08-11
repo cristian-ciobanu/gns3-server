@@ -228,7 +228,7 @@ class Cloud(BaseNode):
         """
 
         await self.start()
-        log.info(f'Cloud "{self._name}" [{self._id}] has been created')
+        log.debug(f'Cloud "{self._name}" [{self._id}] has been created')
 
     async def start(self):
         """
@@ -261,7 +261,7 @@ class Cloud(BaseNode):
                 self.manager.port_manager.release_udp_port(nio.lport, self._project)
 
         await self._stop_ubridge()
-        log.info(f'Cloud "{self._name}" [{self._id}] has been closed')
+        log.debug(f'Cloud "{self._name}" [{self._id}] has been closed')
 
     async def _is_wifi_adapter_osx(self, adapter_name):
         """
@@ -429,7 +429,7 @@ class Cloud(BaseNode):
         if port_number in self._nios:
             raise NodeError(f"Port {port_number} isn't free")
 
-        log.info(
+        log.debug(
             'Cloud "{name}" [{id}]: NIO {nio} bound to port {port}'.format(
                 name=self._name, id=self._id, nio=nio, port=port_number
             )
@@ -485,7 +485,7 @@ class Cloud(BaseNode):
         if isinstance(nio, NIOUDP):
             self.manager.port_manager.release_udp_port(nio.lport, self._project)
 
-        log.info(
+        log.debug(
             'Cloud "{name}" [{id}]: NIO {nio} removed from port {port}'.format(
                 name=self._name, id=self._id, nio=nio, port=port_number
             )
@@ -535,7 +535,7 @@ class Cloud(BaseNode):
         await self._ubridge_send(
             'bridge start_capture {name} "{output_file}"'.format(name=bridge_name, output_file=output_file)
         )
-        log.info(
+        log.debug(
             "Cloud '{name}' [{id}]: starting packet capture on port {port_number}".format(
                 name=self.name, id=self.id, port_number=port_number
             )
@@ -555,7 +555,7 @@ class Cloud(BaseNode):
         bridge_name = f"{self._id}-{port_number}"
         await self._ubridge_send(f"bridge stop_capture {bridge_name}")
 
-        log.info(
+        log.debug(
             "Cloud'{name}' [{id}]: stopping packet capture on port {port_number}".format(
                 name=self.name, id=self.id, port_number=port_number
             )

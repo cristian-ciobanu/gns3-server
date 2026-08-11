@@ -211,6 +211,34 @@ class TestDockerNodesRoutes:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["type"] == "nio_udp"
 
+    async def test_docker_nio_batch_create(self, app: FastAPI, compute_client: AsyncClient, vm: dict) -> None:
+        """
+        Exercise the project-wide batch NIO endpoint: bind two NIOs on the same
+        docker node in a single request (the path used during project open).
+        """
+
+        params = {
+            "nios": [
+                {
+                    "node_id": vm["node_id"],
+                    "adapter_number": 0,
+                    "port_number": 0,
+                    "nio": {"type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"},
+                },
+                {
+                    "node_id": vm["node_id"],
+                    "adapter_number": 1,
+                    "port_number": 0,
+                    "nio": {"type": "nio_udp", "lport": 4243, "rport": 4344, "rhost": "127.0.0.1"},
+                },
+            ]
+        }
+
+        url = app.url_path_for("compute:create_batch_nios", project_id=vm["project_id"])
+        response = await compute_client.post(url, json=params)
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["added"] == 2
+
 
     async def test_docker_update_nio(self, app: FastAPI, compute_client: AsyncClient, vm: dict) -> None:
 

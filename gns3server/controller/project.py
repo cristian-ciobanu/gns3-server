@@ -160,6 +160,11 @@ class Project:
             self.dump()
 
         self._iou_id_lock = asyncio.Lock()
+        # Serialise the "ensure project exists on this compute" check in
+        # _create_node: without it, concurrent node creations all pass the
+        # `compute not in _project_created_on_compute` check before any has
+        # registered, and each fires a redundant POST /projects at the compute.
+        self._create_node_lock = asyncio.Lock()
         self._preallocated_udp_ports = {}  # compute_id -> list of pre-allocated UDP ports
         log.debug(f'Project "{self.name}" [{self._id}] loaded')
         self.emit_controller_notification("project.created", self.asdict())
@@ -586,15 +591,21 @@ class Project:
     async def _create_node(self, compute, name, node_id, node_type=None, **kwargs):
 
         node = Node(self, compute, name, node_id=node_id, node_type=node_type, **kwargs)
-        if compute not in self._project_created_on_compute:
-            if compute.id == "local":
-                data = {"name": self._name, "project_id": self._id, "path": self._path}
-            else:
-                data = {"name": self._name, "project_id": self._id}
-            if self._variables:
-                data["variables"] = self._variables
-            await compute.post("/projects", data=data)
-            self._project_created_on_compute.add(compute)
+        # Hold the lock across the check + POST + register so that concurrent
+        # node creations on the same compute don't all race past the check and
+        # each POST /projects (the compute-side sync handler then instantiated
+        # the Project N times). Once one creation registers the compute, the
+        # rest see it in the set and return immediately.
+        async with self._create_node_lock:
+            if compute not in self._project_created_on_compute:
+                if compute.id == "local":
+                    data = {"name": self._name, "project_id": self._id, "path": self._path}
+                else:
+                    data = {"name": self._name, "project_id": self._id}
+                if self._variables:
+                    data["variables"] = self._variables
+                await compute.post("/projects", data=data)
+                self._project_created_on_compute.add(compute)
 
         await node.create()
         self._nodes[node.id] = node
@@ -826,6 +837,94 @@ class Project:
         if len(link.nodes) != 2:
             # a link should have 2 attached nodes, this can happen with corrupted projects
             await self.delete_link(link.id, force_delete=True)
+
+    async def _prepare_link_from_topology(self, link_data):
+        """
+        Build a link locally from topology data WITHOUT dispatching NIOs to the
+        computes.  Returns ``(link, entries)`` where ``entries`` is the list of
+        ``(node, adapter_number, port_number, nio_data)`` tuples produced by
+        ``UDPLink._prepare()``, or ``None`` if the link is invalid/incomplete.
+
+        Used by the project-open bulk path so all NIOs can be sent in a single
+        batch HTTP call per compute instead of one round-trip per link.
+        """
+
+        link = await self.add_link(link_id=link_data["link_id"], dump=False)
+        if "filters" in link_data:
+            try:
+                await link.update_filters(link_data["filters"])
+            except ControllerError as e:
+                log.warning("Dropping invalid filters on link %s: %s", link_data.get("link_id"), e)
+        for name, marker in (link_data.get("markers") or {}).items():
+            bpf = marker.get("bpf")
+            if not bpf:
+                log.warning("Dropping marker %s on link %s: missing bpf", name, link_data.get("link_id"))
+                continue
+            result = validate_bpf_syntax(bpf)
+            if not result.get("valid"):
+                log.warning(
+                    "Dropping marker %s on link %s: invalid BPF (%s)",
+                    name, link_data.get("link_id"), result.get("error")
+                )
+                continue
+            link._markers[name] = {
+                "bpf": bpf,
+                "tag": marker.get("tag"),
+                "enabled": marker.get("enabled", True),
+                "color": marker.get("color"),
+                "highlight_duration": marker.get("highlight_duration"),
+                "capture_node_id": marker.get("capture_node_id"),
+                "direction": marker.get("direction"),
+            }
+        # Set style/icon directly: the update_* helpers unconditionally dump
+        # the whole topology and emit "link.updated", neither of which is
+        # appropriate mid-prepare (the link is finalised, notified and the
+        # project dumped once at the end of open).
+        if "link_style" in link_data:
+            link._link_style = link_data["link_style"]
+        if "show_filters_icon" in link_data:
+            link._show_filters_icon = link_data["show_filters_icon"]
+        for node_link in link_data.get("nodes", []):
+            node = self.get_node(node_link["node_id"])
+            port = node.get_port(node_link["adapter_number"], node_link["port_number"])
+            if port is None:
+                log.warning(
+                    "Port {}/{} for {} not found".format(
+                        node_link["adapter_number"], node_link["port_number"], node.name
+                    )
+                )
+                continue
+            if port.link is not None:
+                log.warning(
+                    "Port {}/{} is already connected to link ID {}".format(
+                        node_link["adapter_number"], node_link["port_number"], port.link.id
+                    )
+                )
+                continue
+            # batch=True: attach the node without triggering per-link NIO HTTP
+            await link.add_node(
+                node,
+                node_link["adapter_number"],
+                node_link["port_number"],
+                label=node_link.get("label"),
+                dump=False,
+                batch=True,
+            )
+        if len(link.nodes) != 2:
+            # a link should have 2 attached nodes, this can happen with corrupted projects
+            await self.delete_link(link.id, force_delete=True)
+            return None
+        # Apply project-level marker definitions onto the link's memory
+        # (memory_only) before _prepare() so the inherited markers ride the
+        # batch NIO dispatch — zero extra HTTP round-trips.  The final
+        # apply_defs_to_new_link in finalize is removed.
+        for def_name, d in self._marker_definitions.items():
+            try:
+                await link.inherit_marker(def_name, d, dump=False, memory_only=True)
+            except ControllerError as e:
+                log.warning("Marker definition '%s' could not be applied to link %s: %s", def_name, link.id, e)
+        entries = await link._prepare()
+        return (link, entries)
 
     @open_required
     async def add_link(self, link_id=None, dump=True):
@@ -1068,23 +1167,25 @@ class Project:
             # data_link_type decides which links host an inherited copy (serial
             # links are skipped unless a WAN encapsulation is chosen), so a change
             # needs a full re-fan-out: drop every copy, then re-apply.
-            await self._marker_apply_concurrently(
-                affected,
-                lambda link: link.stop_marker(f"global-{name}", inherited=True, dump=False),
-                lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
-            )
+            for link in affected:
+                try:
+                    await link.stop_marker(f"global-{name}", inherited=True, dump=False, memory_only=True)
+                except ControllerError as e:
+                    log.warning("Failed to remove inherited marker global-%s from link %s: %s", name, link.id, e)
             await self._apply_def_to_all_links(name)
         else:
-            # Sync: update every inherited copy across all links.
-            await self._marker_apply_concurrently(
-                affected,
-                lambda link: link.update_marker(
-                    f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
-                    color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
-                    dump=False
-                ),
-                lambda link, e: f"Failed to sync marker global-{name} on link {link.id}: {e}",
-            )
+            # Sync: update every inherited copy across all links in memory, then
+            # batch-push to computes (one PUT /nios/batch per compute).
+            for link in affected:
+                try:
+                    await link.update_marker(
+                        f"global-{name}", bpf=d["bpf"], tag=d.get("tag"), direction=d.get("direction"),
+                        color=d.get("color"), highlight_duration=d.get("highlight_duration"), inherited=True,
+                        dump=False, memory_only=True
+                    )
+                except ControllerError as e:
+                    log.warning("Failed to sync marker global-%s on link %s: %s", name, link.id, e)
+            await self._batch_update_link_nios(affected)
         self.dump()
         self.emit_notification("project.updated", self.asdict())
 
@@ -1105,12 +1206,13 @@ class Project:
             if f"global-{name}" in link.markers
             and link.markers[f"global-{name}"].get("inherited_from") == name
         ]
-        await self._marker_apply_concurrently(
-            affected,
-            lambda link: link.stop_marker(f"global-{name}", inherited=True),
-            # A missing compute or broken link shouldn't block the delete.
-            lambda link, e: f"Failed to remove inherited marker global-{name} from link {link.id}: {e}",
-        )
+        for link in affected:
+            try:
+                await link.stop_marker(f"global-{name}", inherited=True, memory_only=True)
+            except ControllerError as e:
+                # A missing compute or broken link shouldn't block the delete.
+                log.warning("Failed to remove inherited marker global-%s from link %s: %s", name, link.id, e)
+        await self._batch_update_link_nios(affected)
 
         self.dump()
         self.emit_notification("project.updated", self.asdict())
@@ -1120,17 +1222,57 @@ class Project:
         Fan out a single marker definition to every existing link in the project.
         Links that have no capable node (``_MARKER_CAPABLE_TYPES``) are silently
         skipped — the marker can only live on a uBridge bridge.
+
+        Two-phase to avoid one HTTP round-trip per link end: (1) write the
+        inherited marker into each link's memory (``memory_only`` refreshes
+        ``_link_data`` without pushing), then (2) batch-update every affected
+        NIO via a single ``PUT /projects/{id}/nios/batch`` per compute.
         """
 
         d = self._marker_definitions[def_name]
-        # dump=False: per-link topology writes are the dominant cost on large
-        # projects — the callers (create/update_marker_definition) dump once
-        # after the fan-out.
-        await self._marker_apply_concurrently(
-            list(self._links.values()),
-            lambda link: link.inherit_marker(def_name, d, dump=False),
-            lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
-        )
+        affected = []
+        for link in self._links.values():
+            try:
+                await link.inherit_marker(def_name, d, dump=False, memory_only=True)
+                affected.append(link)
+            except ControllerError as e:
+                log.warning("Marker definition '%s' could not be applied to link %s: %s", def_name, link.id, e)
+        await self._batch_update_link_nios(affected)
+
+    async def _batch_update_link_nios(self, links):
+        """
+        Push the current ``_link_data`` (markers/filters) of *links* to their
+        computes in one ``PUT /projects/{id}/nios/batch`` per compute — replacing
+        one PUT /nio round-trip per link end. Started nodes re-apply uBridge;
+        stopped nodes update in memory.
+        """
+
+        per_compute = {}
+        for link in links:
+            if len(link._link_data) < 2:
+                continue
+            for i, side in enumerate(link._nodes):
+                node = side["node"]
+                per_compute.setdefault(node.compute, []).append(
+                    {
+                        "node_id": node.id,
+                        "adapter_number": side["adapter_number"],
+                        "port_number": side["port_number"],
+                        "nio": link._link_data[i],
+                    }
+                )
+
+        async def _dispatch(compute, entries):
+            await compute.put(
+                f"/projects/{self._id}/nios/batch",
+                data={"nios": entries},
+                timeout=300,
+            )
+
+        if per_compute:
+            await asyncio.gather(
+                *[_dispatch(c, n) for c, n in per_compute.items()]
+            )
 
     async def apply_defs_to_new_link(self, link):
         """
@@ -1170,6 +1312,14 @@ class Project:
         :param fail_msg: callable ``(link, error) -> log message``
         """
 
+        links = list(links)
+        if not links:
+            return
+        _t0 = time.time()
+        log.info(
+            "Project '%s' [%s]: fanning out marker operation to %d links...",
+            self._name, self._id, len(links)
+        )
         sem = asyncio.Semaphore(32)
 
         async def guarded(link):
@@ -1180,6 +1330,10 @@ class Project:
                     log.warning(fail_msg(link, e))
 
         await asyncio.gather(*(guarded(link) for link in links))
+        log.info(
+            "Project '%s' [%s]: marker fan-out done in %.2fs",
+            self._name, self._id, time.time() - _t0
+        )
 
     @property
     def snapshots(self):
@@ -1282,6 +1436,7 @@ class Project:
             log.warning(f"Closing project '{self.name}' ignored because it is being loaded")
             return
         self._closing = True
+        log.info("Project '%s' [%s]: closing...", self._name, self._id)
         try:
             await self.stop_all()
         except HTTPException as e:
@@ -1305,6 +1460,7 @@ class Project:
 
         self.reset()
         self._closing = False
+        log.info("Project '%s' [%s]: closed", self._name, self._id)
 
     def _clean_pictures(self):
         """
@@ -1631,10 +1787,12 @@ class Project:
 
             # Create nodes in parallel with limited concurrency
             # to avoid overwhelming the system with too many simultaneous operations
+            log.info("Project '%s' [%s]: loading %d nodes...", self._name, self._id, len(nodes_to_create))
             pool = Pool(concurrency=100)
             for compute, name, node_id, node_data in nodes_to_create:
                 pool.append(self.add_node, compute, name, node_id, dump=False, **node_data)
             await pool.join()
+            log.info("Project '%s' [%s]: loaded %d nodes", self._name, self._id, len(nodes_to_create))
             # Pre-allocate UDP ports for all links in batch to reduce HTTP round-trips
             ports_per_compute = {}
             for link_data in topology.get("links", []):
@@ -1648,13 +1806,60 @@ class Project:
                 count = ports_per_compute.get(compute.id, 0)
                 if count > 0:
                     await self.preallocate_udp_ports_for_compute(compute, count)
-            # Create links in parallel for improved performance
-            pool = Pool(concurrency=100)
-            for link_data in topology.get("links", []):
-                if "link_id" not in link_data.keys():
-                    continue
-                pool.append(self._create_link_from_topology_data, link_data)
-            await pool.join()
+            # Create links via the bulk path: build every link locally (no NIO
+            # HTTP), then dispatch all NIOs to each compute in a single batch
+            # request. This replaces one HTTP round-trip per link (~5000 for a
+            # 2500-link topology) with one round-trip per compute.
+            link_data_list = [d for d in topology.get("links", []) if "link_id" in d.keys()]
+            log.info("Project '%s' [%s]: creating %d links...", self._name, self._id, len(link_data_list))
+            sem = asyncio.Semaphore(100)
+
+            async def _prepare_one(data):
+                async with sem:
+                    try:
+                        return await self._prepare_link_from_topology(data)
+                    except Exception as e:
+                        log.warning("Could not load link %s: %s", data.get("link_id"), e)
+                        return None
+
+            prepared = await asyncio.gather(*[_prepare_one(d) for d in link_data_list])
+            valid = [p for p in prepared if p is not None]
+
+            # Group the prepared NIO entries by destination compute and send
+            # each compute a single /nios/batch request.
+            per_compute = {}  # compute -> list of {node_id, adapter_number, port_number, nio}
+            for link, entries in valid:
+                for node, adapter_number, port_number, nio_data in entries:
+                    per_compute.setdefault(node.compute, []).append(
+                        {
+                            "node_id": node.id,
+                            "adapter_number": adapter_number,
+                            "port_number": port_number,
+                            "nio": nio_data,
+                        }
+                    )
+
+            async def _dispatch_batch(compute, nio_entries):
+                await compute.post(
+                    f"/projects/{self._id}/nios/batch",
+                    data={"nios": nio_entries},
+                    timeout=300,
+                )
+
+            if per_compute:
+                await asyncio.gather(
+                    *[_dispatch_batch(c, n) for c, n in per_compute.items()]
+                )
+
+            # Finalise every link: wire node/port back-references, mark created,
+            # notify clients, and apply project-level marker definitions.
+            for link, _entries in valid:
+                for n in link._nodes:
+                    n["node"].add_link(link)
+                    n["port"].link = link
+                link._created = True
+                self.emit_notification("link.created", link.asdict())
+            log.info("Project '%s' [%s]: created %d links", self._name, self._id, len(valid))
             # Release any pre-allocated UDP ports that were not consumed by links
             for compute_id, ports in self._preallocated_udp_ports.items():
                 if ports:
@@ -1929,29 +2134,37 @@ class Project:
         """
         Start all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
-        pool = Pool(concurrency=3)
-        for node in self.nodes.values():
-            if not node.is_always_running():
-                pool.append(node.start)
+        nodes_to_start = [n for n in self.nodes.values() if not n.is_always_running()]
+        if not nodes_to_start:
+            return
+        log.info("Project '%s' [%s]: starting %d nodes...", self._name, self._id, len(nodes_to_start))
+        pool = Pool(concurrency=10)
+        for node in nodes_to_start:
+            pool.append(node.start)
         await pool.join()
+        log.info("Project '%s' [%s]: started %d nodes", self._name, self._id, len(nodes_to_start))
 
     @open_required
     async def stop_all(self):
         """
         Stop all nodes (except always-running types like Ethernet switch, Cloud, NAT, etc.)
         """
-        pool = Pool(concurrency=3)
-        for node in self.nodes.values():
-            if not node.is_always_running():
-                pool.append(node.stop)
+        nodes_to_stop = [n for n in self.nodes.values() if not n.is_always_running()]
+        if not nodes_to_stop:
+            return
+        log.info("Project '%s' [%s]: stopping %d nodes...", self._name, self._id, len(nodes_to_stop))
+        pool = Pool(concurrency=100)
+        for node in nodes_to_stop:
+            pool.append(node.stop)
         await pool.join()
+        log.info("Project '%s' [%s]: stopped %d nodes", self._name, self._id, len(nodes_to_stop))
 
     @open_required
     async def suspend_all(self):
         """
         Suspend all nodes
         """
-        pool = Pool(concurrency=3)
+        pool = Pool(concurrency=50)
         for node in self.nodes.values():
             pool.append(node.suspend)
         await pool.join()

@@ -83,7 +83,7 @@ async def create_qemu_node(project_id: UUID, node_data: schemas.QemuCreate) -> s
     for disk_index, drive in enumerate(drives):
         disk_image_backing_file = node_data.get(f"hd{drive}_disk_image_backing_file")
         if disk_image_backing_file:
-            log.info(f"Updating disk image for drive {drive} with backing file {disk_image_backing_file}")
+            log.debug(f"Updating disk image for drive {drive} with backing file {disk_image_backing_file}")
             node_data[f"hd{drive}_disk_image"] = disk_image_backing_file
 
     for name, value in node_data.items():

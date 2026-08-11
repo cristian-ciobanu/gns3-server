@@ -180,15 +180,15 @@ class Hypervisor(UBridgeHypervisor):
         await self._check_ubridge_version(env)
         try:
             command = self._build_command()
-            log.info(f"starting ubridge: {command}")
+            log.debug(f"starting ubridge: {command}")
             self._stdout_file = os.path.join(self._working_dir, "ubridge.log")
-            log.info(f"logging to {self._stdout_file}")
+            log.debug(f"logging to {self._stdout_file}")
             with open(self._stdout_file, "w", encoding="utf-8") as fd:
                 self._process = await asyncio.create_subprocess_exec(
                     *command, stdout=fd, stderr=subprocess.STDOUT, cwd=self._working_dir, env=env
                 )
 
-            log.info(f"ubridge started PID={self._process.pid}")
+            log.debug(f"ubridge started PID={self._process.pid}")
             # An unsupported flag (e.g. -U on an old ubridge build) makes ubridge exit
             # immediately with a non-zero code. Detect that here and surface the real
             # reason from ubridge.log instead of waiting for connect() to time out with
@@ -220,7 +220,7 @@ class Hypervisor(UBridgeHypervisor):
             log.error(error_msg)
             self._project.emit("log.error", {"message": error_msg})
         else:
-            log.info("uBridge process has stopped, return code: %d", returncode)
+            log.debug("uBridge process has stopped, return code: %d", returncode)
 
     async def stop(self):
         """
@@ -228,7 +228,7 @@ class Hypervisor(UBridgeHypervisor):
         """
 
         if self.is_running():
-            log.info(f"Stopping uBridge process PID={self._process.pid}")
+            log.debug(f"Stopping uBridge process PID={self._process.pid}")
             await UBridgeHypervisor.stop(self)
             try:
                 await wait_for_process_termination(self._process, timeout=3)

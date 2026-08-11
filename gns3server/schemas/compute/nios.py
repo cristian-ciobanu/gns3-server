@@ -16,7 +16,7 @@
 
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 
@@ -91,3 +91,24 @@ class MarkerRebuild(BaseModel):
     direction: Optional[str] = None
     enabled: bool = True
     link_id: str = ""
+
+
+class BatchNIOEntry(BaseModel):
+    """
+    A single NIO binding to create as part of a project-wide batch.
+    """
+
+    node_id: str = Field(..., description="Node the NIO is attached to")
+    adapter_number: int = Field(0, ge=0, description="Adapter number")
+    port_number: int = Field(0, ge=0, description="Port number")
+    nio: UDPNIO = Field(..., description="NIO settings")
+
+
+class BatchNIOCreate(BaseModel):
+    """
+    Body for the project-wide batch NIO endpoint: create many NIO bindings in a
+    single request (used during project open) to avoid one HTTP round-trip per
+    NIO between controller and compute.
+    """
+
+    nios: List[BatchNIOEntry] = Field(..., description="NIO bindings to create")
