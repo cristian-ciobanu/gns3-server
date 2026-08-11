@@ -368,6 +368,79 @@ async def test_apply_markers_skips_already_installed(compute_project, manager):
 
 
 @pytest.mark.asyncio
+async def test_apply_markers_deletes_removed(compute_project, manager):
+    # Reconcile: a marker no longer in nio.markers is deleted from uBridge
+    # (filter + registry), not left as an orphan still matching packets.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._ubridge_hypervisor = MagicMock()
+    node._ubridge_hypervisor.is_running.return_value = True
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+    node._marker_specs["m", "L1"] = {"bpf": "icmp", "enabled": True}
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {}  # marker removed
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.unregister = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    cmds = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert any("delete_packet_filter VPCS-10 m" in c for c in cmds)
+    assert ("m", "L1") not in node._marker_filter_bridges
+    assert ("m", "L1") not in node._marker_specs
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_rebuilds_changed_bpf(compute_project, manager):
+    # Reconcile: a marker whose bpf changed is rebuilt (delete + re-add), so
+    # uBridge ends up with the new expression — not the stale original.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._ubridge_hypervisor = MagicMock()
+    node._ubridge_hypervisor.is_running.return_value = True
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+    node._marker_specs["m", "L1"] = {"bpf": "icmp", "tag": None, "direction": None,
+                                     "data_link_type": None, "enabled": True}
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {"m": {"bpf": "tcp", "tag": None, "link_id": "L1",
+                         "direction": None, "enabled": True}}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.register = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    cmds = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert any("delete_packet_filter VPCS-10 m" in c for c in cmds)   # old removed
+    assert any("add_packet_filter VPCS-10 m mark" in c and "tcp" in c for c in cmds)  # new added
+
+
+@pytest.mark.asyncio
+async def test_apply_markers_preserves_markers_on_other_bridges(compute_project, manager):
+    # Regression: reconciling one NIO must not delete markers installed on this
+    # node's OTHER bridges/NIOs. _marker_filter_bridges is node-wide, but
+    # `desired` only carries the current NIO's markers — the delete pass must be
+    # scoped to the current bridge, or updating one link wipes every other link's
+    # markers + pcaps.
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node._ubridge_send = AsyncioMagicMock()
+    node._ubridge_hypervisor = MagicMock()
+    node._ubridge_hypervisor.is_running.return_value = True
+    # Two links, each with a marker on its own bridge:
+    node._marker_filter_bridges["m", "L1"] = "VPCS-10"
+    node._marker_specs["m", "L1"] = {"bpf": "icmp", "enabled": True}
+    node._marker_filter_bridges["m", "L2"] = "VPCS-20"
+    node._marker_specs["m", "L2"] = {"bpf": "tcp", "enabled": True}
+    # Update only the VPCS-10 NIO; "m" is gone from this link — but the marker
+    # on VPCS-20 (L2) must survive untouched.
+    nio = NIOUDP(1234, "127.0.0.1", 4321)
+    nio.markers = {}
+    with patch("gns3server.compute.marker.marker_manager.MarkerManager") as mm:
+        mm.instance.return_value.unregister = MagicMock()
+        await node._ubridge_apply_markers("VPCS-10", nio)
+    cmds = [c.args[0] for c in node._ubridge_send.call_args_list]
+    assert any("delete_packet_filter VPCS-10 m" in c for c in cmds)   # L1 removed on its bridge
+    assert not any("VPCS-20" in c for c in cmds)                      # other bridge untouched
+    assert ("m", "L1") not in node._marker_filter_bridges
+    assert ("m", "L2") in node._marker_filter_bridges                 # L2 preserved
+
+
+@pytest.mark.asyncio
 async def test_stop_ubridge_clears_marker_bridges(compute_project, manager):
     # uBridge stopping drops every marker filter — the map must clear so the next
     # apply re-installs them instead of skipping as "already installed".

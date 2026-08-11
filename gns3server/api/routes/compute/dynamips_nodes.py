@@ -64,7 +64,6 @@ async def create_router(project_id: UUID, node_data: schemas.DynamipsCreate) -> 
 
     dynamips_manager = Dynamips.instance()
     platform = node_data.platform
-    print(node_data.chassis, platform in DEFAULT_CHASSIS)
     if not node_data.chassis and platform in DEFAULT_CHASSIS:
         chassis = DEFAULT_CHASSIS[platform]
     else:
