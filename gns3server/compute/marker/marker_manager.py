@@ -17,6 +17,7 @@
 
 import asyncio
 import logging
+import socket
 
 from gns3server.compute.marker.marker_listener import MarkerListener
 from gns3server.compute.notification_manager import NotificationManager
@@ -75,10 +76,20 @@ class MarkerManager:
             return
         loop = asyncio.get_running_loop()
         self._listener = MarkerListener(self)
+
+        def _configure_transport(transport):
+            sock = transport.get_extra_info("socket")
+            if sock is not None:
+                # Raise the UDP receive buffer from the default ~208 KB to 8 MB
+                # so that 1000+ uBridge processes can burst marker.match signals
+                # without kernel-side datagram loss.
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+
         try:
             self._transport, _ = await loop.create_datagram_endpoint(
                 lambda: self._listener, local_addr=(host, port)
             )
+            _configure_transport(self._transport)
         except OSError:
             if port != 0:
                 log.warning(
@@ -88,6 +99,7 @@ class MarkerManager:
                     self._transport, _ = await loop.create_datagram_endpoint(
                         lambda: self._listener, local_addr=(host, 0)
                     )
+                    _configure_transport(self._transport)
                 except OSError as e:
                     log.error(
                         "Marker listener startup failed: %s. Traffic insight signals are unavailable.", e
