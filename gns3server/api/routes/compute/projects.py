@@ -167,6 +167,65 @@ async def _add_nio_binding(node, adapter_number, port_number, nio):
         )
 
 
+def _get_existing_nio(node, adapter_number, port_number):
+    """
+    Fetch the already-bound NIO for a port, preserving its UDP endpoints
+    (lport/rhost/rport) so a marker/filter update only changes markers/filters.
+    Dispatch keys off the manager class name, mirroring _add_nio_binding.
+    """
+
+    manager_name = type(node.manager).__name__
+    if manager_name in ("Docker", "Qemu", "VMware", "VirtualBox"):
+        return node.get_nio(adapter_number)
+    elif manager_name == "IOU":
+        return node.get_nio(adapter_number, port_number)
+    elif manager_name in ("VPCS", "Builtin"):
+        return node.get_nio(port_number)
+    elif manager_name == "Dynamips":
+        # Dynamips routers expose NIOs via the slot/adapter; switches/hubs
+        # via get_nio(port).
+        if hasattr(node, "get_nio"):
+            import inspect as _inspect
+            if len(_inspect.signature(node.get_nio).parameters) >= 2:
+                return node.get_nio(adapter_number, port_number)
+            return node.get_nio(port_number)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Dynamips node '{node.name}' has no get_nio for batch update",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Batch NIO update not supported for node type '{manager_name}'",
+    )
+
+
+async def _update_nio_binding(node, adapter_number, port_number, nio):
+    """
+    Re-apply a NIO binding (filters + markers) to a started node's uBridge.
+    Dispatch keys off the manager class name, mirroring _add_nio_binding.
+    """
+
+    manager_name = type(node.manager).__name__
+    if manager_name in ("Docker", "Qemu", "VMware", "VirtualBox"):
+        await node.adapter_update_nio_binding(adapter_number, nio)
+    elif manager_name == "IOU":
+        await node.adapter_update_nio_binding(adapter_number, port_number, nio)
+    elif manager_name == "VPCS":
+        await node.port_update_nio_binding(port_number, nio)
+    elif manager_name == "Dynamips":
+        if hasattr(node, "slot_update_nio_binding"):
+            await node.slot_update_nio_binding(adapter_number, port_number, nio)
+        else:
+            await node.update_nio(port_number, nio)
+    elif manager_name == "Builtin":
+        await node.update_nio(port_number, nio)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch NIO update not supported for node type '{manager_name}'",
+        )
+
+
 @router.post(
     "/projects/{project_id}/nios/batch",
     status_code=status.HTTP_201_CREATED,
@@ -200,6 +259,37 @@ async def create_batch_nios(
         await _add_nio_binding(node, entry.adapter_number, entry.port_number, nio)
         added += 1
     return {"added": added}
+
+
+@router.put(
+    "/projects/{project_id}/nios/batch",
+    status_code=status.HTTP_200_OK,
+)
+async def update_batch_nios(
+        project_id: UUID,
+        batch: schemas.BatchNIOCreate,
+        project: Project = Depends(dep_project),
+) -> dict:
+    """
+    Update many NIO bindings (filters + markers) across nodes in a single
+    request, re-applying them to uBridge on started nodes.
+
+    Used by the controller when a project-level marker definition changes and
+    must fan out to every affected link — replacing one PUT /nio round-trip per
+    link end with one round-trip per compute. Each entry fetches the already-
+    bound NIO (preserving its UDP endpoints), overlays the new markers/filters,
+    and re-binds it.
+    """
+
+    updated = 0
+    for entry in batch.nios:
+        node = project.get_node(entry.node_id)
+        nio = _get_existing_nio(node, entry.adapter_number, entry.port_number)
+        nio.filters = entry.nio.filters or {}
+        nio.markers = entry.nio.markers or {}
+        await _update_nio_binding(node, entry.adapter_number, entry.port_number, nio)
+        updated += 1
+    return {"updated": updated}
 
 
 @router.get("/projects/{project_id}/files", response_model=List[schemas.ProjectFile])

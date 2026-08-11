@@ -1210,17 +1210,57 @@ class Project:
         Fan out a single marker definition to every existing link in the project.
         Links that have no capable node (``_MARKER_CAPABLE_TYPES``) are silently
         skipped — the marker can only live on a uBridge bridge.
+
+        Two-phase to avoid one HTTP round-trip per link end: (1) write the
+        inherited marker into each link's memory (``memory_only`` refreshes
+        ``_link_data`` without pushing), then (2) batch-update every affected
+        NIO via a single ``PUT /projects/{id}/nios/batch`` per compute.
         """
 
         d = self._marker_definitions[def_name]
-        # dump=False: per-link topology writes are the dominant cost on large
-        # projects — the callers (create/update_marker_definition) dump once
-        # after the fan-out.
-        await self._marker_apply_concurrently(
-            list(self._links.values()),
-            lambda link: link.inherit_marker(def_name, d, dump=False),
-            lambda link, e: f"Marker definition '{def_name}' could not be applied to link {link.id}: {e}",
-        )
+        affected = []
+        for link in self._links.values():
+            try:
+                await link.inherit_marker(def_name, d, dump=False, memory_only=True)
+                affected.append(link)
+            except ControllerError as e:
+                log.warning("Marker definition '%s' could not be applied to link %s: %s", def_name, link.id, e)
+        await self._batch_update_link_nios(affected)
+
+    async def _batch_update_link_nios(self, links):
+        """
+        Push the current ``_link_data`` (markers/filters) of *links* to their
+        computes in one ``PUT /projects/{id}/nios/batch`` per compute — replacing
+        one PUT /nio round-trip per link end. Started nodes re-apply uBridge;
+        stopped nodes update in memory.
+        """
+
+        per_compute = {}
+        for link in links:
+            if len(link._link_data) < 2:
+                continue
+            for i, side in enumerate(link._nodes):
+                node = side["node"]
+                per_compute.setdefault(node.compute, []).append(
+                    {
+                        "node_id": node.id,
+                        "adapter_number": side["adapter_number"],
+                        "port_number": side["port_number"],
+                        "nio": link._link_data[i],
+                    }
+                )
+
+        async def _dispatch(compute, entries):
+            await compute.put(
+                f"/projects/{self._id}/nios/batch",
+                data={"nios": entries},
+                timeout=300,
+            )
+
+        if per_compute:
+            await asyncio.gather(
+                *[_dispatch(c, n) for c, n in per_compute.items()]
+            )
 
     async def apply_defs_to_new_link(self, link):
         """

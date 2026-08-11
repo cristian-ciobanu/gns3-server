@@ -407,7 +407,7 @@ class UDPLink(Link):
         # explicitly deletes a marker via the REST API, and a marker is torn
         # down automatically only when its link is deleted.
 
-    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True):
+    async def start_marker(self, name, bpf, tag=None, direction=None, data_link_type="DLT_EN10MB", capture_node_id=None, color=None, highlight_duration=None, enabled=True, inherited_from=None, dump=True, memory_only=False):
         """
         Attach a traffic-insight marker to this link.
 
@@ -463,6 +463,12 @@ class UDPLink(Link):
         if inherited_from:
             marker_entry["inherited_from"] = inherited_from
         self._markers[name] = marker_entry
+        if memory_only:
+            # Project-open prepare / marker-def fan-out: only refresh the
+            # in-memory NIO specs so a later batch dispatch carries the new
+            # markers — no per-link update HTTP, notification or dump.
+            self._refresh_link_data()
+            return
         if self._created:
             await self.update()
         self._project.emit_notification("link.updated", self.asdict())
@@ -470,6 +476,26 @@ class UDPLink(Link):
         # 500-link project are the dominant cost — the caller dumps once after.
         if dump:
             self._project.dump()
+
+    def _refresh_link_data(self):
+        """
+        Recompute the filters / markers / suspend fields of ``_link_data`` from
+        the current link state without pushing to computes. Used by the
+        memory-only marker path so a batch dispatch picks up the new markers.
+        """
+
+        if len(self._link_data) < 2:
+            return
+        node1 = self._nodes[0]["node"]
+        node2 = self._nodes[1]["node"]
+        node1_filters, node2_filters = self._get_node_filters(node1, node2)
+        node1_markers, node2_markers = self._get_node_markers(node1, node2)
+        self._link_data[0]["filters"] = node1_filters
+        self._link_data[0]["markers"] = node1_markers
+        self._link_data[0]["suspend"] = self._suspended
+        self._link_data[1]["filters"] = node2_filters
+        self._link_data[1]["markers"] = node2_markers
+        self._link_data[1]["suspend"] = self._suspended
 
     async def stop_marker(self, name, inherited=False, dump=True):
         """

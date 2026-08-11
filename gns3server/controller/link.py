@@ -114,7 +114,7 @@ class Link:
         """
         return self._markers
 
-    async def inherit_marker(self, def_name, marker_def, dump=True):
+    async def inherit_marker(self, def_name, marker_def, dump=True, memory_only=False):
         """
         Apply a project-level marker definition to this link.
 
@@ -148,6 +148,7 @@ class Link:
             enabled=not marker_def.get("paused", False),
             inherited_from=def_name,
             dump=dump,
+            memory_only=memory_only,
         )
 
     def _persist_markers(self):
