@@ -245,21 +245,36 @@ async def create_batch_nios(
     binding in memory; started nodes additionally wire uBridge.
     """
 
-    added = 0
+    # Group entries by node so different nodes' uBridge processes are wired
+    # in parallel (each node has its own AF_UNIX socket). Within a node
+    # entries are serial to respect the per-node uBridge command lock.
+    # This is what makes builtin L2 nodes (ethernet_switch/hub/cloud/nat)
+    # start their uBridge concurrently during project open instead of one
+    # at a time (~0.5s each for fork + socket connect).
+    per_node = {}
     for entry in batch.nios:
-        node = project.get_node(entry.node_id)
-        nio_settings = jsonable_encoder(entry.nio, exclude_unset=True)
-        # Dynamips.create_nio(self, node, nio_settings) is async and takes an
-        # extra positional 'node'.  Detect via bound-method parameter count:
-        # standard == 1, Dynamips == 2.  Await the async variant.
+        per_node.setdefault(entry.node_id, []).append(entry)
+
+    async def _create_one_node(node_id, entries):
+        node = project.get_node(node_id)
+        # Dynamips.create_nio(self, node, nio_settings) is async and takes
+        # an extra positional 'node'; other managers' create_nio(nio_settings)
+        # is synchronous. Detect once per node via bound-method parameter
+        # count (standard == 1, Dynamips == 2) and await the async variant.
         sig = inspect.signature(node.manager.create_nio)
-        if len(sig.parameters) >= 2:
-            nio = await node.manager.create_nio(node, nio_settings)
-        else:
-            nio = node.manager.create_nio(nio_settings)
-        await _add_nio_binding(node, entry.adapter_number, entry.port_number, nio)
-        added += 1
-    return {"added": added}
+        dynamips_style = len(sig.parameters) >= 2
+        for entry in entries:
+            nio_settings = jsonable_encoder(entry.nio, exclude_unset=True)
+            if dynamips_style:
+                nio = await node.manager.create_nio(node, nio_settings)
+            else:
+                nio = node.manager.create_nio(nio_settings)
+            await _add_nio_binding(node, entry.adapter_number, entry.port_number, nio)
+
+    await asyncio.gather(
+        *[_create_one_node(nid, ents) for nid, ents in per_node.items()]
+    )
+    return {"added": len(batch.nios)}
 
 
 @router.put(
