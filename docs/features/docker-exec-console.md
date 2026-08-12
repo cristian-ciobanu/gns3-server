@@ -43,12 +43,47 @@ they stay host-side configuration.
 | `GNS3_INTERFACE_NAMES=mgmt0,e1-1,e1-2,e1-3` | Rename the injected interfaces in adapter order instead of the default `eth{N}`. SR Linux expects `mgmt0` + `e1-N`; without this it does not recognise its datapath. |
 | `GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli` | Command run by the `docker_exec` console inside the container. |
 
+## Architecture: `VendorDockerVM` subclass
+
+All vendor-specific logic lives in a `VendorDockerVM(DockerVM)` subclass in
+`gns3server/compute/docker/vendor_docker_vm.py` — `docker_vm.py` itself stays
+on its baseline behaviour and is never touched by this feature.
+
+`DockerVM` exposes four small extension hooks (pure refactorings, zero
+behaviour change for existing nodes):
+
+| Hook | Baseline behaviour | `VendorDockerVM` override |
+|------|--------------------|---------------------------|
+| `_prepare_init_and_interface_env(params)` | prepend `/gns3/init.sh`, set `GNS3_MAX_ETHERNET=eth{N-1}` | conditional init.sh (`GNS3_SKIP_INIT`), `GNS3_MAX_ETHERNET` follows the interface rename |
+| `_start_console_server()` | telnet/ssh/http console dispatch | adds the `docker_exec` branch |
+| `_get_container_ifname(adapter_number)` | `eth{N}` | `GNS3_INTERFACE_NAMES` lookup, fallback `eth{N}` |
+| `_cleanup_console_resources()` | no-op | closes the docker-exec pty socket before restart/stop |
+
+### Class selection
+
+The Docker manager picks the class per node in `Docker.create_node()`
+(`gns3server/compute/docker/__init__.py`):
+
+```python
+def _select_node_class(self, **kwargs):
+    if kwargs.get("console_type") == "docker_exec":
+        return VendorDockerVM
+    return DockerVM
+```
+
+`console_type == "docker_exec"` is the **only** trigger — every other console
+type (telnet, vnc, ssh, http, …) keeps using the unmodified `DockerVM`. All
+vendor features are opt-in: without the `GNS3_*` environment variables a
+`VendorDockerVM` instance behaves identically to `DockerVM` (init.sh still
+runs, interfaces stay `eth{N}`, the exec command defaults to `/bin/sh`), so a
+regular container can use `docker_exec` too.
+
 ## The `docker_exec` console type
 
 Setting `console_type: "docker_exec"` makes the node's primary console port run
 `_start_docker_exec_console()` instead of the attach-to-PID-1 path.
 
-### Architecture
+### Console architecture
 
 ```mermaid
 graph LR
@@ -67,7 +102,8 @@ behaves.
 
 ### Implementation
 
-**File**: `gns3server/compute/docker/docker_vm.py` — `_start_docker_exec_console()`
+**File**: `gns3server/compute/docker/vendor_docker_vm.py` —
+`_start_docker_exec_console()`
 
 A small subclass `_LazyExecTelnetServer(AsyncioTelnetServer)` implements the
 console. Key points:
@@ -88,7 +124,13 @@ console. Key points:
    CLI"* otherwise), and `Env: ["TERM=xterm"]` (the TUI library needs a
    recognised terminal).
 
-3. **Hijacked raw-HTTP start.** The exec is started with
+3. **while-true wrapper.** The command is wrapped in
+   `sh -c "while true; do <cmd>; done"` so that when the CLI exits (user types
+   `quit`, or the NOS's own idle timeout logs the session out), a fresh CLI
+   instance starts in the same pty instead of killing the shared console
+   session.
+
+4. **Hijacked raw-HTTP start.** The exec is started with
    `POST exec/{eid}/start` sent as a raw HTTP upgrade over the Docker unix
    socket (`asyncio.open_unix_connection`), the same approach docker-py uses.
    This is required because aiohttp's websocket client (`ws_connect`) is
@@ -96,11 +138,11 @@ console. Key points:
    upgrade succeeds (101). With `Tty:true` the response body is a raw,
    non-multiplexed bidirectional pty byte stream — no frame demux needed.
 
-4. **NAWS → exec resize.** The telnet server runs with `naws=True`; the
+5. **NAWS → exec resize.** The telnet server runs with `naws=True`; the
    `window_size_changed_callback` calls `POST exec/{eid}/resize?h=&w=` so the
    TUI lays out for the xterm.js window size.
 
-5. **Binary passthrough + redraw.** `binary=True` so TUI escape sequences reach
+6. **Binary passthrough + redraw.** `binary=True` so TUI escape sequences reach
    xterm.js intact; `echo=False` (the pty echoes). On every client (re)connect
    a `Ctrl-L` (`\x0c`) is sent to the pty so a TUI that already drew its
    screen for a previous client redraws for the new one (otherwise a
@@ -147,9 +189,62 @@ The exec-API approach fixes all of these: a real pty (`Tty:true`), a real size
 
 ### Persistent state
 
-For SR Linux, persist `/etc/opt/srlinux` (config / AAA users / TLS certs) by
-adding it to the node's `extra_volumes`. `/var/opt/srlinux` does **not** exist
-on current SR Linux images; `/var/log/srlinux` holds logs (optional).
+For SR Linux, persist `/etc/opt/srlinux` (config / AAA users / TLS certs) and
+`/var/log/srlinux` (logs, optional) by adding them to the node's
+`extra_volumes`. The image also declares its own `VOLUME` directories
+(e.g. `/opt/srlinux/appmgr`), which GNS3 persists automatically.
+
+## Volume persistence with `GNS3_SKIP_INIT`
+
+This is the one place where skipping init.sh changes behaviour beyond boot:
+`/gns3/init.sh` normally performs the volume-persistence bridge, and without it
+**nothing writes through to the host** — the container writes to its overlay
+filesystem and the data is lost on stop.
+
+The bridge (see init.sh lines 35–52) has two parts:
+
+```
+host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always mounted)
+                                  │  init.sh: mount --bind
+                                  ▼
+                              /etc/opt/srlinux               (where the NOS writes)
+```
+
+`VendorDockerVM` replicates this for SKIP_INIT containers:
+
+1. **`_setup_skip_init_volumes()`** — runs once per start, right after the
+   container is up (`VendorDockerVM.start()`). For each persistent volume it
+   `docker exec`s a busybox script that:
+   - seeds the host directory with the container's original files on first
+     start (`cp -a` + `.gns3_perms` marker), exactly like init.sh;
+   - `mount --bind /gns3volumes<path> <path>` to bridge persistent storage
+     back to the in-container path — on subsequent starts the persisted data
+     replaces the fresh overlay content;
+   - restores the permissions recorded in `.gns3_perms` at the previous stop
+     (best-effort).
+
+2. **Host-side `_fix_permissions()` override** — `DockerVM._fix_permissions`
+   is container-side (busybox via `docker exec`) and restarts an exited
+   container just to chown; after a restart the `mount --bind` bridge is gone,
+   so it would fix the overlay copy and not the host files. The override
+   instead walks the host-side directories under the node's project directory
+   directly (they *are* the Docker bind-mount sources), records
+   `mode:uid:gid:path` into `.gns3_perms` and chowns to the GNS3 user —
+   no running container required, no restart. It runs both at start (so the
+   controller can read project files while the node runs) and at stop.
+
+> Rootful-Docker assumption: the `.gns3_perms` uid/gid values are recorded from
+> the host's view. With rootful Docker (no userns remap) in-container and host
+> ids coincide, so restore semantics are identical to init.sh's. This would
+> need revisiting for userns-remapped daemons.
+
+### Lifecycle summary
+
+| Phase | Normal Docker node | `VendorDockerVM` + `GNS3_SKIP_INIT` |
+|-------|--------------------|--------------------------------------|
+| start | init.sh seeds + bind-mounts + restores perms (in-container, before the app starts) | `docker exec` after start: seed + bind-mount + restore perms; then host-side chown |
+| stop | container-side `_fix_permissions` (restarts an exited container) | host-side `_fix_permissions` (no container needed) |
+| volume config | identical `_mount_binds` (host → `/gns3volumes<path>`) | identical |
 
 ## Troubleshooting
 
@@ -180,23 +275,51 @@ on current SR Linux images; `/var/log/srlinux` holds logs (optional).
   network-instance before ping works. This is SR Linux behaviour, not a GNS3
   issue.
 
+**7. "Session has been idle, will logout in 300 seconds" → Connection closed**
+- SR Linux's own CLI idle timeout. The while-true wrapper restarts the CLI
+  automatically, but to keep a permanent session disable the timeout in the
+  CLI: `enter candidate` → `/system cli idle-timeout disable` → `commit now`.
+
+**8. Controller logs `Permission denied` reading files under the node's
+   project directory while the node runs**
+- Root-written files inside a persistent volume. The host-side
+  `_fix_permissions` pass runs at start (fixes the seeded files) and at stop;
+  files created by the container *during* runtime become readable after the
+  next stop.
+
+**9. Persistent volume empty on the host after `save` + stop**
+- Ensure `GNS3_SKIP_INIT=1` is set (so the host-side bridge path is taken) and
+  the volume path is in `extra_volumes`; check the compute log for
+  `Volume '<path>' bound to persistent storage`.
+
 ## Limitations
 
 1. **Shared session (broadcast).** All console clients share one CLI session
    and can see each other's input — identical to GNS3's existing primary
    console model. There is no per-client independent session.
 2. **`reset_console` not wired.** The console-reset action only handles
-  `telnet`/`ssh`; it is a no-op for `docker_exec` (non-blocking; reconnect
-  works fine).
+   `telnet`/`ssh`; it is a no-op for `docker_exec` (non-blocking; reconnect
+   works fine).
 3. **Prototype knobs.** `GNS3_SKIP_INIT` / `GNS3_INTERFACE_NAMES` /
-  `GNS3_CONSOLE_CMD` are environment-driven; they are not yet first-class node
-  schema fields and are not declared in the appliance (`gns3a`) schema.
+   `GNS3_CONSOLE_CMD` are environment-driven; they are not yet first-class node
+   schema fields and are not declared in the appliance (`gns3a`) schema.
+4. **Rootful-Docker assumption** for the host-side `.gns3_perms` recording
+   (see the volume-persistence section).
+5. **Post-boot volume bridge.** The bind-mount bridge is established after the
+   vendor entrypoint has started (init.sh would do it before). A NOS that
+   strictly requires its persisted files at its very first read may need a
+   different boot arrangement.
 
 ## References
 
-- `gns3server/compute/docker/docker_vm.py` — `_start_docker_exec_console`,
-  `_LazyExecTelnetServer`, `_add_ubridge_connection` (interface rename),
-  `create()` (env parsing, skip-init, `GNS3_MAX_ETHERNET`).
+- `gns3server/compute/docker/vendor_docker_vm.py` — `VendorDockerVM`:
+  `_start_docker_exec_console`, `_LazyExecTelnetServer`,
+  `_setup_skip_init_volumes`, host-side `_fix_permissions`, `start()`.
+- `gns3server/compute/docker/docker_vm.py` — `DockerVM` extension hooks
+  (`_prepare_init_and_interface_env`, `_start_console_server`,
+  `_get_container_ifname`, `_cleanup_console_resources`).
+- `gns3server/compute/docker/__init__.py` — `Docker._select_node_class` /
+  `create_node` factory.
 - `gns3server/compute/base_node.py` — console WebSocket guard.
 - `gns3server/schemas/common.py` — `ConsoleType.docker_exec`.
 - containerlab `nodes/srl/srl.go` — reference for SR Linux launch command and
@@ -206,4 +329,5 @@ on current SR Linux images; `/var/log/srlinux` holds logs (optional).
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-08-12 | Refactor: vendor logic extracted from `DockerVM` into `VendorDockerVM` subclass with 4 hook points + class-selection factory. Add SKIP_INIT volume persistence (`_setup_skip_init_volumes` + host-side `_fix_permissions`) and lifecycle comparison. Add troubleshooting entries for idle timeout and permission-denied files. |
 | 1.0 | 2026-08-12 | Initial documentation of the `docker_exec` console and vendor NOS knobs. |

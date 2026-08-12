@@ -29,6 +29,8 @@ container behaves identically to DockerVM.
 import asyncio
 import json
 import logging
+import os
+import stat
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.compute.docker.docker_vm import DockerVM
@@ -119,6 +121,80 @@ class VendorDockerVM(DockerVM):
         await super().start()
         if self.status == "started" and not self._gns3_init:
             await self._setup_skip_init_volumes()
+            # Fix host-side ownership of the seeded volume right away so the
+            # controller can read project files while the node runs. Reset the
+            # "fixed" flag afterwards: files written by the container during
+            # runtime still need the stop-time pass.
+            await self._fix_permissions()
+            self._permissions_fixed = False
+
+    async def _fix_permissions(self):
+        """
+        Host-side override of DockerVM._fix_permissions for SKIP_INIT
+        containers. The persistent volumes are Docker bind mounts of
+        directories under the node's project directory, so ownership is fixed
+        directly on the host — no docker exec, no container restart required
+        (the base implementation restarts an exited container just to chown,
+        which is wasteful for vendor NOS images).
+
+        Two passes per volume, mirroring the base/busybox behaviour:
+
+        1. record each entry's container-visible mode/uid/gid into
+           `.gns3_perms` (same `mode:uid:gid:path` format init.sh consumes,
+           paths are in-container absolute so the restore inside the
+           container resolves them);
+        2. chmod u+rX + chown to the host user so the GNS3 process can read
+           and delete files from the project directory.
+        """
+        uid, gid = os.getuid(), os.getgid()
+        for volume in self._volumes:
+            path = os.path.join(self.working_dir, os.path.relpath(volume, "/"))
+            if not os.path.isdir(path):
+                continue
+
+            def onerror(exc):
+                log.debug("Could not walk '%s' for container '%s': %s", exc.filename, self._name, exc)
+
+            # 1. record container-visible permissions for restore at next start
+            try:
+                with open(os.path.join(path, ".gns3_perms"), "w") as perms_file:
+                    for root, dirs, files in os.walk(path, onerror=onerror):
+                        for entry in dirs + files:
+                            entry_path = os.path.join(root, entry)
+                            try:
+                                st = os.lstat(entry_path)
+                            except OSError:
+                                continue
+                            container_path = os.path.join(volume, os.path.relpath(entry_path, path))
+                            perms_file.write(
+                                f"{stat.S_IMODE(st.st_mode):o}:{st.st_uid}:{st.st_gid}:{container_path}\n"
+                            )
+            except OSError as e:
+                log.warning(
+                    "Could not record permissions for '%s' on container '%s': %s", path, self._name, e
+                )
+                continue
+
+            # 2. chmod u+rX + chown to the host user
+            for root, dirs, files in os.walk(path, onerror=onerror):
+                for entry in dirs + files:
+                    entry_path = os.path.join(root, entry)
+                    try:
+                        st = os.lstat(entry_path)
+                        is_link = stat.S_ISLNK(st.st_mode)
+                        if not is_link:
+                            mode = stat.S_IMODE(st.st_mode)
+                            new_mode = mode | 0o400  # u+r
+                            if stat.S_ISDIR(st.st_mode) or (mode & 0o111):  # u+X
+                                new_mode |= 0o100
+                            os.chmod(entry_path, new_mode)
+                        os.lchown(entry_path, uid, gid)
+                    except OSError as e:
+                        log.debug(
+                            "Could not fix permissions on '%s' for container '%s': %s",
+                            entry_path, self._name, e,
+                        )
+        self._permissions_fixed = True
 
     async def _setup_skip_init_volumes(self):
         """
