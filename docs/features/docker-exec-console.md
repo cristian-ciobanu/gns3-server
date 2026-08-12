@@ -249,6 +249,42 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 | stop | container-side `_fix_permissions` on in-container paths (restarts an exited container) | container-side `_fix_permissions` on `/gns3volumes` paths (skips dead containers, no restart) |
 | volume config | identical `_mount_binds` (host → `/gns3volumes<path>`) | identical |
 
+### Runtime ownership safety
+
+The start-time fix pass chowns the volume files to the host user **while the
+container is running** — a deliberate deviation from the standard model, where
+init.sh restores container-native ownership at start and the container never
+sees host-owned files during runtime. Verified harmless for SR Linux:
+
+1. **Most processes run as root** (`sr_linux`, appmgr) — root ignores file
+   ownership entirely.
+2. **Self-healing daemons.** SR Linux's `aaamgr` rewrites its managed files
+   with its own ownership at boot: after the start-time pass chowned
+   `etc/opt/srlinux/aaamgr_local_user.json` to the host user, the daemon
+   re-created it as `srlinux:srlinux` (uid 1002, mode 700) within seconds.
+3. **ACL-based access.** The directory carries a default ACL
+   (`default:group:srlinux:rwx`, `default:other::rwx`), so named group ACL
+   entries grant access independently of the owner uid; the observed file ACL
+   (`group:srlinux:rwx`, owner `srlinux`) survives chown.
+
+Caveat: a NOS that strictly validates ownership of its files (e.g. "SSH keys
+must be root:root 600 or refuse to start") would not tolerate this. If that
+ever matters, drop the start-time pass and keep only the stop-time one
+(standard behaviour — the trade-off is mid-run `Permission denied` in the
+file browser, identical to regular Docker nodes).
+
+### Boot-ordering caveat
+
+The volume bridge (`mount --bind`) is established **after** the vendor
+entrypoint has started (there is no init.sh to do it before), so the NOS's
+early boot reads the overlay copy of the volume paths — default image
+content, not the persisted data. Whether the persisted config takes effect
+depends on the NOS re-reading those files after the bridge is up (SR Linux's
+daemons do re-read/write their managed files during boot, as observed).
+Always verify the closed loop when adopting a new image: `save` a config →
+stop the node → start it → confirm the config is actually applied, not just
+present on the host.
+
 ## Troubleshooting
 
 **1. Console shows only boot logs, no CLI**
@@ -308,6 +344,14 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
   the volume path is in `extra_volumes`; check the compute log for
   `Volume '<path>' bound to persistent storage`.
 
+**10. Persisted config present on the host but not applied after restart**
+- The volume bridge is established after the NOS has booted (see
+  *Boot-ordering caveat*); the NOS may have already loaded the overlay's
+  default config into memory. Verify with a visible change (hostname,
+  interface description): `save` → stop → start → check the change took
+  effect. If it does not, the image needs the bridge earlier (a
+  vendor-specific entrypoint wrapper, not covered by this prototype).
+
 ## Limitations
 
 1. **Shared session (broadcast).** All console clients share one CLI session
@@ -325,7 +369,7 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 5. **Post-boot volume bridge.** The bind-mount bridge is established after the
    vendor entrypoint has started (init.sh would do it before). A NOS that
    strictly requires its persisted files at its very first read may need a
-   different boot arrangement.
+   different boot arrangement (see *Boot-ordering caveat*).
 
 ## References
 
@@ -347,6 +391,7 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-08-12 | Document runtime ownership safety (root processes, self-healing daemons, ACL evidence for SR Linux), the boot-ordering caveat (bridge after boot → verify save/stop/start closed loop), and troubleshooting #10. |
 | 1.2 | 2026-08-12 | `_fix_permissions` rewritten: container-side (as root) on the `/gns3volumes` bind-mount targets instead of host-side — host-side chown cannot touch root-owned files when GNS3 is unprivileged. Dead containers are skipped instead of restarted. |
 | 1.1 | 2026-08-12 | Refactor: vendor logic extracted from `DockerVM` into `VendorDockerVM` subclass with 4 hook points + class-selection factory. Add SKIP_INIT volume persistence (`_setup_skip_init_volumes` + `_fix_permissions`) and lifecycle comparison. Add troubleshooting entries for idle timeout and permission-denied files. |
 | 1.0 | 2026-08-12 | Initial documentation of the `docker_exec` console and vendor NOS knobs. |
