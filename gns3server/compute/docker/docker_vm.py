@@ -1025,7 +1025,7 @@ class DockerVM(BaseNode):
                         "Tty": True,
                         "User": "root",
                         "Env": ["TERM=xterm"],
-                        "Cmd": shlex.split(command),
+                        "Cmd": ["sh", "-c", f"while true; do {command}; done"],
                     },
                 )
                 srv._exec_id = result["Id"]
