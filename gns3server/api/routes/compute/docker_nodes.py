@@ -81,6 +81,15 @@ async def create_docker_node(project_id: UUID, node_data: schemas.DockerCreate) 
         memory=node_data.get("memory", 0),
         cpus=node_data.get("cpus", 0),
     )
+    # Pop keys already consumed by create_node above so the setattr
+    # fallback loop below only applies truly extra keys and does not
+    # re-trigger console/aux port setter logging.
+    for key in (
+        "console", "console_type", "console_resolution", "console_http_port",
+        "console_http_path", "aux", "aux_type", "start_command", "environment",
+        "adapters", "mac_address", "extra_hosts", "extra_volumes", "memory", "cpus",
+    ):
+        node_data.pop(key, None)
     for name, value in node_data.items():
         if name != "node_id":
             if hasattr(container, name) and getattr(container, name) != value:
