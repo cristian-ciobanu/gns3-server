@@ -520,7 +520,7 @@ class BaseNode:
             log.warning(f"Cannot open console WebSocket: node {self.name} is not started")
             return
 
-        if self._console_type not in ("telnet", "ssh"):
+        if self._console_type not in ("telnet", "ssh", "docker_exec"):
             await websocket.close(code=1000)
             log.warning(
                 f"Cannot open console WebSocket: node {self.name} console type '{self._console_type}' "

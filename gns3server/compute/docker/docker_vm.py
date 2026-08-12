@@ -433,6 +433,16 @@ class DockerVM(BaseNode):
 """.format(adapter=adapter, hostname=self._name))
         return path
 
+    def _prepare_init_and_interface_env(self, params):
+        """
+        Prepare the init-script entrypoint and GNS3_MAX_ETHERNET env var.
+        May be overridden by subclasses (e.g. VendorDockerVM) to skip init.sh
+        or rename injected interfaces.
+        """
+        params["Entrypoint"].insert(0, "/gns3/init.sh")  # FIXME /gns3/init.sh is not found?
+        # Give the information to the container on how many interface should be inside
+        params["Env"].append(f"GNS3_MAX_ETHERNET=eth{self.adapters - 1}")
+
     async def create(self):
         """
         Creates the Docker container.
@@ -494,10 +504,7 @@ class DockerVM(BaseNode):
                 params["Cmd"] = []
         if len(params["Cmd"]) == 0 and len(params["Entrypoint"]) == 0:
             params["Cmd"] = ["/bin/sh"]
-        params["Entrypoint"].insert(0, "/gns3/init.sh")  # FIXME /gns3/init.sh is not found?
-
-        # Give the information to the container on how many interface should be inside
-        params["Env"].append(f"GNS3_MAX_ETHERNET=eth{self.adapters - 1}")
+        self._prepare_init_and_interface_env(params)
         # Give the information to the container the list of volume path mounted
         params["Env"].append("GNS3_VOLUMES={}".format(":".join(self._volumes)))
 
@@ -665,6 +672,7 @@ class DockerVM(BaseNode):
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
+            self._cleanup_console_resources()
             await self._clean_servers()
 
             await self.manager.query("POST", f"containers/{self._cid}/start")
@@ -694,10 +702,7 @@ class DockerVM(BaseNode):
                             log.error(line)
                         raise DockerError(logdata)
 
-            if self.console_type in ("telnet", "ssh"):
-                await self._start_console()
-            elif self.console_type == "http" or self.console_type == "https":
-                await self._start_http()
+            await self._start_console_server()
 
             if self.aux_type != "none":
                 await self._start_aux()
@@ -709,6 +714,16 @@ class DockerVM(BaseNode):
                 name=self._name, image=self._image, console=self.console, console_type=self.console_type
             )
         )
+
+    async def _start_console_server(self):
+        """
+        Dispatch the console server start based on console_type.
+        May be overridden to add extra console types (e.g. docker_exec).
+        """
+        if self.console_type in ("telnet", "ssh"):
+            await self._start_console()
+        elif self.console_type == "http" or self.console_type == "https":
+            await self._start_http()
 
     async def _start_aux(self):
         """
@@ -1012,6 +1027,13 @@ class DockerVM(BaseNode):
         await self.manager.query("POST", f"containers/{self._cid}/restart")
         log.debug("Docker container '{name}' [{image}] restarted".format(name=self._name, image=self._image))
 
+    def _cleanup_console_resources(self):
+        """
+        Clean up console resources before restart.
+        May be overridden (e.g. VendorDockerVM closes the exec pty socket).
+        """
+        pass
+
     async def _clean_servers(self):
         """
         Clean the list of running console servers
@@ -1032,6 +1054,7 @@ class DockerVM(BaseNode):
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
+            self._cleanup_console_resources()
             await self._clean_servers()
             await self._stop_ubridge()
 
@@ -1146,6 +1169,13 @@ class DockerVM(BaseNode):
             log.debug(f"Docker error when closing: {str(e)}")
             return
 
+    def _get_container_ifname(self, adapter_number):
+        """
+        Return the interface name used inside the container for *adapter_number*.
+        May be overridden to provide custom naming (e.g. mgmt0, e1-1).
+        """
+        return f"eth{adapter_number}"
+
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Creates a connection in uBridge.
@@ -1194,12 +1224,11 @@ class DockerVM(BaseNode):
             log.warning(f"Could not set MAC address {mac_address} on interface {adapter.host_ifc}")
 
 
-        log.debug(f"Move container {self.name} adapter {adapter.host_ifc} to namespace {self._namespace}")
+        ifname = self._get_container_ifname(adapter_number)
+        log.debug(f"Move container {self.name} adapter {adapter.host_ifc} -> {ifname} in ns {self._namespace}")
         try:
             await self._ubridge_send(
-                "docker move_to_ns {ifc} {ns} eth{adapter}".format(
-                    ifc=adapter.host_ifc, ns=self._namespace, adapter=adapter_number
-                )
+                f"docker move_to_ns {adapter.host_ifc} {self._namespace} {ifname}"
             )
         except UbridgeError as e:
             raise UbridgeNamespaceError(e)

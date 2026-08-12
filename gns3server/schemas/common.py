@@ -61,6 +61,7 @@ class ConsoleType(str, Enum):
     spice = "spice"
     spice_agent = "spice+agent"
     none = "none"
+    docker_exec = "docker_exec"
 
 
 class AuxType(str, Enum):

@@ -285,6 +285,7 @@ class DockerConsoleType(str, Enum):
     http = 'http'
     https = 'https'
     none = 'none'
+    docker_exec = 'docker_exec'
 
 
 class ChecksumType(str, Enum):
@@ -630,6 +631,9 @@ class ApplianceV1_6(BaseModel):
     port_segment_size: Optional[int] = Field(
         None,
         title='Optional port segment size. A port segment is a block of port. For example Ethernet0/0 Ethernet0/1 is the module 0 with a port segment size of 2',
+    )
+    custom_adapters: Optional[List[CustomAdapterItem]] = Field(
+        None, title='Optional per-adapter overrides (port name, adapter type, MAC address)'
     )
     linked_clone: Optional[bool] = Field(None, title="False if you don't want to use a single image for all nodes")
     docker: Optional[Docker] = Field(None, title='Docker specific options')

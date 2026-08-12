@@ -32,6 +32,7 @@ from gns3server.config import Config
 from gns3server.utils.asyncio import locking
 from gns3server.compute.base_manager import BaseManager
 from gns3server.compute.docker.docker_vm import DockerVM
+from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
 from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error, DockerHttp409Error
 
 log = logging.getLogger(__name__)
@@ -58,6 +59,16 @@ class Docker(BaseManager):
         self._connector = None
         self._session = None
         self._api_version = DOCKER_MINIMUM_API_VERSION
+
+    def _select_node_class(self, **kwargs):
+        """Select the node class based on console_type."""
+        if kwargs.get("console_type") == "docker_exec":
+            return VendorDockerVM
+        return DockerVM
+
+    async def create_node(self, name, project_id, node_id, *args, **kwargs):
+        self._NODE_CLASS = self._select_node_class(**kwargs)
+        return await super().create_node(name, project_id, node_id, *args, **kwargs)
 
     @staticmethod
     async def install_busybox(dst_dir):
