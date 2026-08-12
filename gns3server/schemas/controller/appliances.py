@@ -285,6 +285,7 @@ class DockerConsoleType(str, Enum):
     http = 'http'
     https = 'https'
     none = 'none'
+    docker_exec = 'docker_exec'
 
 
 class ChecksumType(str, Enum):
