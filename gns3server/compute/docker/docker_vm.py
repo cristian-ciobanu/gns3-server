@@ -20,7 +20,6 @@ Docker container instance.
 
 import sys
 import asyncio
-import json
 import shutil
 import psutil
 import shlex
@@ -119,13 +118,6 @@ class DockerVM(BaseNode):
         self._console_websocket = None
         self._extra_hosts = extra_hosts
         self._extra_volumes = extra_volumes or []
-        # Prototype knobs for vendor NOS containers (e.g. Nokia SR Linux), parsed
-        # from GNS3_-prefixed entries in the node's environment. GNS3_-prefixed vars
-        # are not forwarded to the container, so this stays host-side only.
-        self._gns3_init = True              # GNS3_SKIP_INIT=1 -> False (use image entrypoint)
-        self._interface_names = []          # GNS3_INTERFACE_NAMES=mgmt0,e1-1,e1-2,...
-        self._console_cmd = None            # GNS3_CONSOLE_CMD=... (command for the docker_exec console)
-        self._console_exec_writer = None    # raw socket to the docker exec console (for cleanup)
         self._memory = memory
         self._cpus = cpus
         self._permissions_fixed = True
@@ -441,6 +433,16 @@ class DockerVM(BaseNode):
 """.format(adapter=adapter, hostname=self._name))
         return path
 
+    def _prepare_init_and_interface_env(self, params):
+        """
+        Prepare the init-script entrypoint and GNS3_MAX_ETHERNET env var.
+        May be overridden by subclasses (e.g. VendorDockerVM) to skip init.sh
+        or rename injected interfaces.
+        """
+        params["Entrypoint"].insert(0, "/gns3/init.sh")  # FIXME /gns3/init.sh is not found?
+        # Give the information to the container on how many interface should be inside
+        params["Env"].append(f"GNS3_MAX_ETHERNET=eth{self.adapters - 1}")
+
     async def create(self):
         """
         Creates the Docker container.
@@ -502,33 +504,7 @@ class DockerVM(BaseNode):
                 params["Cmd"] = []
         if len(params["Cmd"]) == 0 and len(params["Entrypoint"]) == 0:
             params["Cmd"] = ["/bin/sh"]
-        # Prototype: parse GNS3_-prefixed env overrides for vendor NOS containers.
-        #   GNS3_SKIP_INIT=1            -> don't prepend /gns3/init.sh (image runs its own)
-        #   GNS3_INTERFACE_NAMES=a,b,.. -> rename injected interfaces, in adapter order
-        #   GNS3_CONSOLE_CMD=<cmd>      -> command run via the "docker_exec" console type
-        if self._environment:
-            for _line in self._environment.splitlines():
-                _line = _line.strip().rstrip(",")
-                if _line.startswith("GNS3_SKIP_INIT="):
-                    # GNS3_SKIP_INIT=1 means do NOT prepend /gns3/init.sh
-                    self._gns3_init = _line.split("=", 1)[1].strip().lower() not in ("1", "true", "yes")
-                elif _line.startswith("GNS3_INTERFACE_NAMES="):
-                    self._interface_names = [
-                        n.strip() for n in _line.split("=", 1)[1].split(",") if n.strip()
-                    ]
-                elif _line.startswith("GNS3_CONSOLE_CMD="):
-                    self._console_cmd = _line.split("=", 1)[1].strip()
-
-        if self._gns3_init:
-            params["Entrypoint"].insert(0, "/gns3/init.sh")  # FIXME /gns3/init.sh is not found?
-
-        # Tell init.sh which last interface to wait for; honour the rename if any
-        # (no-op when init is skipped, but kept consistent).
-        if self._interface_names and self.adapters - 1 < len(self._interface_names):
-            last_ifname = self._interface_names[self.adapters - 1]
-        else:
-            last_ifname = f"eth{self.adapters - 1}"
-        params["Env"].append(f"GNS3_MAX_ETHERNET={last_ifname}")
+        self._prepare_init_and_interface_env(params)
         # Give the information to the container the list of volume path mounted
         params["Env"].append("GNS3_VOLUMES={}".format(":".join(self._volumes)))
 
@@ -696,9 +672,7 @@ class DockerVM(BaseNode):
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
-            if self._console_exec_writer:
-                self._console_exec_writer.close()
-                self._console_exec_writer = None
+            self._cleanup_console_resources()
             await self._clean_servers()
 
             await self.manager.query("POST", f"containers/{self._cid}/start")
@@ -728,12 +702,7 @@ class DockerVM(BaseNode):
                             log.error(line)
                         raise DockerError(logdata)
 
-            if self.console_type in ("telnet", "ssh"):
-                await self._start_console()
-            elif self.console_type == "http" or self.console_type == "https":
-                await self._start_http()
-            elif self.console_type == "docker_exec":
-                await self._start_docker_exec_console()
+            await self._start_console_server()
 
             if self.aux_type != "none":
                 await self._start_aux()
@@ -745,6 +714,16 @@ class DockerVM(BaseNode):
                 name=self._name, image=self._image, console=self.console, console_type=self.console_type
             )
         )
+
+    async def _start_console_server(self):
+        """
+        Dispatch the console server start based on console_type.
+        May be overridden to add extra console types (e.g. docker_exec).
+        """
+        if self.console_type in ("telnet", "ssh"):
+            await self._start_console()
+        elif self.console_type == "http" or self.console_type == "https":
+            await self._start_http()
 
     async def _start_aux(self):
         """
@@ -946,162 +925,6 @@ class DockerVM(BaseNode):
         except DockerError as e:
             log.warning(f"Could not resize the container TTY: {e}")
 
-    async def _start_docker_exec_console(self):
-        """
-        Start a console that runs a command inside the container via the Docker
-        exec API, bridged to a telnet server. Intended for vendor NOS containers
-        (e.g. Nokia SR Linux) whose CLI is a separate TUI process not exposed on
-        PID 1's stdio.
-
-        The exec is created with a pty (Tty:true) and started with a hijacked
-        raw HTTP request on the Docker unix socket (aiohttp's websocket client
-        cannot start a Docker exec; docker-py uses the same hijacked-HTTP
-        approach). The bidirectional byte stream is bridged to the telnet server
-        in binary mode so TUI escape sequences reach xterm.js intact, and the
-        client's terminal size (NAWS) is propagated to the exec pty via
-        `POST exec/{id}/resize`.
-
-        The exec is created lazily on the first client connection (not when the
-        node starts) so the command's startup terminal probe — e.g. sr_cli /
-        prompt_toolkit cursor-position requests (CPR) — has a real client to
-        answer it; otherwise the probe runs before any xterm.js is attached and
-        the TUI degrades. The single exec is then shared (broadcast) by all
-        clients, matching GNS3's console model. Command from GNS3_CONSOLE_CMD.
-        """
-
-        command = self._console_cmd or "/bin/sh"
-        vm = self
-        manager = self.manager
-        cid = self._cid
-
-        class _LazyExecTelnetServer(AsyncioTelnetServer):
-            """Telnet console whose docker exec (pty + command) is created on the
-            first client connection and then broadcast to all clients."""
-
-            def __init__(srv):
-                super().__init__(
-                    reader=None,
-                    writer=None,
-                    binary=True,
-                    echo=False,
-                    naws=True,
-                    window_size_changed_callback=srv._on_naws,
-                )
-                srv._exec_id = None
-                srv._started = False
-                srv._lock = asyncio.Lock()
-                srv._log_name = f"docker_exec console '{vm.name}'"
-
-            async def _on_naws(srv, columns, rows):
-                # propagate the client's terminal size to the exec pty (no-op
-                # until the exec has been created on first connect).
-                if srv._exec_id:
-                    try:
-                        await manager.query(
-                            "POST",
-                            f"exec/{srv._exec_id}/resize",
-                            params={"h": str(rows), "w": str(columns)},
-                        )
-                    except DockerError:
-                        pass
-
-            async def run(srv, network_reader, network_writer):
-                """Catch and log any exception that kills the client session."""
-                try:
-                    await super().run(network_reader, network_writer)
-                except Exception as exc:
-                    log.warning(f"{srv._log_name}: client session terminated: {exc}", exc_info=True)
-
-            async def _create_exec(srv):
-                # create exec with a pty; run as root (vendor CLIs reject the
-                # image's default unprivileged user) and export TERM=xterm.
-                result = await manager.query(
-                    "POST",
-                    f"containers/{cid}/exec",
-                    data={
-                        "AttachStdin": True,
-                        "AttachStdout": True,
-                        "AttachStderr": True,
-                        "Tty": True,
-                        "User": "root",
-                        "Env": ["TERM=xterm"],
-                        "Cmd": ["sh", "-c", f"while true; do {command}; done"],
-                    },
-                )
-                srv._exec_id = result["Id"]
-                log.info(f"{srv._log_name}: exec created ({srv._exec_id})")
-
-                # start the exec via a hijacked raw HTTP request on the Docker
-                # unix socket; with Tty:true the response body is a raw
-                # bidirectional pty byte stream (no multiplexing).
-                reader, writer = await asyncio.open_unix_connection(manager._server_url)
-                body = json.dumps({"Detach": False, "Tty": True})
-                request = (
-                    f"POST /v{manager._api_version}/exec/{srv._exec_id}/start HTTP/1.1\r\n"
-                    "Host: docker\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Upgrade: tcp\r\n"
-                    "Content-Type: application/json\r\n"
-                    f"Content-Length: {len(body)}\r\n\r\n{body}"
-                ).encode()
-                writer.write(request)
-                await writer.drain()
-                try:
-                    headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
-                except (asyncio.IncompleteReadError, asyncio.TimeoutError) as e:
-                    writer.close()
-                    raise DockerError(f"Docker exec start failed: {e}")
-                status_line = headers.split(b"\r\n", 1)[0]
-                log.info(f"{srv._log_name}: hijacked start -> {status_line.decode(errors='ignore')}")
-                if b" 101 " not in status_line and b" 200 " not in status_line:
-                    writer.close()
-                    raise DockerError(f"Docker exec start rejected: {status_line.decode(errors='ignore')}")
-
-                # wire the exec stream as this server's upstream and start the
-                # broadcast task. AsyncioTelnetServer.start() only starts the
-                # broadcast when a reader is set at construction time, so with a
-                # lazy upstream we start it manually here.
-                srv._reader = reader
-                srv._writer = writer
-                vm._console_exec_writer = writer  # for stop() cleanup
-                srv._broadcast_task = asyncio.create_task(srv._broadcast_from_upstream())
-                log.info(f"{srv._log_name}: broadcast task started, upstream wired, ready")
-
-            async def client_connected_hook(srv):
-                await super().client_connected_hook()
-                log.info(f"{srv._log_name}: client connected, lazy_started={srv._started}")
-                async with srv._lock:
-                    if not srv._started:
-                        try:
-                            await srv._create_exec()
-                        except Exception as exc:
-                            log.warning(f"{srv._log_name}: failed to create exec: {exc}", exc_info=True)
-                            raise
-                        srv._started = True
-                        try:
-                            await srv._on_naws(80, 24)  # initial size before NAWS
-                        except Exception:
-                            pass
-                # ask the TUI to (re)draw for the client that just connected.
-                if srv._writer:
-                    try:
-                        srv._writer.write(b"\x0c")  # Ctrl-L -> TUI redraws
-                        await srv._writer.drain()
-                    except Exception as exc:
-                        log.warning(f"{srv._log_name}: Ctrl-L write failed: {exc}")
-                log.info(f"{srv._log_name}: client_connected_hook done")
-
-        telnet = _LazyExecTelnetServer()
-        try:
-            self._telnet_servers.append(
-                await telnet.start(self._manager.port_manager.console_host, self.console)
-            )
-        except OSError as e:
-            raise DockerError(
-                f"Could not start console server on socket {self._manager.port_manager.console_host}:{self.console}: {e}"
-            )
-        log.debug(f"Docker container '{self.name}' started docker_exec console (lazy) on {self.console}")
-
     async def _start_console(self):
         """
         Starts streaming the console via telnet or ssh
@@ -1204,6 +1027,13 @@ class DockerVM(BaseNode):
         await self.manager.query("POST", f"containers/{self._cid}/restart")
         log.debug("Docker container '{name}' [{image}] restarted".format(name=self._name, image=self._image))
 
+    def _cleanup_console_resources(self):
+        """
+        Clean up console resources before restart.
+        May be overridden (e.g. VendorDockerVM closes the exec pty socket).
+        """
+        pass
+
     async def _clean_servers(self):
         """
         Clean the list of running console servers
@@ -1224,6 +1054,7 @@ class DockerVM(BaseNode):
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
+            self._cleanup_console_resources()
             await self._clean_servers()
             await self._stop_ubridge()
 
@@ -1338,6 +1169,13 @@ class DockerVM(BaseNode):
             log.debug(f"Docker error when closing: {str(e)}")
             return
 
+    def _get_container_ifname(self, adapter_number):
+        """
+        Return the interface name used inside the container for *adapter_number*.
+        May be overridden to provide custom naming (e.g. mgmt0, e1-1).
+        """
+        return f"eth{adapter_number}"
+
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Creates a connection in uBridge.
@@ -1386,13 +1224,7 @@ class DockerVM(BaseNode):
             log.warning(f"Could not set MAC address {mac_address} on interface {adapter.host_ifc}")
 
 
-        # Interface name inside the container netns: honour GNS3_INTERFACE_NAMES
-        # (e.g. mgmt0, e1-1 for vendor NOS containers) else default eth{N}.
-        if self._interface_names and adapter_number < len(self._interface_names):
-            ifname = self._interface_names[adapter_number]
-        else:
-            ifname = f"eth{adapter_number}"
-
+        ifname = self._get_container_ifname(adapter_number)
         log.debug(f"Move container {self.name} adapter {adapter.host_ifc} -> {ifname} in ns {self._namespace}")
         try:
             await self._ubridge_send(
