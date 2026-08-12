@@ -207,6 +207,41 @@ The exec-API approach fixes all of these: a real pty (`Tty:true`), a real size
   (`{"adapter_number": 0, "port_name": "mgmt0"}`, …). Port labels are a
   controller-side concept, independent of the compute-side interface rename.
 
+### Appliance (`gns3a`) packaging
+
+A SR Linux appliance lives in `gns3-registry/appliances/srlinux.gns3a`
+(`registry_version: 6`). It sets the full chassis — **35 adapters**
+(`mgmt0` + `e1-1`..`e1-34`) — with matching `GNS3_INTERFACE_NAMES` and 35
+`custom_adapters` entries (`mgmt0`, `e1-1`..`e1-34`) so the canvas labels,
+the kernel interface names and the `ethernet-1/N` CLI names all line up.
+
+Three appliance-schema fixes are required for this appliance to load (all on
+the gns3-server side; the registry JSON schema is unchanged because its docker
+block allows `additionalProperties`):
+
+1. **`DockerConsoleType`** (`schemas/controller/appliances.py`) must include
+   `docker_exec`, or the Pydantic appliance model rejects the file at import.
+2. **`ApplianceV1_6.custom_adapters`** must be declared on the top-level
+   appliance model, or `GET /appliances` (response_model=`schemas.Appliance`)
+   strips `custom_adapters` from the API response even though the file and the
+   server-side template conversion handle it. (Node creation still worked
+   because `appliance_to_template._add_docker_config` reads it from the raw
+   dict; only the GET response was lossy.)
+3. `extra_volumes` rides inside the `docker` block (passed through by
+   `new_config.update(appliance_config["docker"])`); no schema change needed.
+
+> **Symbol theme caveat.** An appliance `symbol` that starts with
+> `:/symbols/` is forcibly rewritten at load time
+> (`appliance_manager._load_appliances`) to the current theme's default for the
+> appliance category — so `:/symbols/affinity/circle/blue/router_cloud.svg` (or
+> `router2.svg`) becomes `:/symbols/affinity/circle/blue/router.svg`, because
+> the theme maps only the canonical name `"router"`. This is intentional: it
+> lets theme switching re-skin every node consistently. To use a non-default
+> icon (e.g. `router_cloud`), install it as a **custom symbol** under the
+> configured `symbols_path` and reference it by filename (no `:/symbols/`
+> prefix) — custom symbols do not participate in re-theming. The SR Linux
+> appliance uses `router.svg`.
+
 ### Persistent state
 
 For SR Linux, persist `/etc/opt/srlinux` (config / AAA users / TLS certs) and
@@ -422,6 +457,7 @@ present on the host.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.5 | 2026-08-13 | Add appliance (`gns3a`) packaging section: 35-adapter full-chassis design, the three server-side schema fixes (DockerConsoleType, ApplianceV1_6.custom_adapters, extra_volumes passthrough), and the symbol-theme caveat (any `:/symbols/` symbol is rewritten to the category default at load). |
 | 1.4 | 2026-08-13 | Reconnect fix: drop the while-true wrapper (it restarted the CLI with no client to answer CPR → blank screen on reconnect); the exec is now recreated on connect when the upstream has died. `_LazyExecTelnetServer` extracted to module level and unit-tested. |
 | 1.3 | 2026-08-12 | Document runtime ownership safety (root processes, self-healing daemons, ACL evidence for SR Linux), the boot-ordering caveat (bridge after boot → verify save/stop/start closed loop), and troubleshooting #10. |
 | 1.2 | 2026-08-12 | `_fix_permissions` rewritten: container-side (as root) on the `/gns3volumes` bind-mount targets instead of host-side — host-side chown cannot touch root-owned files when GNS3 is unprivileged. Dead containers are skipped instead of restarted. |
