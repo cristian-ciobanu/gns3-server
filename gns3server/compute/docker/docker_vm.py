@@ -990,6 +990,7 @@ class DockerVM(BaseNode):
                 srv._exec_id = None
                 srv._started = False
                 srv._lock = asyncio.Lock()
+                srv._log_name = f"docker_exec console '{vm.name}'"
 
             async def _on_naws(srv, columns, rows):
                 # propagate the client's terminal size to the exec pty (no-op
@@ -1003,6 +1004,13 @@ class DockerVM(BaseNode):
                         )
                     except DockerError:
                         pass
+
+            async def run(srv, network_reader, network_writer):
+                """Catch and log any exception that kills the client session."""
+                try:
+                    await super().run(network_reader, network_writer)
+                except Exception as exc:
+                    log.warning(f"{srv._log_name}: client session terminated: {exc}", exc_info=True)
 
             async def _create_exec(srv):
                 # create exec with a pty; run as root (vendor CLIs reject the
@@ -1021,6 +1029,7 @@ class DockerVM(BaseNode):
                     },
                 )
                 srv._exec_id = result["Id"]
+                log.info(f"{srv._log_name}: exec created ({srv._exec_id})")
 
                 # start the exec via a hijacked raw HTTP request on the Docker
                 # unix socket; with Tty:true the response body is a raw
@@ -1043,6 +1052,7 @@ class DockerVM(BaseNode):
                     writer.close()
                     raise DockerError(f"Docker exec start failed: {e}")
                 status_line = headers.split(b"\r\n", 1)[0]
+                log.info(f"{srv._log_name}: hijacked start -> {status_line.decode(errors='ignore')}")
                 if b" 101 " not in status_line and b" 200 " not in status_line:
                     writer.close()
                     raise DockerError(f"Docker exec start rejected: {status_line.decode(errors='ignore')}")
@@ -1055,12 +1065,18 @@ class DockerVM(BaseNode):
                 srv._writer = writer
                 vm._console_exec_writer = writer  # for stop() cleanup
                 srv._broadcast_task = asyncio.create_task(srv._broadcast_from_upstream())
+                log.info(f"{srv._log_name}: broadcast task started, upstream wired, ready")
 
             async def client_connected_hook(srv):
                 await super().client_connected_hook()
+                log.info(f"{srv._log_name}: client connected, lazy_started={srv._started}")
                 async with srv._lock:
                     if not srv._started:
-                        await srv._create_exec()
+                        try:
+                            await srv._create_exec()
+                        except Exception as exc:
+                            log.warning(f"{srv._log_name}: failed to create exec: {exc}", exc_info=True)
+                            raise
                         srv._started = True
                         try:
                             await srv._on_naws(80, 24)  # initial size before NAWS
@@ -1071,8 +1087,9 @@ class DockerVM(BaseNode):
                     try:
                         srv._writer.write(b"\x0c")  # Ctrl-L -> TUI redraws
                         await srv._writer.drain()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log.warning(f"{srv._log_name}: Ctrl-L write failed: {exc}")
+                log.info(f"{srv._log_name}: client_connected_hook done")
 
         telnet = _LazyExecTelnetServer()
         try:
