@@ -124,11 +124,31 @@ console. Key points:
    CLI"* otherwise), and `Env: ["TERM=xterm"]` (the TUI library needs a
    recognised terminal).
 
-3. **while-true wrapper.** The command is wrapped in
-   `sh -c "while true; do <cmd>; done"` so that when the CLI exits (user types
-   `quit`, or the NOS's own idle timeout logs the session out), a fresh CLI
-   instance starts in the same pty instead of killing the shared console
-   session.
+3. **No while-true wrapper.** The command runs as `sh -c "<cmd>"` (no
+   restart loop). When the CLI exits (`quit`, the NOS's own idle timeout, or a
+   crash) the exec pty closes, the broadcast task ends, and the next client
+   connection **recreates** the exec (see *Reconnection*). A `while true`
+   wrapper would restart the CLI mid-session with no client attached to
+   answer its startup CPR probe, producing a blank/degraded screen on
+   reconnect.
+
+### Reconnection
+
+The exec is created lazily and **recreated on reconnect if it has died**.
+`client_connected_hook` checks `_upstream_alive()` (exec id set, writer open,
+broadcast task not done) before each connect:
+
+- **First connect / dead upstream** → (re)create the exec. Because a client is
+  now attached, the CLI's startup CPR probe is answered by xterm.js → full
+  TUI. A half-dead writer is closed first to avoid a socket leak.
+- **Live upstream** → reuse the existing exec, just send `Ctrl-L` to redraw
+  for the new client.
+
+This is what makes the console survive `quit`, idle timeout, and CLI
+crashes: the death is detected (pty EOF ends the broadcast task) and the
+next connection spins up a fresh exec with a terminal present. The
+`_LazyExecTelnetServer` is extracted to module level specifically so this
+reconnect logic is unit-tested.
 
 4. **Hijacked raw-HTTP start.** The exec is started with
    `POST exec/{eid}/start` sent as a raw HTTP upgrade over the Docker unix
@@ -324,9 +344,11 @@ present on the host.
   issue.
 
 **7. "Session has been idle, will logout in 300 seconds" → Connection closed**
-- SR Linux's own CLI idle timeout. The while-true wrapper restarts the CLI
-  automatically, but to keep a permanent session disable the timeout in the
-  CLI: `enter candidate` → `/system cli idle-timeout disable` → `commit now`.
+- SR Linux's own CLI idle timeout logs the CLI out, the exec pty closes, and
+  the console disconnects. Reopening the console recreates the exec (see
+  *Reconnection*) and gives a fresh login. To keep a permanent session,
+  disable the timeout in the CLI: `enter candidate` →
+  `/system cli idle-timeout disable` → `commit now`.
 
 **8. Controller logs `Permission denied` reading files under the node's
    project directory while the node runs**
@@ -400,6 +422,7 @@ present on the host.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-08-13 | Reconnect fix: drop the while-true wrapper (it restarted the CLI with no client to answer CPR → blank screen on reconnect); the exec is now recreated on connect when the upstream has died. `_LazyExecTelnetServer` extracted to module level and unit-tested. |
 | 1.3 | 2026-08-12 | Document runtime ownership safety (root processes, self-healing daemons, ACL evidence for SR Linux), the boot-ordering caveat (bridge after boot → verify save/stop/start closed loop), and troubleshooting #10. |
 | 1.2 | 2026-08-12 | `_fix_permissions` rewritten: container-side (as root) on the `/gns3volumes` bind-mount targets instead of host-side — host-side chown cannot touch root-owned files when GNS3 is unprivileged. Dead containers are skipped instead of restarted. |
 | 1.1 | 2026-08-12 | Refactor: vendor logic extracted from `DockerVM` into `VendorDockerVM` subclass with 4 hook points + class-selection factory. Add SKIP_INIT volume persistence (`_setup_skip_init_volumes` + `_fix_permissions`) and lifecycle comparison. Add troubleshooting entries for idle timeout and permission-denied files. |

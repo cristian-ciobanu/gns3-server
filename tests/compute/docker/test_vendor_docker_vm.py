@@ -40,7 +40,7 @@ from tests.utils import asyncio_patch, AsyncioMagicMock
 
 from gns3server.compute.docker import Docker
 from gns3server.compute.docker.docker_vm import DockerVM
-from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
+from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM, _LazyExecTelnetServer
 from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Error
 
 
@@ -457,3 +457,158 @@ def test_cleanup_console_resources_no_writer(compute_project, manager):
     vm._console_exec_writer = None
     # must not raise
     vm._cleanup_console_resources()
+
+
+# ---------------------------------------------------------------------------
+# _LazyExecTelnetServer — upstream aliveness + reconnect/recreate logic
+# ---------------------------------------------------------------------------
+
+def _make_lazy_server(compute_project, manager):
+    """Build a _LazyExecTelnetServer with _create_exec mocked out (no docker)."""
+    vm = _make_vm(compute_project, manager, environment="GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli")
+    srv = _LazyExecTelnetServer(vm, manager, "e90e34656842", "/opt/srlinux/bin/sr_cli")
+    srv._create_exec = AsyncioMagicMock()
+    srv._on_naws = AsyncioMagicMock()
+    return srv
+
+
+def _live_writer():
+    """A writer mock that reports as open (not closing)."""
+    w = MagicMock()
+    w.is_closing.return_value = False
+    return w
+
+
+def _dead_writer():
+    """A writer mock that reports as closing (pty closed)."""
+    w = MagicMock()
+    w.is_closing.return_value = True
+    return w
+
+
+def test_upstream_alive_never_created(compute_project, manager):
+
+    srv = _make_lazy_server(compute_project, manager)
+    assert srv._upstream_alive() is False
+
+
+def test_upstream_alive_writer_closing(compute_project, manager):
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "abc"
+    srv._writer = _dead_writer()
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = False
+    assert srv._upstream_alive() is False
+
+
+def test_upstream_alive_broadcast_done(compute_project, manager):
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "abc"
+    srv._writer = _live_writer()
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = True  # CLI exited → EOF → task ended
+    assert srv._upstream_alive() is False
+
+
+def test_upstream_alive_live(compute_project, manager):
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "abc"
+    srv._writer = _live_writer()
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = False
+    assert srv._upstream_alive() is True
+
+
+@pytest.mark.asyncio
+async def test_first_connect_creates_exec(compute_project, manager):
+
+    srv = _make_lazy_server(compute_project, manager)
+    # never created → must create
+    await srv.client_connected_hook()
+    srv._create_exec.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_live_exec_not_recreated(compute_project, manager):
+    """Reconnecting while the exec is alive must NOT recreate it."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "abc"
+    srv._writer = _live_writer()
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = False
+
+    await srv.client_connected_hook()
+    srv._create_exec.assert_not_called()
+    # Ctrl-L redraw is still sent to the live writer
+    srv._writer.write.assert_any_call(b"\x0c")
+
+
+@pytest.mark.asyncio
+async def test_reconnect_after_death_recreates_exec(compute_project, manager):
+    """The core reconnect fix: after the CLI exits (broadcast task done),
+    the next client connection recreates the exec so CPR gets answered."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    # simulate a dead upstream: exec existed, but the pty closed / task ended
+    srv._exec_id = "old-exec"
+    srv._writer = _dead_writer()
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = True
+
+    await srv.client_connected_hook()
+    srv._create_exec.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_closes_half_dead_writer(compute_project, manager):
+    """If the writer is still open but the broadcast task died, the old writer
+    must be closed before a new exec is created (no socket leak)."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "old-exec"
+    srv._writer = _live_writer()  # still open, but...
+    srv._broadcast_task = MagicMock()
+    srv._broadcast_task.done.return_value = True  # ...task ended
+
+    await srv.client_connected_hook()
+    srv._writer.close.assert_called_once()
+    srv._create_exec.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_exec_cmd_has_no_while_true(compute_project, manager):
+    """The command must NOT be wrapped in a while-true loop (regression guard:
+    while-true restarts the CLI with no client to answer CPR → blank screen)."""
+
+    vm = _make_vm(compute_project, manager)
+    manager._server_url = "/var/run/docker.sock"
+    manager._api_version = "1.40"
+    srv = _LazyExecTelnetServer(vm, manager, "e90e34656842", "/opt/srlinux/bin/sr_cli")
+
+    captured = {}
+
+    async def fake_query(method, path, data=None, **kw):
+        captured["data"] = data
+        return {"Id": "exec123"}
+
+    manager.query = fake_query
+
+    with patch("asyncio.open_unix_connection") as mock_open:
+        reader = MagicMock()
+        reader.readuntil = AsyncioMagicMock(return_value=b"HTTP/1.1 101 Upgraded\r\n\r\n")
+        writer = MagicMock()
+        writer.is_closing.return_value = False
+        mock_open.return_value = (reader, writer)
+        await srv._create_exec()
+
+    cmd = captured["data"]["Cmd"]
+    assert cmd == ["sh", "-c", "/opt/srlinux/bin/sr_cli"]
+    assert "while true" not in cmd[2]
+    # must run as root with a pty and TERM
+    assert captured["data"]["User"] == "root"
+    assert captured["data"]["Tty"] is True
+    assert "TERM=xterm" in captured["data"]["Env"]

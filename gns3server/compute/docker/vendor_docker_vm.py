@@ -288,127 +288,7 @@ class VendorDockerVM(DockerVM):
         Command from GNS3_CONSOLE_CMD.
         """
 
-        command = self._console_cmd or "/bin/sh"
-        vm = self
-        manager = self.manager
-        cid = self._cid
-
-        class _LazyExecTelnetServer(AsyncioTelnetServer):
-            """Telnet console whose docker exec (pty + command) is created on the
-            first client connection and then broadcast to all clients."""
-
-            def __init__(srv):
-                super().__init__(
-                    reader=None,
-                    writer=None,
-                    binary=True,
-                    echo=False,
-                    naws=True,
-                    window_size_changed_callback=srv._on_naws,
-                )
-                srv._exec_id = None
-                srv._started = False
-                srv._lock = asyncio.Lock()
-                srv._log_name = f"docker_exec console '{vm.name}'"
-
-            async def _on_naws(srv, columns, rows):
-                if srv._exec_id:
-                    try:
-                        await manager.query(
-                            "POST",
-                            f"exec/{srv._exec_id}/resize",
-                            params={"h": str(rows), "w": str(columns)},
-                        )
-                    except DockerError:
-                        pass
-
-            async def run(srv, network_reader, network_writer):
-                """Catch and log any exception that kills the client session."""
-                try:
-                    await super().run(network_reader, network_writer)
-                except Exception as exc:
-                    log.warning(f"{srv._log_name}: client session terminated: {exc}", exc_info=True)
-
-            async def _create_exec(srv):
-                # create exec with a pty; run as root (vendor CLIs reject the
-                # image's default unprivileged user) and export TERM=xterm.
-                result = await manager.query(
-                    "POST",
-                    f"containers/{cid}/exec",
-                    data={
-                        "AttachStdin": True,
-                        "AttachStdout": True,
-                        "AttachStderr": True,
-                        "Tty": True,
-                        "User": "root",
-                        "Env": ["TERM=xterm"],
-                        "Cmd": ["sh", "-c", f"while true; do {command}; done"],
-                    },
-                )
-                srv._exec_id = result["Id"]
-                log.info(f"{srv._log_name}: exec created ({srv._exec_id})")
-
-                # start the exec via a hijacked raw HTTP request on the Docker
-                # unix socket; with Tty:true the response body is a raw
-                # bidirectional pty byte stream (no multiplexing).
-                reader, writer = await asyncio.open_unix_connection(manager._server_url)
-                body = json.dumps({"Detach": False, "Tty": True})
-                request = (
-                    f"POST /v{manager._api_version}/exec/{srv._exec_id}/start HTTP/1.1\r\n"
-                    "Host: docker\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Upgrade: tcp\r\n"
-                    "Content-Type: application/json\r\n"
-                    f"Content-Length: {len(body)}\r\n\r\n{body}"
-                ).encode()
-                writer.write(request)
-                await writer.drain()
-                try:
-                    headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
-                except (asyncio.IncompleteReadError, asyncio.TimeoutError) as e:
-                    writer.close()
-                    raise DockerError(f"Docker exec start failed: {e}")
-                status_line = headers.split(b"\r\n", 1)[0]
-                log.info(f"{srv._log_name}: hijacked start -> {status_line.decode(errors='ignore')}")
-                if b" 101 " not in status_line and b" 200 " not in status_line:
-                    writer.close()
-                    raise DockerError(f"Docker exec start rejected: {status_line.decode(errors='ignore')}")
-
-                # wire the exec stream as this server's upstream and start the
-                # broadcast task. AsyncioTelnetServer.start() only starts the
-                # broadcast when a reader is set at construction time, so with a
-                # lazy upstream we start it manually here.
-                srv._reader = reader
-                srv._writer = writer
-                vm._console_exec_writer = writer  # for stop() cleanup
-                srv._broadcast_task = asyncio.create_task(srv._broadcast_from_upstream())
-                log.info(f"{srv._log_name}: broadcast task started, upstream wired, ready")
-
-            async def client_connected_hook(srv):
-                await super().client_connected_hook()
-                log.info(f"{srv._log_name}: client connected, lazy_started={srv._started}")
-                async with srv._lock:
-                    if not srv._started:
-                        try:
-                            await srv._create_exec()
-                        except Exception as exc:
-                            log.warning(f"{srv._log_name}: failed to create exec: {exc}", exc_info=True)
-                            raise
-                        srv._started = True
-                        try:
-                            await srv._on_naws(80, 24)  # initial size before NAWS
-                        except Exception:
-                            pass
-                # ask the TUI to (re)draw for the client that just connected.
-                if srv._writer:
-                    try:
-                        srv._writer.write(b"\x0c")  # Ctrl-L -> TUI redraws
-                        await srv._writer.drain()
-                    except Exception as exc:
-                        log.warning(f"{srv._log_name}: Ctrl-L write failed: {exc}")
-                log.info(f"{srv._log_name}: client_connected_hook done")
-
-        telnet = _LazyExecTelnetServer()
+        telnet = _LazyExecTelnetServer(self, self.manager, self._cid, self._console_cmd or "/bin/sh")
         try:
             self._telnet_servers.append(
                 await telnet.start(self._manager.port_manager.console_host, self.console)
@@ -418,3 +298,153 @@ class VendorDockerVM(DockerVM):
                 f"Could not start console server on socket {self._manager.port_manager.console_host}:{self.console}: {e}"
             )
         log.debug(f"Docker container '{self.name}' started docker_exec console (lazy) on {self.console}")
+
+
+class _LazyExecTelnetServer(AsyncioTelnetServer):
+    """Telnet console whose docker exec (pty + command) is created lazily on
+    the first client connection and recreated if the upstream dies.
+
+    Extracted to module level (rather than a closure inside
+    _start_docker_exec_console) so the reconnect/recreate logic is unit-testable.
+
+    Lifecycle: the exec is created on the first connect. When the CLI exits
+    (quit / idle timeout / crash) the exec pty closes, the broadcast task ends,
+    and the *next* client connection recreates the exec — with a terminal
+    attached, so the CLI's startup CPR probe is answered. No ``while true``
+    wrapper: that would restart the CLI mid-session with no client to answer
+    CPR, producing a blank/degraded screen on reconnect.
+    """
+
+    def __init__(self, vm, manager, cid, command):
+        super().__init__(
+            reader=None,
+            writer=None,
+            binary=True,
+            echo=False,
+            naws=True,
+            window_size_changed_callback=self._on_naws,
+        )
+        self._vm = vm
+        self._manager = manager
+        self._cid = cid
+        self._command = command
+        self._exec_id = None
+        self._broadcast_task = None
+        self._lock = asyncio.Lock()
+        self._log_name = f"docker_exec console '{vm.name}'"
+
+    def _upstream_alive(self):
+        """True if the exec pty + broadcast task are still pumping."""
+        if self._exec_id is None or self._writer is None:
+            return False
+        if self._writer.is_closing():
+            return False
+        if self._broadcast_task is not None and self._broadcast_task.done():
+            return False
+        return True
+
+    async def _on_naws(self, columns, rows):
+        if self._exec_id:
+            try:
+                await self._manager.query(
+                    "POST",
+                    f"exec/{self._exec_id}/resize",
+                    params={"h": str(rows), "w": str(columns)},
+                )
+            except DockerError:
+                pass
+
+    async def run(self, network_reader, network_writer):
+        """Catch and log any exception that kills the client session."""
+        try:
+            await super().run(network_reader, network_writer)
+        except Exception as exc:
+            log.warning(f"{self._log_name}: client session terminated: {exc}", exc_info=True)
+
+    async def _create_exec(self):
+        # create exec with a pty; run as root (vendor CLIs reject the image's
+        # default unprivileged user) and export TERM=xterm.
+        result = await self._manager.query(
+            "POST",
+            f"containers/{self._cid}/exec",
+            data={
+                "AttachStdin": True,
+                "AttachStdout": True,
+                "AttachStderr": True,
+                "Tty": True,
+                "User": "root",
+                "Env": ["TERM=xterm"],
+                "Cmd": ["sh", "-c", self._command],
+            },
+        )
+        self._exec_id = result["Id"]
+        log.info(f"{self._log_name}: exec created ({self._exec_id})")
+
+        # start the exec via a hijacked raw HTTP request on the Docker unix
+        # socket; with Tty:true the response body is a raw bidirectional pty
+        # byte stream (no multiplexing).
+        reader, writer = await asyncio.open_unix_connection(self._manager._server_url)
+        body = json.dumps({"Detach": False, "Tty": True})
+        request = (
+            f"POST /v{self._manager._api_version}/exec/{self._exec_id}/start HTTP/1.1\r\n"
+            "Host: docker\r\n"
+            "Connection: Upgrade\r\n"
+            "Upgrade: tcp\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n{body}"
+        ).encode()
+        writer.write(request)
+        await writer.drain()
+        try:
+            headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        except (asyncio.IncompleteReadError, asyncio.TimeoutError) as e:
+            writer.close()
+            raise DockerError(f"Docker exec start failed: {e}")
+        status_line = headers.split(b"\r\n", 1)[0]
+        log.info(f"{self._log_name}: hijacked start -> {status_line.decode(errors='ignore')}")
+        if b" 101 " not in status_line and b" 200 " not in status_line:
+            writer.close()
+            raise DockerError(f"Docker exec start rejected: {status_line.decode(errors='ignore')}")
+
+        # wire the exec stream as this server's upstream and start the broadcast
+        # task. AsyncioTelnetServer.start() only starts the broadcast when a
+        # reader is set at construction time, so with a lazy upstream we start
+        # it manually here.
+        self._reader = reader
+        self._writer = writer
+        self._vm._console_exec_writer = writer  # for stop() cleanup
+        self._broadcast_task = asyncio.create_task(self._broadcast_from_upstream())
+        log.info(f"{self._log_name}: broadcast task started, upstream wired, ready")
+
+    async def client_connected_hook(self):
+        await super().client_connected_hook()
+        async with self._lock:
+            # (Re)create the exec if it was never created or has died (CLI
+            # exited → pty EOF → broadcast task ended). Doing this with a
+            # client attached means the CLI's startup CPR probe is answered by
+            # a real terminal.
+            if not self._upstream_alive():
+                log.info(f"{self._log_name}: client connected, (re)creating exec")
+                # close a half-dead writer before replacing it
+                if self._writer is not None and not self._writer.is_closing():
+                    with contextlib.suppress(Exception):
+                        self._writer.close()
+                try:
+                    await self._create_exec()
+                except Exception as exc:
+                    log.warning(f"{self._log_name}: failed to create exec: {exc}", exc_info=True)
+                    raise
+                try:
+                    await self._on_naws(80, 24)  # initial size before NAWS
+                except Exception:
+                    pass
+            else:
+                log.info(f"{self._log_name}: client connected, reusing live exec")
+        # ask the TUI to (re)draw for the client that just connected.
+        if self._writer:
+            try:
+                self._writer.write(b"\x0c")  # Ctrl-L -> TUI redraws
+                await self._writer.drain()
+            except Exception as exc:
+                log.warning(f"{self._log_name}: Ctrl-L write failed: {exc}")
+        log.info(f"{self._log_name}: client_connected_hook done")
