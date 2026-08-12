@@ -27,9 +27,11 @@ container behaves identically to DockerVM.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
+import shutil
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.compute.docker.docker_vm import DockerVM
@@ -79,6 +81,26 @@ class VendorDockerVM(DockerVM):
 
     # ---- hook overrides ---------------------------------------------------
 
+    def _mount_binds(self, image_info):
+        """
+        Override: for SKIP_INIT containers, drop GNS3's hardcoded
+        /etc/network volume. It holds GNS3's own network config consumed by
+        init.sh's `ifup`; init.sh never runs for SKIP_INIT containers (the
+        NOS manages its own interfaces), so the mount would be dead weight.
+        Removes the bind, drops the volume from self._volumes (so
+        GNS3_VOLUMES and the vendor passes stay consistent) and deletes the
+        host-side skeleton directory the base class just created.
+        """
+        binds = super()._mount_binds(image_info)
+        if self._gns3_init:
+            return binds
+        binds = [b for b in binds if b.get("Target") != "/gns3volumes/etc/network"]
+        self._volumes = [v for v in self._volumes if v != "/etc/network"]
+        shutil.rmtree(os.path.join(self.working_dir, "etc", "network"), ignore_errors=True)
+        with contextlib.suppress(OSError):
+            os.rmdir(os.path.join(self.working_dir, "etc"))
+        return binds
+
     def _prepare_init_and_interface_env(self, params):
         """
         Override: conditionally prepend init.sh, and honour
@@ -94,19 +116,6 @@ class VendorDockerVM(DockerVM):
         else:
             last_ifname = f"eth{self.adapters - 1}"
         params["Env"].append(f"GNS3_MAX_ETHERNET={last_ifname}")
-
-    def _persistent_volumes(self):
-        """
-        Volumes relevant to vendor persistence. With GNS3_SKIP_INIT, drop
-        /etc/network — GNS3's own network config for init.sh's ifup, unused
-        when init.sh is skipped (the NOS manages its own interfaces). The
-        Docker mount itself is left alone (shared _mount_binds); only the
-        vendor-side bridge/fix passes skip it. Without SKIP_INIT the full
-        list is returned so behaviour matches the base class.
-        """
-        if self._gns3_init:
-            return self._volumes
-        return [v for v in self._volumes if v != "/etc/network"]
 
     def _get_container_ifname(self, adapter_number):
         """
@@ -170,7 +179,7 @@ class VendorDockerVM(DockerVM):
             return
 
         uid, gid = os.getuid(), os.getgid()
-        for volume in self._persistent_volumes():
+        for volume in self._volumes:
             target = f"/gns3volumes{volume}"
             log.debug("Docker container '%s' fix ownership on %s", self._name, target)
             try:
@@ -212,7 +221,7 @@ class VendorDockerVM(DockerVM):
         Permission-changes recorded by _fix_permissions at the previous
         stop are restored (best-effort).
         """
-        for volume in self._persistent_volumes():
+        for volume in self._volumes:
             vol_target = f"/gns3volumes{volume}"
             # fmt: off
             script = (
