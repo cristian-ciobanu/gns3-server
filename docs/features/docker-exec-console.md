@@ -241,6 +241,13 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 > host-side root-owned, and an unprivileged GNS3 process cannot chown them
 > from the host. Container-side root (with GNS3's `UsernsMode: host`) can.
 
+With `GNS3_SKIP_INIT`, `/etc/network` is skipped by both vendor passes
+(`VendorDockerVM._persistent_volumes()`): it holds GNS3's own network config
+for init.sh's `ifup`, which never runs for SKIP_INIT containers — the NOS
+manages its own interfaces. The Docker mount itself is left alone (shared
+`_mount_binds`, hardcoded at `docker_vm.py` `_mount_binds()`); only the
+vendor-side bridge/fix passes skip it.
+
 ### Lifecycle summary
 
 | Phase | Normal Docker node | `VendorDockerVM` + `GNS3_SKIP_INIT` |
