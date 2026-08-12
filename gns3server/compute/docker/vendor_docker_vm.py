@@ -30,11 +30,10 @@ import asyncio
 import json
 import logging
 import os
-import stat
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.compute.docker.docker_vm import DockerVM
-from gns3server.compute.docker.docker_error import DockerError
+from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Error
 
 log = logging.getLogger(__name__)
 
@@ -130,71 +129,64 @@ class VendorDockerVM(DockerVM):
 
     async def _fix_permissions(self):
         """
-        Host-side override of DockerVM._fix_permissions for SKIP_INIT
-        containers. The persistent volumes are Docker bind mounts of
-        directories under the node's project directory, so ownership is fixed
-        directly on the host — no docker exec, no container restart required
-        (the base implementation restarts an exited container just to chown,
-        which is wasteful for vendor NOS images).
+        Container-side override of DockerVM._fix_permissions for vendor NOS
+        containers. It targets the Docker bind-mount paths
+        (`/gns3volumes<volume>`) directly instead of the in-container paths:
+        the in-container paths only resolve to persistent storage while the
+        `mount --bind` bridge from _setup_skip_init_volumes is up, and after a
+        container restart the bridge is gone — the base implementation would
+        then chown the overlay copy instead of the host files.
 
-        Two passes per volume, mirroring the base/busybox behaviour:
+        The busybox script runs inside the container as root (a host-side
+        GNS3 process may be unprivileged and cannot chown root-owned files).
 
-        1. record each entry's container-visible mode/uid/gid into
-           `.gns3_perms` (same `mode:uid:gid:path` format init.sh consumes,
-           paths are in-container absolute so the restore inside the
-           container resolves them);
-        2. chmod u+rX + chown to the host user so the GNS3 process can read
-           and delete files from the project directory.
+        Unlike the base implementation, a stopped/exited container is NOT
+        restarted just to fix permissions (vendor NOS images are heavy to
+        boot): the pass is skipped and the next start fixes ownership.
         """
+        try:
+            state = await self._get_container_state()
+        except DockerHttp404Error:
+            log.warning("Container '%s' does not exist, skipping permission fix", self._name)
+            return
+        if state == "stopped" or state == "exited":
+            log.info(
+                "Container '%s' is %s, skipping permission fix (next start will fix)",
+                self._name, state,
+            )
+            return
+
         uid, gid = os.getuid(), os.getgid()
         for volume in self._volumes:
-            path = os.path.join(self.working_dir, os.path.relpath(volume, "/"))
-            if not os.path.isdir(path):
-                continue
-
-            def onerror(exc):
-                log.debug("Could not walk '%s' for container '%s': %s", exc.filename, self._name, exc)
-
-            # 1. record container-visible permissions for restore at next start
+            target = f"/gns3volumes{volume}"
+            log.debug("Docker container '%s' fix ownership on %s", self._name, target)
             try:
-                with open(os.path.join(path, ".gns3_perms"), "w") as perms_file:
-                    for root, dirs, files in os.walk(path, onerror=onerror):
-                        for entry in dirs + files:
-                            entry_path = os.path.join(root, entry)
-                            try:
-                                st = os.lstat(entry_path)
-                            except OSError:
-                                continue
-                            container_path = os.path.join(volume, os.path.relpath(entry_path, path))
-                            perms_file.write(
-                                f"{stat.S_IMODE(st.st_mode):o}:{st.st_uid}:{st.st_gid}:{container_path}\n"
-                            )
-            except OSError as e:
-                log.warning(
-                    "Could not record permissions for '%s' on container '%s': %s", path, self._name, e
+                process = await asyncio.subprocess.create_subprocess_exec(
+                    "docker",
+                    "exec",
+                    self._cid,
+                    "/gns3/bin/busybox",
+                    "sh",
+                    "-c",
+                    "("
+                    f'/gns3/bin/busybox find "{target}" -depth -print0'
+                    f" | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c '%a:%u:%g:%n' > \"{target}/.gns3_perms\""
+                    ")"
+                    f' && /gns3/bin/busybox chmod -R u+rX "{target}"'
+                    f' && /gns3/bin/busybox chown {uid}:{gid} -R "{target}"',
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                continue
-
-            # 2. chmod u+rX + chown to the host user
-            for root, dirs, files in os.walk(path, onerror=onerror):
-                for entry in dirs + files:
-                    entry_path = os.path.join(root, entry)
-                    try:
-                        st = os.lstat(entry_path)
-                        is_link = stat.S_ISLNK(st.st_mode)
-                        if not is_link:
-                            mode = stat.S_IMODE(st.st_mode)
-                            new_mode = mode | 0o400  # u+r
-                            if stat.S_ISDIR(st.st_mode) or (mode & 0o111):  # u+X
-                                new_mode |= 0o100
-                            os.chmod(entry_path, new_mode)
-                        os.lchown(entry_path, uid, gid)
-                    except OSError as e:
-                        log.debug(
-                            "Could not fix permissions on '%s' for container '%s': %s",
-                            entry_path, self._name, e,
-                        )
-        self._permissions_fixed = True
+            except OSError as e:
+                raise DockerError(f"Could not fix permissions for {volume}: {e}")
+            await process.wait()
+            if process.returncode != 0:
+                stderr = (await process.stderr.read()).decode(errors="replace").strip()
+                log.error(
+                    "Failed to fix permissions on '%s' for container '%s': %s",
+                    volume, self._name, stderr or f"exit code {process.returncode}",
+                )
+            else:
+                self._permissions_fixed = True
 
     async def _setup_skip_init_volumes(self):
         """

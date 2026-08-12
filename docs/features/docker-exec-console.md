@@ -223,27 +223,30 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
    - restores the permissions recorded in `.gns3_perms` at the previous stop
      (best-effort).
 
-2. **Host-side `_fix_permissions()` override** — `DockerVM._fix_permissions`
-   is container-side (busybox via `docker exec`) and restarts an exited
-   container just to chown; after a restart the `mount --bind` bridge is gone,
-   so it would fix the overlay copy and not the host files. The override
-   instead walks the host-side directories under the node's project directory
-   directly (they *are* the Docker bind-mount sources), records
-   `mode:uid:gid:path` into `.gns3_perms` and chowns to the GNS3 user —
-   no running container required, no restart. It runs both at start (so the
-   controller can read project files while the node runs) and at stop.
+2. **Container-side `_fix_permissions()` override targeting `/gns3volumes`**
+   — `DockerVM._fix_permissions` operates on the in-container paths
+   (`/etc/opt/srlinux`, …), which only resolve to persistent storage while
+   the `mount --bind` bridge is up; after a container restart the bridge is
+   gone and it would chown the overlay copy instead of the host files. It
+   also restarts an exited container just to chown. The override instead
+   runs the same busybox record/chmod/chown script **inside the container
+   (as root) on the `/gns3volumes<path>` paths** — the Docker bind-mount
+   targets, which exist for the whole container lifetime and need no bridge.
+   A stopped/exited container is **not** restarted: the pass is skipped and
+   the next start fixes ownership. It runs at start (so the controller can
+   read project files while the node runs) and at stop (for files written
+   during runtime).
 
-> Rootful-Docker assumption: the `.gns3_perms` uid/gid values are recorded from
-> the host's view. With rootful Docker (no userns remap) in-container and host
-> ids coincide, so restore semantics are identical to init.sh's. This would
-> need revisiting for userns-remapped daemons.
+> The fix must run container-side: files written by the container are
+> host-side root-owned, and an unprivileged GNS3 process cannot chown them
+> from the host. Container-side root (with GNS3's `UsernsMode: host`) can.
 
 ### Lifecycle summary
 
 | Phase | Normal Docker node | `VendorDockerVM` + `GNS3_SKIP_INIT` |
 |-------|--------------------|--------------------------------------|
-| start | init.sh seeds + bind-mounts + restores perms (in-container, before the app starts) | `docker exec` after start: seed + bind-mount + restore perms; then host-side chown |
-| stop | container-side `_fix_permissions` (restarts an exited container) | host-side `_fix_permissions` (no container needed) |
+| start | init.sh seeds + bind-mounts + restores perms (in-container, before the app starts) | `docker exec` after start: seed + bind-mount + restore perms; then container-side chown on `/gns3volumes` |
+| stop | container-side `_fix_permissions` on in-container paths (restarts an exited container) | container-side `_fix_permissions` on `/gns3volumes` paths (skips dead containers, no restart) |
 | volume config | identical `_mount_binds` (host → `/gns3volumes<path>`) | identical |
 
 ## Troubleshooting
@@ -282,7 +285,7 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 
 **8. Controller logs `Permission denied` reading files under the node's
    project directory while the node runs**
-- Root-written files inside a persistent volume. The host-side
+- Root-written files inside a persistent volume. The container-side
   `_fix_permissions` pass runs at start (fixes the seeded files) and at stop;
   files created by the container *during* runtime become readable after the
   next stop.
@@ -303,8 +306,9 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 3. **Prototype knobs.** `GNS3_SKIP_INIT` / `GNS3_INTERFACE_NAMES` /
    `GNS3_CONSOLE_CMD` are environment-driven; they are not yet first-class node
    schema fields and are not declared in the appliance (`gns3a`) schema.
-4. **Rootful-Docker assumption** for the host-side `.gns3_perms` recording
-   (see the volume-persistence section).
+4. **Rootful-Docker assumption** (`UsernsMode: host`, set for all GNS3
+   Docker nodes) so the container-side chown acts on the host files' real
+   uid/gid (see the volume-persistence section).
 5. **Post-boot volume bridge.** The bind-mount bridge is established after the
    vendor entrypoint has started (init.sh would do it before). A NOS that
    strictly requires its persisted files at its very first read may need a
@@ -314,7 +318,8 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 
 - `gns3server/compute/docker/vendor_docker_vm.py` — `VendorDockerVM`:
   `_start_docker_exec_console`, `_LazyExecTelnetServer`,
-  `_setup_skip_init_volumes`, host-side `_fix_permissions`, `start()`.
+  `_setup_skip_init_volumes`, container-side `_fix_permissions` on
+  `/gns3volumes`, `start()`.
 - `gns3server/compute/docker/docker_vm.py` — `DockerVM` extension hooks
   (`_prepare_init_and_interface_env`, `_start_console_server`,
   `_get_container_ifname`, `_cleanup_console_resources`).
@@ -329,5 +334,6 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-08-12 | Refactor: vendor logic extracted from `DockerVM` into `VendorDockerVM` subclass with 4 hook points + class-selection factory. Add SKIP_INIT volume persistence (`_setup_skip_init_volumes` + host-side `_fix_permissions`) and lifecycle comparison. Add troubleshooting entries for idle timeout and permission-denied files. |
+| 1.2 | 2026-08-12 | `_fix_permissions` rewritten: container-side (as root) on the `/gns3volumes` bind-mount targets instead of host-side — host-side chown cannot touch root-owned files when GNS3 is unprivileged. Dead containers are skipped instead of restarted. |
+| 1.1 | 2026-08-12 | Refactor: vendor logic extracted from `DockerVM` into `VendorDockerVM` subclass with 4 hook points + class-selection factory. Add SKIP_INIT volume persistence (`_setup_skip_init_volumes` + `_fix_permissions`) and lifecycle comparison. Add troubleshooting entries for idle timeout and permission-denied files. |
 | 1.0 | 2026-08-12 | Initial documentation of the `docker_exec` console and vendor NOS knobs. |
