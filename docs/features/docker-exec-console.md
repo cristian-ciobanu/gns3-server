@@ -289,6 +289,19 @@ host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always m
   `_fix_permissions` pass runs at start (fixes the seeded files) and at stop;
   files created by the container *during* runtime become readable after the
   next stop.
+- Concrete example: SR Linux's `aaamgr` daemon rewrites
+  `etc/opt/srlinux/aaamgr_local_user.json` during boot, **after** the
+  start-time pass, as the image's `srlinux` user (uid 1002, mode 700) — so
+  the host-side file stays `1002:1002` until the stop-time pass chowns it.
+- The log line comes from the file-browser API chain: Web UI *Show in file
+  manager* → `GET /v3/projects/{pid}/nodes/{nid}/files`
+  (`controller/nodes.py:538`) → `project.list_node_files`
+  (`compute/project.py:510`), where `magic.from_file()` cannot read the
+  file and the `file_type` field is left empty for that entry. The MCP
+  `list_node_files` tool uses the same code path. Size/modified-at fields
+  and everything else keep working; only the type sniff and one warning
+  line are affected — same behaviour as any regular Docker node writing
+  root-owned files at runtime.
 
 **9. Persistent volume empty on the host after `save` + stop**
 - Ensure `GNS3_SKIP_INIT=1` is set (so the host-side bridge path is taken) and
