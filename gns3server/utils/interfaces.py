@@ -147,7 +147,7 @@ def is_interface_up(interface):
     :returns: boolean
     """
 
-    if sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux") or sys.platform.startswith("openbsd"):
 
         if interface not in psutil.net_if_addrs():
             return False
@@ -234,7 +234,7 @@ def interfaces():
         result["special"] = False
         for special_interface in ("lo", "vmnet", "vboxnet", "docker", "lxcbr",
                                   "virbr", "ovs-system", "veth", "fw", "p2p",
-                                  "bridge", "vmware", "virtualbox", "gns3"):
+                                  "bridge", "vmware", "virtualbox", "gns3","veb"):
             if result["name"].lower().startswith(special_interface):
                 result["special"] = True
         for special_interface in ("-nic"):
