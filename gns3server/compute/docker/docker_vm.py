@@ -69,6 +69,17 @@ class DockerVM(BaseNode):
     :param extra_volumes: Additional directories to make persistent
     """
 
+    # systemd units masked by GNS3_MASK_UDEV=1: the udev daemon, its activation
+    # sockets and the coldplug/settle triggers. Masking them stops a privileged
+    # systemd container from replaying device events on the host.
+    _UDEV_UNITS = (
+        "systemd-udevd.service",
+        "systemd-udevd-control.socket",
+        "systemd-udevd-kernel.socket",
+        "systemd-udev-trigger.service",
+        "systemd-udev-settle.service",
+    )
+
     def __init__(
         self,
         name,
@@ -542,6 +553,33 @@ class DockerVM(BaseNode):
                     devices = self._format_devices(line.split("=", 1)[1])
                     if devices:
                         params["HostConfig"]["Devices"] = devices
+                elif line.startswith("GNS3_MASK_UDEV=") and \
+                        line.split("=", 1)[1].strip().lower() in ("1", "true", "yes"):
+                    # A privileged systemd-based NOS container (e.g. Cisco XRd)
+                    # runs systemd-udevd, which coldplugs every device it can see
+                    # -- and in privileged mode that includes the HOST's USB/input/
+                    # audio/disk devices, reconnecting/muting them on every start.
+                    # XRd doesn't need udev (interfaces are pre-created by GNS3), so
+                    # bind /dev/null over the udev units to keep it from running.
+                    for unit in self._UDEV_UNITS:
+                        params["HostConfig"]["Mounts"].append({
+                            "Type": "bind",
+                            "Source": "/dev/null",
+                            "Target": f"/etc/systemd/system/{unit}",
+                            "ReadOnly": True,
+                        })
+                elif line.startswith("GNS3_MASK_SYSTEMD="):
+                    # Generic form: comma/semicolon-separated unit names to mask
+                    # the same way (bind /dev/null over /etc/systemd/system/<unit>).
+                    for unit in line.split("=", 1)[1].replace(";", ",").split(","):
+                        unit = unit.strip()
+                        if unit and "/" not in unit and ".." not in unit:
+                            params["HostConfig"]["Mounts"].append({
+                                "Type": "bind",
+                                "Source": "/dev/null",
+                                "Target": f"/etc/systemd/system/{unit}",
+                                "ReadOnly": True,
+                            })
 
         if params["Entrypoint"] is None:
             params["Entrypoint"] = []

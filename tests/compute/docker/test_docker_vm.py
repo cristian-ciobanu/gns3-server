@@ -309,6 +309,29 @@ async def test_create_applies_env_host_config(compute_project, manager):
 
 
 @pytest.mark.asyncio
+async def test_create_masks_systemd_units(compute_project, manager):
+    """
+    GNS3_MASK_UDEV=1 binds /dev/null over the udev units, and GNS3_MASK_SYSTEMD
+    does the same for arbitrary units -- stopping a privileged systemd container
+    from udev-coldplugging host devices.
+    """
+
+    environment = "GNS3_MASK_UDEV=1\nGNS3_MASK_SYSTEMD=foo.service,bar.socket"
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", environment=environment)
+            await vm.create()
+            masked = {m["Target"] for m in mock.call_args[1]["data"]["HostConfig"]["Mounts"]
+                      if m.get("Source") == "/dev/null"}
+            for unit in DockerVM._UDEV_UNITS:
+                assert f"/etc/systemd/system/{unit}" in masked
+            assert "/etc/systemd/system/foo.service" in masked
+            assert "/etc/systemd/system/bar.socket" in masked
+
+
+@pytest.mark.asyncio
 async def test_create_with_extra_configs(compute_project, manager):
     """
     extra_configs entries are written to the node working directory and
