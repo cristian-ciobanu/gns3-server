@@ -183,6 +183,12 @@ class VendorDockerVM(DockerVM):
             target = f"/gns3volumes{volume}"
             log.debug("Docker container '%s' fix ownership on %s", self._name, target)
             try:
+                # chown prefers the container's own coreutils over /gns3/bin/busybox:
+                # busybox is static, and its chown dlopens NSS modules from the
+                # container, which mismatch the static glibc and abort (glibc
+                # "sym != NULL") on NOS images whose glibc differs from the host's
+                # (e.g. Cisco XRd). It falls back to busybox on minimal images that
+                # ship no chown. cp/chmod/find/stat don't use NSS, so stay busybox.
                 process = await asyncio.subprocess.create_subprocess_exec(
                     "docker",
                     "exec",
@@ -195,7 +201,7 @@ class VendorDockerVM(DockerVM):
                     f" | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c '%a:%u:%g:%n' > \"{target}/.gns3_perms\""
                     ")"
                     f' && /gns3/bin/busybox chmod -R u+rX "{target}"'
-                    f' && /gns3/bin/busybox chown {uid}:{gid} -R "{target}"',
+                    f' && ( command -v chown >/dev/null 2>&1 && chown {uid}:{gid} -R "{target}" || /gns3/bin/busybox chown {uid}:{gid} -R "{target}" )',
                     stderr=asyncio.subprocess.PIPE,
                 )
             except OSError as e:
@@ -233,7 +239,10 @@ class VendorDockerVM(DockerVM):
                 f'/gns3/bin/busybox mount --bind "{vol_target}" "{volume}" && '
                 f'while IFS=: read -r PERMS OWNER GROUP FILE; do '
                 f'  [ -L "$FILE" ] || /gns3/bin/busybox chmod "$PERMS" "$FILE" 2>/dev/null; '
-                f'  /gns3/bin/busybox chown -h "$OWNER:$GROUP" "$FILE" 2>/dev/null; '
+                # chown: prefer the container's coreutils, fall back to busybox
+                # (see _fix_permissions -- static busybox chown aborts on
+                # mismatched-glibc NOS images like XRd).
+                f'  ( command -v chown >/dev/null 2>&1 && chown -h "$OWNER:$GROUP" "$FILE" || /gns3/bin/busybox chown -h "$OWNER:$GROUP" "$FILE" ) 2>/dev/null; '
                 f'done < "{volume}/.gns3_perms"'
             )
             # fmt: on
