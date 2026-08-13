@@ -491,6 +491,25 @@ class DockerVM(BaseNode):
             "Entrypoint": image_infos.get("Config", {"Entrypoint": []}).get("Entrypoint"),
         }
 
+        # Optional /dev/shm size and host device mappings requested through the
+        # environment (GNS3_SHM_SIZE in MB, GNS3_DEVICES). These are native Docker
+        # HostConfig keys applied at create time, so they work whether or not
+        # init.sh runs -- heavy NOS containers such as Cisco XRd (which skips
+        # init.sh via the vendor/docker_exec path) rely on them. Only injected
+        # when set, so ordinary nodes keep the default Docker behaviour.
+        if self._environment:
+            for line in self._environment.splitlines():
+                line = line.strip()
+                if line.startswith("GNS3_SHM_SIZE="):
+                    try:
+                        params["HostConfig"]["ShmSize"] = int(line.split("=", 1)[1].strip()) * (1024 * 1024)
+                    except ValueError:
+                        pass
+                elif line.startswith("GNS3_DEVICES="):
+                    devices = self._format_devices(line.split("=", 1)[1])
+                    if devices:
+                        params["HostConfig"]["Devices"] = devices
+
         if params["Entrypoint"] is None:
             params["Entrypoint"] = []
         if self._start_command:
@@ -624,6 +643,37 @@ class DockerVM(BaseNode):
         except ValueError:
             raise DockerError(f"Can't apply `ExtraHosts`, wrong format: {extra_hosts}")
         return "\n".join([f"{h[1]}\t{h[0]}" for h in hosts])
+
+    def _format_devices(self, devices_value):
+        """
+        Parse a GNS3_DEVICES value into Docker HostConfig Devices entries.
+
+        Mirrors `docker run --device`: items are whitespace/comma-separated and
+        each is ``host[:container[:permissions]]`` (e.g. /dev/fuse,
+        /dev/fuse:/dev/fuse:rwm). Docker resolves type/major/minor from the host
+        node itself, so the device must exist on the host -- the host-readiness
+        check warns when /dev/fuse is missing (load the fuse module).
+        """
+
+        formatted = []
+        for raw in devices_value.replace(",", " ").split():
+            parts = raw.split(":")
+            if len(parts) == 1:
+                on_host = in_container = parts[0]
+                permissions = "rwm"
+            elif len(parts) == 2:
+                on_host, in_container = parts
+                permissions = "rwm"
+            elif len(parts) == 3:
+                on_host, in_container, permissions = parts
+            else:
+                continue
+            formatted.append({
+                "PathOnHost": on_host,
+                "PathInContainer": in_container,
+                "CgroupPermissions": permissions,
+            })
+        return formatted
 
     async def update(self):
         """

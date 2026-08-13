@@ -271,6 +271,42 @@ async def test_create_with_extra_hosts(compute_project, manager):
             assert "GNS3_EXTRA_HOSTS=199.199.199.1\ttest\n199.199.199.1\ttest2" in called_kwargs["data"]["Env"]
         assert vm._extra_hosts == extra_hosts
 
+
+@pytest.mark.asyncio
+async def test_create_applies_env_host_config(compute_project, manager):
+    """
+    GNS3_SHM_SIZE / GNS3_DEVICES are applied as native Docker HostConfig keys
+    (ShmSize, Devices) at create time -- not forwarded as container env vars --
+    so they work even for vendor nodes that skip init.sh. Other GNS3_-prefixed
+    vars stay dropped from the container environment.
+    """
+
+    environment = (
+        "GNS3_SHM_SIZE=1024\n"
+        "GNS3_DEVICES=/dev/fuse\n"
+        "GNS3_EVIL=should-be-dropped\n"  # GNS3_ -> never forwarded as env
+        "FOO=bar"                        # normal var -> forwarded
+    )
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", environment=environment)
+            await vm.create()
+            data = mock.call_args[1]["data"]
+            host_config = data["HostConfig"]
+            assert host_config["ShmSize"] == 1024 * 1024 * 1024
+            assert host_config["Devices"] == [
+                {"PathOnHost": "/dev/fuse", "PathInContainer": "/dev/fuse", "CgroupPermissions": "rwm"}
+            ]
+            env = data["Env"]
+            assert "FOO=bar" in env
+            assert not any(
+                e.startswith(("GNS3_SHM_SIZE=", "GNS3_DEVICES=", "GNS3_EVIL="))
+                for e in env
+            ), "GNS3_ user vars must not leak into the container environment"
+
+
 @pytest.mark.asyncio
 async def test_create_with_colon_in_project_name(compute_project, manager):
 
