@@ -69,6 +69,7 @@ def test_json(vm, compute_project):
         'console_http_path': '/',
         'extra_hosts': None,
         'extra_volumes': [],
+        'extra_configs': [],
         'memory': 0,
         'cpus': 0,
         'aux': vm.aux,
@@ -305,6 +306,44 @@ async def test_create_applies_env_host_config(compute_project, manager):
                 e.startswith(("GNS3_SHM_SIZE=", "GNS3_DEVICES=", "GNS3_EVIL="))
                 for e in env
             ), "GNS3_ user vars must not leak into the container environment"
+
+
+@pytest.mark.asyncio
+async def test_create_with_extra_configs(compute_project, manager):
+    """
+    extra_configs entries are written to the node working directory and
+    bind-mounted read-only at their target path inside the container.
+    """
+
+    extra_configs = [{"target": "/firstboot.cfg", "content": "username clab\n!\nend"}]
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_configs=extra_configs)
+            await vm.create()
+            mounts = mock.call_args[1]["data"]["HostConfig"]["Mounts"]
+            injected = [m for m in mounts if m.get("Target") == "/firstboot.cfg"]
+            assert len(injected) == 1
+            assert injected[0]["ReadOnly"] is True
+            with open(injected[0]["Source"]) as f:
+                assert f.read() == "username clab\n!\nend"
+
+
+@pytest.mark.asyncio
+async def test_create_with_extra_configs_invalid_target(compute_project, manager):
+    """
+    An extra_configs target that is not absolute (or contains '..') is rejected.
+    """
+
+    extra_configs = [{"target": "relative/path", "content": "x"}]
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response):
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", extra_configs=extra_configs)
+            with pytest.raises(DockerError):
+                await vm.create()
 
 
 @pytest.mark.asyncio

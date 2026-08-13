@@ -89,6 +89,7 @@ class DockerVM(BaseNode):
         console_http_path="/",
         extra_hosts=None,
         extra_volumes=[],
+        extra_configs=None,
         memory=0,
         cpus=0,
     ):
@@ -118,6 +119,7 @@ class DockerVM(BaseNode):
         self._console_websocket = None
         self._extra_hosts = extra_hosts
         self._extra_volumes = extra_volumes or []
+        self._extra_configs = extra_configs or []
         self._memory = memory
         self._cpus = cpus
         self._permissions_fixed = True
@@ -164,6 +166,7 @@ class DockerVM(BaseNode):
             "node_directory": self.working_path,
             "extra_hosts": self.extra_hosts,
             "extra_volumes": self.extra_volumes,
+            "extra_configs": self.extra_configs,
             "memory": self.memory,
             "cpus": self.cpus,
         }
@@ -296,6 +299,14 @@ class DockerVM(BaseNode):
         self._extra_volumes = extra_volumes
 
     @property
+    def extra_configs(self):
+        return self._extra_configs
+
+    @extra_configs.setter
+    def extra_configs(self, extra_configs):
+        self._extra_configs = extra_configs or []
+
+    @property
     def memory(self):
         return self._memory
 
@@ -389,6 +400,28 @@ class DockerVM(BaseNode):
                 "Type": "bind",
                 "Source": source,
                 "Target": "/gns3volumes{}".format(volume)
+            })
+
+        # Inject extra config files: write each to the node working directory and
+        # bind-mount it read-only at its target path. Single-file binds are applied
+        # at create time, so this works for the generic init.sh path AND for vendor
+        # nodes that skip init.sh (the NOS reads its startup config from the mount).
+        for cfg in self._extra_configs:
+            target = cfg["target"] if isinstance(cfg, dict) else cfg.target
+            content = cfg["content"] if isinstance(cfg, dict) else cfg.content
+            if not target.startswith("/") or ".." in target.split("/"):
+                raise DockerError(
+                    f"Extra config target '{target}' must be an absolute path and not contain '..'."
+                )
+            host_path = os.path.join(self.working_dir, "configs", target.lstrip("/"))
+            os.makedirs(os.path.dirname(host_path), exist_ok=True)
+            with open(host_path, "w") as f:
+                f.write(content)
+            binds.append({
+                "Type": "bind",
+                "Source": host_path,
+                "Target": target,
+                "ReadOnly": True,
             })
 
         return binds

@@ -48,6 +48,19 @@ class CustomAdapter(BaseModel):
     mac_address: Optional[str] = Field(None, pattern="^([0-9a-fA-F]{2}[:]){5}([0-9a-fA-F]{2})$")
 
 
+class ExtraConfig(BaseModel):
+    """
+    A configuration file injected into a Docker container.
+
+    GNS3 writes ``content`` to a host file and bind-mounts it read-only at
+    ``target`` inside the container. Used to seed NOS startup configs (e.g.
+    XRd first-boot config, FRR frr.conf) without rebuilding the image.
+    """
+
+    target: str = Field(..., description="Absolute path inside the container where the file is mounted")
+    content: str = Field("", description="File content written by GNS3 and bind-mounted read-only into the container")
+
+
 class ConsoleType(str, Enum):
     """
     Supported console types.
