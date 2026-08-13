@@ -59,6 +59,7 @@ class Docker(BaseManager):
         self._connector = None
         self._session = None
         self._api_version = DOCKER_MINIMUM_API_VERSION
+        self._host_checked = False
 
     def _select_node_class(self, **kwargs):
         """Select the node class based on console_type."""
@@ -160,6 +161,60 @@ class Docker(BaseManager):
                 log.warning("Using Docker client with the minimum API version {}".format(self._api_version))
 
             log.info("Connected to Docker daemon version {} using API version {}".format(version, self._api_version))
+            self._check_host_readiness()
+
+    def _check_host_readiness(self):
+        """
+        Best-effort, read-only check of kernel settings that heavy NOS containers
+        (e.g. Cisco XRd) need. The server runs unprivileged (only the setuid
+        ubridge helper gets root), so we cannot raise these limits ourselves --
+        we only warn, with the exact commands to fix, when they are too low or
+        when FUSE support is missing. Runs at most once per process.
+        """
+
+        if self._host_checked:
+            return
+        self._host_checked = True
+
+        # Thresholds recommended for running several heavy containers (sized for
+        # ~15 XRd-style nodes). Raising them is harmless; the stock Linux defaults
+        # (e.g. max_user_instances=128) are far too low and break such images.
+        thresholds = {
+            "fs.inotify.max_user_instances": 64000,
+            "fs.inotify.max_user_watches": 524288,
+            "fs.file-max": 1000000,
+        }
+        low = []
+        for key, minimum in thresholds.items():
+            try:
+                with open(f"/proc/sys/{key.replace('.', '/')}") as f:
+                    current = int(f.read().strip())
+            except (OSError, ValueError):
+                return  # Not Linux or unreadable -- nothing to check.
+            if current < minimum:
+                low.append((key, current, minimum))
+
+        fuse_supported = False
+        try:
+            with open("/proc/filesystems") as f:
+                filesystems = {parts[-1] for parts in (line.split() for line in f) if parts}
+            fuse_supported = "fuse" in filesystems or "fuseblk" in filesystems
+        except OSError:
+            pass
+
+        if low:
+            details = ", ".join(f"{k}={c} (need >={m})" for k, c, m in low)
+            raise_cmd = " ".join(f"{k}={m}" for k, _, m in low)
+            log.warning(
+                f"Low kernel limits for heavy Docker containers ({details}). "
+                f"Some NOS images (e.g. Cisco XRd) may fail to start. Raise once: "
+                f"'sudo sysctl -w {raise_cmd}' and persist it under /etc/sysctl.d/."
+            )
+        if not fuse_supported:
+            log.warning(
+                "FUSE filesystem support is not available in the kernel. "
+                "Containers that need it (e.g. Cisco XRd) will fail. Load it: 'sudo modprobe fuse'."
+            )
 
     def connector(self):
 
