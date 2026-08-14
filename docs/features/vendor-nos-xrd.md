@@ -65,7 +65,7 @@ graph TB
 | config injection | `extra_configs: [{target, content}]` (template/node/appliance schema field) | content written under the node dir, bind-mounted **read-only** at `target` — seeds NOS startup configs without rebuilding the image | `docker_vm.py` `_mount_binds()`; persisted in `docker_templates.extra_configs` (Alembic migration) |
 | udev masking | `GNS3_MASK_UDEV=1` | `/dev/null` over the 5 udev systemd units **and** `/bin|/sbin|/usr/bin/udevadm` | `docker_vm.py` `create()` |
 | generic unit mask | `GNS3_MASK_SYSTEMD=u1,u2` | `/dev/null` over arbitrary `/etc/systemd/system/<unit>` | `docker_vm.py` `create()` |
-| graceful stop | automatic for vendor containers (`docker_exec`) | stop sends SIGTERM and waits up to 60 s (Docker SIGKILLs after the grace period) instead of the base class' immediate kill — systemd NOS images require a graceful shutdown | `vendor_docker_vm.py` `_terminate_container()` |
+| graceful stop | `GNS3_STOP_TIMEOUT=60` (seconds; default 60) | vendor containers are stopped with SIGTERM + a grace period (Docker SIGKILLs once it expires) instead of the base class' immediate kill — systemd NOS images require a graceful shutdown | `vendor_docker_vm.py` `_terminate_container()` |
 | host check | automatic at Docker connect | read-only `/proc` check of inotify/file-max/FUSE; warns with exact fix commands (server is unprivileged — it can only check) | `compute/docker/__init__.py` `_check_host_readiness()` |
 
 `GNS3_*` variables are consumed host-side only and never forwarded into the
@@ -200,7 +200,7 @@ sequenceDiagram
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.3 | 2026-08-14 | Persistence corrected: XR's live data layer is `/xr-storage` (the image's symlink farm is materialized into real directories at bootstrap; `/xr-storage-shadow` is a pristine spare) — the appliance persists both. Vendor containers now stop gracefully (SIGTERM + 60 s grace) instead of being SIGKILLed on the spot. |
+| 1.3 | 2026-08-14 | Persistence corrected: XR's live data layer is `/xr-storage` (the image's symlink farm is materialized into real directories at bootstrap; `/xr-storage-shadow` is a pristine spare) — the appliance persists both. Vendor containers now stop gracefully (SIGTERM + `GNS3_STOP_TIMEOUT` grace, default 60 s) instead of being SIGKILLed on the spot. |
 | 1.2 | 2026-08-14 | Link UDP self-loop root-caused to a port-allocation race and fixed — see [link-udp-self-loop](../bugs/link-udp-self-loop.md) (now marked Fixed). |
 | 1.1 | 2026-08-14 | Datapath validated end-to-end (XRd brings its own interfaces up; ARP/ICMP bidirectional). Add troubleshooting entry for the one-way-link symptom (GNS3 link UDP self-loop bug, see bugs/link-udp-self-loop.md). |
 | 1.0 | 2026-08-14 | Initial documentation of the XRd control-plane adaptation: vendor path requirement, shm/devices/extra_configs/udev-mask mechanisms, host-disturbance root causes, appliance recipe. |

@@ -55,6 +55,8 @@ class VendorDockerVM(DockerVM):
       (adapter order) instead of default ``eth{N}``.
     * ``GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli`` — command run inside the
       container by the ``docker_exec`` console (defaults to ``/bin/sh``).
+    * ``GNS3_STOP_TIMEOUT=60`` — SIGTERM grace period in seconds when stopping
+      the container (default 60; Docker SIGKILLs once it expires).
     """
 
     def __init__(self, *args, **kwargs):
@@ -66,6 +68,7 @@ class VendorDockerVM(DockerVM):
         self._interface_names = []
         self._console_cmd = None
         self._console_exec_writer = None
+        self._stop_timeout = 60
 
         if self._environment:
             for _line in self._environment.splitlines():
@@ -78,6 +81,13 @@ class VendorDockerVM(DockerVM):
                     ]
                 elif _line.startswith("GNS3_CONSOLE_CMD="):
                     self._console_cmd = _line.split("=", 1)[1].strip()
+                elif _line.startswith("GNS3_STOP_TIMEOUT="):
+                    try:
+                        timeout = int(_line.split("=", 1)[1].strip())
+                        if 1 <= timeout <= 600:
+                            self._stop_timeout = timeout
+                    except ValueError:
+                        pass
 
     # ---- hook overrides ---------------------------------------------------
 
@@ -142,13 +152,14 @@ class VendorDockerVM(DockerVM):
         """
         Override: vendor NOS containers run systemd and require a graceful
         shutdown (e.g. Cisco XRd treats an abrupt SIGKILL as an unclean
-        shutdown). Send SIGTERM and wait up to 60 s for the services to stop;
-        Docker SIGKILLs the container itself once the grace period expires,
-        so no fallback kill is needed. The blocking stop call sits well
-        inside the manager's default 300 s query timeout.
+        shutdown). Send SIGTERM and wait up to ``GNS3_STOP_TIMEOUT`` seconds
+        (default 60) for the services to stop; Docker SIGKILLs the container
+        itself once the grace period expires, so no fallback kill is needed.
+        The blocking stop call sits well inside the manager's default 300 s
+        query timeout.
         """
         try:
-            await self.manager.query("POST", f"containers/{self._cid}/stop", params={"t": 60})
+            await self.manager.query("POST", f"containers/{self._cid}/stop", params={"t": self._stop_timeout})
         except DockerHttp304Error:
             pass  # already stopped
 

@@ -667,3 +667,30 @@ async def test_stop_uses_graceful_termination(compute_project, manager):
                     ) as mock_term:
                         await vm.stop()
     mock_term.assert_called_once()
+
+
+def test_env_stop_timeout(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=120")
+    assert vm._stop_timeout == 120
+
+
+def test_env_stop_timeout_default_60(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1")
+    assert vm._stop_timeout == 60
+
+
+def test_env_stop_timeout_invalid_keeps_default(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=abc")
+    assert vm._stop_timeout == 60
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=9999")
+    assert vm._stop_timeout == 60
+
+
+@pytest.mark.asyncio
+async def test_terminate_container_uses_env_timeout(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=120")
+    manager.query = AsyncioMagicMock()
+
+    await vm._terminate_container()
+
+    manager.query.assert_called_once_with("POST", "containers/e90e34656842/stop", params={"t": 120})
