@@ -103,6 +103,7 @@ GNS3_CONSOLE_CMD=/pkg/bin/xr_cli.sh
 GNS3_MASK_UDEV=1
 GNS3_SHM_SIZE=1024
 GNS3_DEVICES=/dev/fuse
+GNS3_STOP_TIMEOUT=40
 XR_FIRST_BOOT_CONFIG=/firstboot.cfg
 XR_MGMT_INTERFACES=linux:eth0,xr_name=Mg0/RP0/CPU0/0,chksum,snoop_v4,snoop_v6
 XR_INTERFACES=linux:eth1,xr_name=Gi0/0/0/0;linux:eth2,xr_name=Gi0/0/0/1;...
