@@ -80,6 +80,19 @@ class DockerVM(BaseNode):
         "systemd-udev-settle.service",
     )
 
+    # udevadm binary paths also null-bound by GNS3_MASK_UDEV=1. NOS startup
+    # scripts call udevadm directly -- Cisco XRd's xr_startup.sh runs
+    # `udevadm trigger --action=add --parent-match=<usb device>` (USB license
+    # dongle probing), which synthesizes uevents into the host kernel from a
+    # privileged container and reconnects host USB devices. Masking the units
+    # alone does not stop this; the binary must be neutralized too. XRd boots
+    # fine without udevadm (interfaces are pre-created by GNS3).
+    _UDEVADM_PATHS = (
+        "/bin/udevadm",
+        "/sbin/udevadm",
+        "/usr/bin/udevadm",
+    )
+
     def __init__(
         self,
         name,
@@ -561,11 +574,11 @@ class DockerVM(BaseNode):
                     # audio/disk devices, reconnecting/muting them on every start.
                     # XRd doesn't need udev (interfaces are pre-created by GNS3), so
                     # bind /dev/null over the udev units to keep it from running.
-                    for unit in self._UDEV_UNITS:
+                    for target in [f"/etc/systemd/system/{u}" for u in self._UDEV_UNITS] + list(self._UDEVADM_PATHS):
                         params["HostConfig"]["Mounts"].append({
                             "Type": "bind",
                             "Source": "/dev/null",
-                            "Target": f"/etc/systemd/system/{unit}",
+                            "Target": target,
                             "ReadOnly": True,
                         })
                 elif line.startswith("GNS3_MASK_SYSTEMD="):

@@ -327,6 +327,8 @@ async def test_create_masks_systemd_units(compute_project, manager):
                       if m.get("Source") == "/dev/null"}
             for unit in DockerVM._UDEV_UNITS:
                 assert f"/etc/systemd/system/{unit}" in masked
+            for path in DockerVM._UDEVADM_PATHS:
+                assert path in masked
             assert "/etc/systemd/system/foo.service" in masked
             assert "/etc/systemd/system/bar.socket" in masked
 
