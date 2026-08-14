@@ -158,6 +158,7 @@ sequenceDiagram
 | `Invalid interface entries ... XR_MGMT_INTERFACES` | use `xr_name=Mg0/RP0/CPU0/0` |
 | Host audio muted / USB reconnects when the node starts | set `GNS3_MASK_UDEV=1` |
 | Config lost across stop/start | `extra_volumes` must be `/xr-storage-shadow` |
+| Two nodes can't ping, only one side ARPs | GNS3 link wiring bug (UDP self-loop on one end), not XRd — delete and re-create the link; see [link-udp-self-loop](../bugs/link-udp-self-loop.md) |
 | Compute log: busybox coredump storm | fixed by the container-chown change; verify gns3-server is current |
 
 ## Notes
@@ -190,4 +191,5 @@ sequenceDiagram
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-08-14 | Datapath validated end-to-end (XRd brings its own interfaces up; ARP/ICMP bidirectional). Add troubleshooting entry for the one-way-link symptom (GNS3 link UDP self-loop bug, see bugs/link-udp-self-loop.md). |
 | 1.0 | 2026-08-14 | Initial documentation of the XRd control-plane adaptation: vendor path requirement, shm/devices/extra_configs/udev-mask mechanisms, host-disturbance root causes, appliance recipe. |
