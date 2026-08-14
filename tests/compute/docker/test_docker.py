@@ -415,3 +415,34 @@ async def test_check_host_readiness_silent_when_ok(caplog):
             docker._check_host_readiness()
 
     assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_check_host_readiness_continues_past_unreadable_key(caplog):
+    """
+    One unreadable /proc/sys key must not discard the warnings already
+    collected nor skip the FUSE check (that was a mid-loop return).
+    """
+
+    import logging
+    from io import StringIO
+
+    docker = Docker()
+    files = {
+        "/proc/sys/fs/inotify/max_user_instances": "128",  # low -> must warn
+        # max_user_watches and fs.file-max: unreadable -> skipped
+        "/proc/filesystems": "nodev ext4\n",  # no fuse -> must warn
+    }
+
+    def fake_open(path, *args, **kwargs):
+        if path not in files:
+            raise OSError("masked")
+        return StringIO(files[path])
+
+    with patch("builtins.open", side_effect=fake_open):
+        with caplog.at_level(logging.WARNING, logger="gns3server.compute.docker"):
+            docker._check_host_readiness()
+
+    message = " ".join(r.message for r in caplog.records)
+    assert "max_user_instances=128" in message  # collected before the gap
+    assert "modprobe fuse" in message            # FUSE check still ran

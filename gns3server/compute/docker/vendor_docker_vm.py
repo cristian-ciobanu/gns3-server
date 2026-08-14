@@ -62,14 +62,22 @@ class VendorDockerVM(DockerVM):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Prototype knobs — parsed from GNS3_-prefixed entries in create().
-        # Parse eagerly so _get_container_ifname can return the right name.
+        self._console_exec_writer = None
+        # Parsed eagerly so _get_container_ifname can return the right name,
+        # and re-parsed on every create() so a PUT to the node's environment
+        # takes effect on the next (re)create instead of the next reload.
+        self._parse_vendor_environment()
+
+    def _parse_vendor_environment(self):
+        """
+        (Re)parse the GNS3_* knobs from the current ``environment`` value,
+        resetting to defaults first so removed entries stop applying.
+        """
+
         self._gns3_init = True
         self._interface_names = []
         self._console_cmd = None
-        self._console_exec_writer = None
         self._stop_timeout = 60
-
         if self._environment:
             for _line in self._environment.splitlines():
                 _line = _line.strip().rstrip(",")
@@ -88,6 +96,12 @@ class VendorDockerVM(DockerVM):
                             self._stop_timeout = timeout
                     except ValueError:
                         pass
+
+    async def create(self):
+        # The environment may have changed since __init__ (PUT on the node) —
+        # re-parse the knobs so the recreated container picks them up.
+        self._parse_vendor_environment()
+        return await super().create()
 
     # ---- hook overrides ---------------------------------------------------
 
@@ -148,18 +162,35 @@ class VendorDockerVM(DockerVM):
                 pass
             self._console_exec_writer = None
 
-    async def _terminate_container(self):
+    async def _terminate_container(self, graceful: bool = False):
         """
         Override: vendor NOS containers run systemd and require a graceful
         shutdown (e.g. Cisco XRd treats an abrupt SIGKILL as an unclean
-        shutdown). Send SIGTERM and wait up to ``GNS3_STOP_TIMEOUT`` seconds
-        (default 60) for the services to stop; Docker SIGKILLs the container
-        itself once the grace period expires, so no fallback kill is needed.
-        The blocking stop call sits well inside the manager's default 300 s
-        query timeout.
+        shutdown).
+
+        With ``graceful`` (explicit user stop), send SIGTERM and wait up to
+        ``GNS3_STOP_TIMEOUT`` seconds (default 60, 1-600) for the services to
+        stop; Docker SIGKILLs the container itself once the grace period
+        expires, so no fallback kill is needed. The stop query gets an HTTP
+        timeout with a margin over the grace period — the manager's default
+        300 s would abort first for values above it.
+
+        Without ``graceful`` (delete/update/close/crash cleanup), fall back to
+        the base immediate kill: those paths force-delete or recreate the
+        container right after anyway, so a grace period buys nothing but
+        latency.
         """
+        if not graceful:
+            await super()._terminate_container(graceful=False)
+            return
         try:
-            await self.manager.query("POST", f"containers/{self._cid}/stop", params={"t": self._stop_timeout})
+            response = await self.manager.http_query(
+                "POST",
+                f"containers/{self._cid}/stop",
+                params={"t": self._stop_timeout},
+                timeout=self._stop_timeout + 30,
+            )
+            response.close()
         except DockerHttp304Error:
             pass  # already stopped
 

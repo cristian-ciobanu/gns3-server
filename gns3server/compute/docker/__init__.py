@@ -190,7 +190,9 @@ class Docker(BaseManager):
                 with open(f"/proc/sys/{key.replace('.', '/')}") as f:
                     current = int(f.read().strip())
             except (OSError, ValueError):
-                return  # Not Linux or unreadable -- nothing to check.
+                # One unreadable key must not discard the warnings already
+                # collected nor skip the FUSE check — skip just this key.
+                continue
             if current < minimum:
                 low.append((key, current, minimum))
 

@@ -177,10 +177,12 @@ async def start_docker_node(node: DockerVM = Depends(dep_node)) -> None:
 )
 async def stop_docker_node(node: DockerVM = Depends(dep_node)) -> None:
     """
-    Stop a Docker node.
+    Stop a Docker node. This is the explicit user stop — the only path that
+    asks for a graceful SIGTERM shutdown (vendor NOS override); internal
+    paths (delete/update/close) keep the immediate kill.
     """
 
-    await node.stop()
+    await node.stop(graceful=True)
 
 
 @router.post(

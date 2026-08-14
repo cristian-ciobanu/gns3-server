@@ -65,7 +65,7 @@ graph TB
 | config injection | `extra_configs: [{target, content}]` (template/node/appliance schema field) | content written under the node dir, bind-mounted **read-only** at `target` — seeds NOS startup configs without rebuilding the image | `docker_vm.py` `_mount_binds()`; persisted in `docker_templates.extra_configs` (Alembic migration) |
 | udev masking | `GNS3_MASK_UDEV=1` | `/dev/null` over the 5 udev systemd units **and** `/bin|/sbin|/usr/bin/udevadm` | `docker_vm.py` `create()` |
 | generic unit mask | `GNS3_MASK_SYSTEMD=u1,u2` | `/dev/null` over arbitrary `/etc/systemd/system/<unit>` | `docker_vm.py` `create()` |
-| graceful stop | `GNS3_STOP_TIMEOUT=60` (seconds; default 60) | vendor containers are stopped with SIGTERM + a grace period (Docker SIGKILLs once it expires) instead of the base class' immediate kill — systemd NOS images require a graceful shutdown | `vendor_docker_vm.py` `_terminate_container()` |
+| graceful stop | `GNS3_STOP_TIMEOUT=60` (seconds; default 60, max 600) | explicit user stop sends SIGTERM + a grace period (Docker SIGKILLs once it expires) instead of the base class' immediate kill — systemd NOS images require a graceful shutdown; internal paths (delete/update/close) keep the immediate kill since the container is force-deleted right after | `vendor_docker_vm.py` `_terminate_container()` |
 | host check | automatic at Docker connect | read-only `/proc` check of inotify/file-max/FUSE; warns with exact fix commands (server is unprivileged — it can only check) | `compute/docker/__init__.py` `_check_host_readiness()` |
 
 `GNS3_*` variables are consumed host-side only and never forwarded into the
@@ -201,6 +201,7 @@ sequenceDiagram
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-08-15 | Code-review hardening: stop-query HTTP timeout scales with `GNS3_STOP_TIMEOUT` (values >300 s no longer abort); overlapping mask/config bind targets deduplicated (Docker "Duplicate mount point"); `ExtraConfig.target` validated at save time and directory forms rejected; host-readiness check no longer aborts on one unreadable `/proc/sys` key; base env parser strips trailing commas; vendor env knobs re-parsed on create (PUT environment takes effect); graceful stop limited to explicit user stop (delete/update/close keep the immediate kill); extra_configs under a persisted volume warns. |
 | 1.3 | 2026-08-14 | Persistence corrected: XR's live data layer is `/xr-storage` (the image's symlink farm is materialized into real directories at bootstrap; `/xr-storage-shadow` is a pristine spare) — the appliance persists both. Vendor containers now stop gracefully (SIGTERM + `GNS3_STOP_TIMEOUT` grace, default 60 s) instead of being SIGKILLed on the spot. |
 | 1.2 | 2026-08-14 | Link UDP self-loop root-caused to a port-allocation race and fixed — see [link-udp-self-loop](../bugs/link-udp-self-loop.md) (now marked Fixed). |
 | 1.1 | 2026-08-14 | Datapath validated end-to-end (XRd brings its own interfaces up; ARP/ICMP bidirectional). Add troubleshooting entry for the one-way-link symptom (GNS3 link UDP self-loop bug, see bugs/link-udp-self-loop.md). |

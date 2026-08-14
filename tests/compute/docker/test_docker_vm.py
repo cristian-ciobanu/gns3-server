@@ -1998,3 +1998,103 @@ async def test_stop_exited_container_no_stop_query(vm):
                 for call in mock_query.mock_calls
             )
     assert vm.status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_create_dedups_overlapping_mount_targets(compute_project, manager):
+    """
+    GNS3_MASK_UDEV overlapping a GNS3_MASK_SYSTEMD entry (or a unit named
+    twice) must not produce duplicate bind targets — Docker rejects the
+    create outright with "Duplicate mount point".
+    """
+
+    environment = "GNS3_MASK_UDEV=1\nGNS3_MASK_SYSTEMD=systemd-udevd.service,foo.service,foo.service"
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", environment=environment)
+            await vm.create()
+            mounts = mock.call_args[1]["data"]["HostConfig"]["Mounts"]
+            targets = [m["Target"] for m in mounts]
+            assert len(targets) == len(set(targets)), "duplicate bind targets in Mounts"
+            # the overlapping unit is present (masked) exactly once
+            assert targets.count("/etc/systemd/system/systemd-udevd.service") == 1
+            assert targets.count("/etc/systemd/system/foo.service") == 1
+
+
+@pytest.mark.asyncio
+async def test_create_env_trailing_comma_still_parsed(compute_project, manager):
+    """
+    A trailing comma (environment composed from comma-separated lists) must
+    not silently disable the knobs — the base parser strips it like the
+    vendor parser does.
+    """
+
+    environment = "GNS3_MASK_UDEV=1,\nGNS3_SHM_SIZE=256,"
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response) as mock:
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu", environment=environment)
+            await vm.create()
+            host_config = mock.call_args[1]["data"]["HostConfig"]
+            assert host_config["ShmSize"] == 256 * 1024 * 1024
+            masked = {m["Target"] for m in host_config["Mounts"] if m.get("Source") == "/dev/null"}
+            assert "/etc/systemd/system/systemd-udevd.service" in masked
+
+
+@pytest.mark.asyncio
+async def test_create_with_extra_configs_directory_target_rejected(compute_project, manager):
+    """
+    Directory-form targets ('/', '/etc/', '///') would make the content write
+    fail with IsADirectoryError (a raw 500) — they must be rejected as
+    DockerError at create time.
+    """
+
+    response = {"Id": "e90e34656806", "Warnings": []}
+    for bad in ("/", "/etc/", "///"):
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response):
+                vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu",
+                              extra_configs=[{"target": bad, "content": "x"}])
+                with pytest.raises(DockerError):
+                    await vm.create()
+
+
+def test_extra_config_schema_rejects_bad_targets():
+    """
+    The pydantic model rejects bad targets at template-save time (a 422)
+    instead of at node-create time (after a potentially multi-GB image pull).
+    """
+
+    from pydantic import ValidationError
+    from gns3server.schemas.common import ExtraConfig
+
+    for bad in ("relative/path", "/has/../dots", "/", "/etc/", "no-leading-slash"):
+        with pytest.raises(ValidationError):
+            ExtraConfig(target=bad, content="x")
+    ok = ExtraConfig(target="/firstboot.cfg", content="x")
+    assert ok.target == "/firstboot.cfg"
+
+
+@pytest.mark.asyncio
+async def test_create_warns_when_extra_config_under_volume(compute_project, manager, caplog):
+    """
+    An extra_configs target beneath a persisted volume is covered by the
+    volume bind at start — the injection would silently not take effect, so
+    warn at create time.
+    """
+
+    import logging
+    extra_configs = [{"target": "/xr-storage/config/foo.cfg", "content": "x"}]
+    response = {"Id": "e90e34656806", "Warnings": []}
+
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "ubuntu"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response):
+            vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu",
+                          extra_configs=extra_configs, extra_volumes=["/xr-storage"])
+            with caplog.at_level(logging.WARNING, logger="gns3server.compute.docker.docker_vm"):
+                await vm.create()
+
+    assert any("shadowed by persisted volume" in r.message for r in caplog.records)

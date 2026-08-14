@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from enum import Enum
 
@@ -59,6 +59,22 @@ class ExtraConfig(BaseModel):
 
     target: str = Field(..., description="Absolute path inside the container where the file is mounted")
     content: str = Field("", description="File content written by GNS3 and bind-mounted read-only into the container")
+
+    @field_validator("target")
+    @classmethod
+    def target_is_an_absolute_file_path(cls, v):
+        """
+        Reject at save time (template/appliance/node PUT) what would only
+        blow up at node-create time — after a potentially multi-GB image
+        pull: relative paths, '..' components and directory forms ('/',
+        '/etc/').
+        """
+        if not v.startswith("/") or v.endswith("/") or ".." in v.split("/"):
+            raise ValueError(
+                "target must be an absolute file path inside the container "
+                "(start with '/', name a file, no '..' components)"
+            )
+        return v
 
 
 class ConsoleType(str, Enum):

@@ -433,10 +433,21 @@ class DockerVM(BaseNode):
         for cfg in self._extra_configs:
             target = cfg["target"] if isinstance(cfg, dict) else cfg.target
             content = cfg["content"] if isinstance(cfg, dict) else cfg.content
-            if not target.startswith("/") or ".." in target.split("/"):
+            if not target.startswith("/") or target.endswith("/") or ".." in target.split("/"):
                 raise DockerError(
-                    f"Extra config target '{target}' must be an absolute path and not contain '..'."
+                    f"Extra config target '{target}' must be an absolute file path and not contain '..'."
                 )
+            for volume in self._volumes:
+                # A single-file bind gets covered by the volume's bind mount at
+                # start (init.sh or the vendor volume bridge), so the injected
+                # content would never be seen — or worse, frozen at whatever
+                # the first-start seed copied.
+                if target == volume or target.startswith(volume.rstrip("/") + "/"):
+                    log.warning(
+                        "Extra config target '%s' on container '%s' is shadowed by persisted volume '%s' "
+                        "and will not take effect; pick a target outside persisted volumes.",
+                        target, self._name, volume,
+                    )
             host_path = os.path.join(self.working_dir, "configs", target.lstrip("/"))
             os.makedirs(os.path.dirname(host_path), exist_ok=True)
             with open(host_path, "w") as f:
@@ -556,7 +567,10 @@ class DockerVM(BaseNode):
         # when set, so ordinary nodes keep the default Docker behaviour.
         if self._environment:
             for line in self._environment.splitlines():
-                line = line.strip()
+                # Strip a trailing comma like the vendor-class parser does, so
+                # "GNS3_MASK_UDEV=1," composed from a comma-separated list
+                # still activates (values are never comma-separated here).
+                line = line.strip().rstrip(",")
                 if line.startswith("GNS3_SHM_SIZE="):
                     try:
                         params["HostConfig"]["ShmSize"] = int(line.split("=", 1)[1].strip()) * (1024 * 1024)
@@ -593,6 +607,19 @@ class DockerVM(BaseNode):
                                 "Target": f"/etc/systemd/system/{unit}",
                                 "ReadOnly": True,
                             })
+
+        # Overlapping bind targets (GNS3_MASK_UDEV together with a
+        # GNS3_MASK_SYSTEMD entry for the same unit, an extra_configs target
+        # equal to a masked unit, a unit named twice in the list) make Docker
+        # reject the create outright ("Duplicate mount point") — keep only
+        # the first occurrence of each target.
+        seen_targets = set()
+        deduped_mounts = []
+        for mount in params["HostConfig"]["Mounts"]:
+            if mount["Target"] not in seen_targets:
+                seen_targets.add(mount["Target"])
+                deduped_mounts.append(mount)
+        params["HostConfig"]["Mounts"] = deduped_mounts
 
         if params["Entrypoint"] is None:
             params["Entrypoint"] = []
@@ -1179,9 +1206,14 @@ class DockerVM(BaseNode):
                 await telnet_server.wait_closed()
             self._telnet_servers = []
 
-    async def stop(self):
+    async def stop(self, graceful: bool = False):
         """
         Stops this Docker container.
+
+        :param graceful: request a graceful SIGTERM shutdown (honoured by the
+            vendor NOS override). The default immediate kill is used on the
+            internal paths (delete, update, close, crash cleanup), where the
+            container is force-deleted or recreated right after anyway.
         """
 
         try:
@@ -1207,7 +1239,7 @@ class DockerVM(BaseNode):
             state = await self._get_container_state()
             if state != "stopped" and state != "exited":
                 try:
-                    await self._terminate_container()
+                    await self._terminate_container(graceful=graceful)
                     log.debug(f"Docker container '{self._name}' [{self._image}] stopped")
                 except DockerHttp409Error:
                     # Container is already stopped
@@ -1218,14 +1250,16 @@ class DockerVM(BaseNode):
             return
         self.status = "stopped"
 
-    async def _terminate_container(self):
+    async def _terminate_container(self, graceful: bool = False):
         """
         Final termination of a still-running container: immediate SIGKILL.
         GNS3 has already persisted container state (permissions via
         _fix_permissions, /gns3volumes) before this point, and the business
         process (often an interactive shell) ignores SIGTERM — a stop grace
         period buys nothing but latency. Vendor NOS containers override this
-        with a graceful SIGTERM shutdown (see VendorDockerVM).
+        with a graceful SIGTERM shutdown when asked (see VendorDockerVM);
+        the ``graceful`` flag is accepted here only for signature
+        compatibility.
         """
 
         await self.manager.query("POST", f"containers/{self._cid}/kill")
