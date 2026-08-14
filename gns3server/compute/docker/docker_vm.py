@@ -1206,12 +1206,8 @@ class DockerVM(BaseNode):
 
             state = await self._get_container_state()
             if state != "stopped" and state != "exited":
-                # SIGKILL immediately. GNS3 has already persisted container state
-                # (permissions via _fix_permissions, /gns3volumes) before this
-                # point, and the business process (often an interactive shell)
-                # ignores SIGTERM — so a stop grace period buys nothing but latency.
                 try:
-                    await self.manager.query("POST", f"containers/{self._cid}/kill")
+                    await self._terminate_container()
                     log.debug(f"Docker container '{self._name}' [{self._image}] stopped")
                 except DockerHttp409Error:
                     # Container is already stopped
@@ -1221,6 +1217,18 @@ class DockerVM(BaseNode):
             log.debug(f"Docker runtime error when closing: {str(e)}")
             return
         self.status = "stopped"
+
+    async def _terminate_container(self):
+        """
+        Final termination of a still-running container: immediate SIGKILL.
+        GNS3 has already persisted container state (permissions via
+        _fix_permissions, /gns3volumes) before this point, and the business
+        process (often an interactive shell) ignores SIGTERM — a stop grace
+        period buys nothing but latency. Vendor NOS containers override this
+        with a graceful SIGTERM shutdown (see VendorDockerVM).
+        """
+
+        await self.manager.query("POST", f"containers/{self._cid}/kill")
 
     async def pause(self):
         """

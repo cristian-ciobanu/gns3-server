@@ -612,3 +612,58 @@ async def test_create_exec_cmd_has_no_while_true(compute_project, manager):
     assert captured["data"]["User"] == "root"
     assert captured["data"]["Tty"] is True
     assert "TERM=xterm" in captured["data"]["Env"]
+
+
+# ---------------------------------------------------------------------------
+# Container termination (graceful stop for vendor NOS)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_terminate_container_graceful_stop(compute_project, manager):
+    """Vendor containers must be SIGTERMed with a grace period, not SIGKILLed
+    on the spot: systemd NOS images (e.g. Cisco XRd) require a graceful
+    shutdown, and Docker itself SIGKILLs the container once the grace period
+    expires."""
+
+    vm = _make_vm(compute_project, manager)
+    manager.query = AsyncioMagicMock()
+
+    await vm._terminate_container()
+
+    manager.query.assert_called_once_with("POST", "containers/e90e34656842/stop", params={"t": 60})
+
+
+@pytest.mark.asyncio
+async def test_terminate_container_already_stopped_is_silent(compute_project, manager):
+    """Docker answers 304 when the container is already stopped — that is not
+    an error for the stop path."""
+
+    from gns3server.compute.docker.docker_error import DockerHttp304Error
+
+    vm = _make_vm(compute_project, manager)
+    manager.query = AsyncioMagicMock(
+        side_effect=DockerHttp304Error("Docker has returned an error: 304"))
+    await vm._terminate_container()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_stop_uses_graceful_termination(compute_project, manager):
+    """The full stop() path must route through _terminate_container (the
+    vendor override), not the base class' immediate kill."""
+
+    vm = _make_vm(compute_project, manager)
+    with patch.object(DockerVM, "_clean_servers", new=AsyncioMagicMock()):
+        with patch.object(DockerVM, "_stop_ubridge", new=AsyncioMagicMock()):
+            with patch.object(
+                DockerVM, "_get_container_state", new=AsyncioMagicMock(return_value="running")
+            ):
+                with patch.object(
+                    VendorDockerVM, "_fix_permissions", new=AsyncioMagicMock()
+                ) as mock_perms:
+                    mock_perms.return_value = None
+                    vm._permissions_fixed = True
+                    with patch.object(
+                        VendorDockerVM, "_terminate_container", new=AsyncioMagicMock()
+                    ) as mock_term:
+                        await vm.stop()
+    mock_term.assert_called_once()

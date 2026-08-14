@@ -34,7 +34,7 @@ graph TB
     subgraph Appliance["XRd appliance (.gns3a) — pure configuration"]
         ENV["environment: GNS3_SKIP_INIT / GNS3_CONSOLE_CMD / GNS3_MASK_UDEV / GNS3_SHM_SIZE / GNS3_DEVICES + XR_*"]
         XC["extra_configs: /firstboot.cfg"]
-        XV["extra_volumes: /xr-storage-shadow"]
+        XV["extra_volumes: /xr-storage + /xr-storage-shadow"]
     end
     subgraph Server["gns3-server (generic mechanisms)"]
         CREATE["DockerVM.create() HostConfig"]
@@ -47,7 +47,7 @@ graph TB
     subgraph Container["XRd container"]
         SYSTEMD["systemd (/usr/sbin/init)"]
         XR["XR control plane"]
-        XRS["/xr-storage-shadow (persisted)"]
+        XRS["/xr-storage (persisted, live data layer)"]
     end
     ENV --> CREATE --> SYSTEMD
     ENV --> MASK & HOSTCFG
@@ -65,6 +65,7 @@ graph TB
 | config injection | `extra_configs: [{target, content}]` (template/node/appliance schema field) | content written under the node dir, bind-mounted **read-only** at `target` — seeds NOS startup configs without rebuilding the image | `docker_vm.py` `_mount_binds()`; persisted in `docker_templates.extra_configs` (Alembic migration) |
 | udev masking | `GNS3_MASK_UDEV=1` | `/dev/null` over the 5 udev systemd units **and** `/bin|/sbin|/usr/bin/udevadm` | `docker_vm.py` `create()` |
 | generic unit mask | `GNS3_MASK_SYSTEMD=u1,u2` | `/dev/null` over arbitrary `/etc/systemd/system/<unit>` | `docker_vm.py` `create()` |
+| graceful stop | automatic for vendor containers (`docker_exec`) | stop sends SIGTERM and waits up to 60 s (Docker SIGKILLs after the grace period) instead of the base class' immediate kill — systemd NOS images require a graceful shutdown | `vendor_docker_vm.py` `_terminate_container()` |
 | host check | automatic at Docker connect | read-only `/proc` check of inotify/file-max/FUSE; warns with exact fix commands (server is unprivileged — it can only check) | `compute/docker/__init__.py` `_check_host_readiness()` |
 
 `GNS3_*` variables are consumed host-side only and never forwarded into the
@@ -93,7 +94,7 @@ Note: "journal corrupted" messages with varying machine-IDs come from the
 |-------|-------|
 | `image` | official `ios-xr/xrd-control-plane:<ver>` — no wrapper image needed |
 | `console_type` | `docker_exec` |
-| `extra_volumes` | `["/xr-storage-shadow"]` |
+| `extra_volumes` | `["/xr-storage", "/xr-storage-shadow"]` |
 | `extra_configs` | `{target: /firstboot.cfg, content: <XR CLI first-boot config>}` |
 
 ```
@@ -114,14 +115,22 @@ XRd-specific gotchas (image-side, not GNS3):
   rack/slot/instance/port combination".
 - `XR_INTERFACES` must list exactly `adapters − 1` data interfaces (eth0 is
   management). Changing the adapter count requires regenerating the string.
-- `/xr-storage` is a symlink layer; the real data directory is
-  **`/xr-storage-shadow`** (`config/` `disk1/` `scratch/` `log/` — all
-  `/disk0:`, `/harddisk:`, `/var/xr/*` paths converge there). Persisting
-  `/xr-storage` instead copies symlinks and loses data.
-- `XR_FIRST_BOOT_CONFIG` only applies when `/xr-storage-shadow/config` is
-  empty (first boot). To re-seed, delete and recreate the node.
+- **Persistence layout**: in the *image*, `/xr-storage/{config,disk1,log,
+  scratch}` are symlinks into `/xr-storage-shadow` (a pristine spare copy of
+  the initial state). At boot the bootstrap replaces the symlinks with real
+  directories, and XR writes everything — committed config (`commitdb`,
+  `running`) included — into **`/xr-storage`**, never touching the shadow
+  again. This mirrors containerlab, which bind-mounts `/xr-storage`
+  (`nodes/xrd/xrd.go`: "persist data by mounting /xr-storage"). The
+  appliance persists **both** paths so writes land on host regardless of
+  whether they happen before or after the symlink→directory transition.
+- `XR_FIRST_BOOT_CONFIG` only applies when XR's config storage is empty
+  (first boot). To re-seed, delete and recreate the node.
 - The official image ships no default login; the first-boot config must
   create one (e.g. `username admin / group root-lr / secret ...`).
+- Docker mounts are fixed at container *create* time: after changing a
+  template's `extra_volumes`, existing nodes must be deleted and recreated
+  (a stop/start keeps the old mounts).
 - Host sysctls (XRd's own requirements, same for containerlab):
   `fs.inotify.max_user_instances=64000`, `max_user_watches=524288`,
   `fs.file-max=1000000`, FUSE module loaded. GNS3 warns about these at
@@ -157,7 +166,7 @@ sequenceDiagram
 | Console stuck at `Username:` with no credentials | image has no default user; provide a first-boot config creating one, then **recreate** the node (first-boot only runs on empty config storage) |
 | `Invalid interface entries ... XR_MGMT_INTERFACES` | use `xr_name=Mg0/RP0/CPU0/0` |
 | Host audio muted / USB reconnects when the node starts | set `GNS3_MASK_UDEV=1` |
-| Config lost across stop/start | `extra_volumes` must be `/xr-storage-shadow` |
+| Config lost across stop/start | `extra_volumes` must include `/xr-storage` (XR's live data layer; the shadow alone is only a pristine spare). Changing `extra_volumes` requires deleting and recreating the node — Docker mounts are fixed at create time |
 | Two nodes can't ping, only one side ARPs | GNS3 link wiring bug (UDP self-loop on one end), not XRd — fixed (port-allocation race); on older builds delete and re-create the link; see [link-udp-self-loop](../bugs/link-udp-self-loop.md) |
 | Compute log: busybox coredump storm | fixed by the container-chown change; verify gns3-server is current |
 
@@ -191,6 +200,7 @@ sequenceDiagram
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-08-14 | Persistence corrected: XR's live data layer is `/xr-storage` (the image's symlink farm is materialized into real directories at bootstrap; `/xr-storage-shadow` is a pristine spare) — the appliance persists both. Vendor containers now stop gracefully (SIGTERM + 60 s grace) instead of being SIGKILLed on the spot. |
 | 1.2 | 2026-08-14 | Link UDP self-loop root-caused to a port-allocation race and fixed — see [link-udp-self-loop](../bugs/link-udp-self-loop.md) (now marked Fixed). |
 | 1.1 | 2026-08-14 | Datapath validated end-to-end (XRd brings its own interfaces up; ARP/ICMP bidirectional). Add troubleshooting entry for the one-way-link symptom (GNS3 link UDP self-loop bug, see bugs/link-udp-self-loop.md). |
 | 1.0 | 2026-08-14 | Initial documentation of the XRd control-plane adaptation: vendor path requirement, shm/devices/extra_configs/udev-mask mechanisms, host-disturbance root causes, appliance recipe. |

@@ -35,7 +35,7 @@ import shutil
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.compute.docker.docker_vm import DockerVM
-from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Error
+from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,20 @@ class VendorDockerVM(DockerVM):
             except Exception:
                 pass
             self._console_exec_writer = None
+
+    async def _terminate_container(self):
+        """
+        Override: vendor NOS containers run systemd and require a graceful
+        shutdown (e.g. Cisco XRd treats an abrupt SIGKILL as an unclean
+        shutdown). Send SIGTERM and wait up to 60 s for the services to stop;
+        Docker SIGKILLs the container itself once the grace period expires,
+        so no fallback kill is needed. The blocking stop call sits well
+        inside the manager's default 300 s query timeout.
+        """
+        try:
+            await self.manager.query("POST", f"containers/{self._cid}/stop", params={"t": 60})
+        except DockerHttp304Error:
+            pass  # already stopped
 
     async def start(self):
         await super().start()
