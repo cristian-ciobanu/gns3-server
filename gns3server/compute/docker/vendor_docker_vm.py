@@ -92,7 +92,12 @@ class VendorDockerVM(DockerVM):
                 elif _line.startswith("GNS3_STOP_TIMEOUT="):
                     try:
                         timeout = int(_line.split("=", 1)[1].strip())
-                        if 1 <= timeout <= 600:
+                        # Ceiling is derived from the call chain, not arbitrary:
+                        # the controller's stop request times out at 240 s
+                        # (controller/node.py) and the Docker stop query gets
+                        # this value +30 s as its HTTP timeout — so anything
+                        # above 210 would abort upstream first.
+                        if 1 <= timeout <= 210:
                             self._stop_timeout = timeout
                     except ValueError:
                         pass
@@ -169,11 +174,10 @@ class VendorDockerVM(DockerVM):
         shutdown).
 
         With ``graceful`` (explicit user stop), send SIGTERM and wait up to
-        ``GNS3_STOP_TIMEOUT`` seconds (default 60, 1-600) for the services to
-        stop; Docker SIGKILLs the container itself once the grace period
-        expires, so no fallback kill is needed. The stop query gets an HTTP
-        timeout with a margin over the grace period — the manager's default
-        300 s would abort first for values above it.
+        ``GNS3_STOP_TIMEOUT`` seconds (default 60, 1-210 — the ceiling keeps
+        the +30 s HTTP margin inside the controller's 240 s stop budget) for
+        the services to stop; Docker SIGKILLs the container itself once the
+        grace period expires, so no fallback kill is needed.
 
         Without ``graceful`` (delete/update/close/crash cleanup), fall back to
         the base immediate kill: those paths force-delete or recreate the

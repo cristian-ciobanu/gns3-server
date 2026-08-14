@@ -700,6 +700,11 @@ def test_env_stop_timeout_invalid_keeps_default(compute_project, manager):
     assert vm._stop_timeout == 60
     vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=9999")
     assert vm._stop_timeout == 60
+    # ceiling: controller stop budget (240 s) minus the +30 s HTTP margin
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=211")
+    assert vm._stop_timeout == 60
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=210")
+    assert vm._stop_timeout == 210
 
 
 @pytest.mark.asyncio
