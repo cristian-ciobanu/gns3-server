@@ -109,7 +109,7 @@ Cisco XRd as a GNS3 Docker router: vendor path + shm/device injection (`GNS3_SHM
 ## Known Issues (`bugs/`)
 
 - [Telnet Server Connection Race Condition](bugs/telnet-server-connection-race-condition.md) — `getpeername()` error when client disconnects during connection setup (High severity, Open)
-- [Docker Link UDP Self-Loop](bugs/link-udp-self-loop.md) — intermittent one-way link (one end's NIO points at itself); delete/recreate the link as workaround (Medium severity, Open)
+- [Docker Link UDP Self-Loop](bugs/link-udp-self-loop.md) — intermittent one-way link (both ends handed the same UDP port by an allocation race); **fixed** (Medium severity)
 
 ---
 

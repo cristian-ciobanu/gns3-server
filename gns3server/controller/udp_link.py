@@ -98,6 +98,13 @@ class UDPLink(Link):
             tuples, ready to be POSTed to each node's compute.
         """
 
+        # Start from a clean slate: reset() re-creates the link on the same
+        # object (delete() + create()), and _commit_nios()/update() always
+        # address indices 0/1 — appending onto the previous run's entries
+        # would re-commit the stale (already released) port pair and orphan
+        # the freshly allocated ports.
+        self._link_data = []
+
         node1 = self._nodes[0]["node"]
         adapter_number1 = self._nodes[0]["adapter_number"]
         port_number1 = self._nodes[0]["port_number"]
