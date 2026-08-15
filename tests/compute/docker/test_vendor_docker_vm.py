@@ -612,3 +612,127 @@ async def test_create_exec_cmd_has_no_while_true(compute_project, manager):
     assert captured["data"]["User"] == "root"
     assert captured["data"]["Tty"] is True
     assert "TERM=xterm" in captured["data"]["Env"]
+
+
+# ---------------------------------------------------------------------------
+# Container termination (graceful stop for vendor NOS)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_terminate_container_graceful_stop(compute_project, manager):
+    """With graceful=True (explicit user stop) vendor containers are SIGTERMed
+    with a grace period, not SIGKILLed on the spot: systemd NOS images
+    (e.g. Cisco XRd) require a graceful shutdown, and Docker itself SIGKILLs
+    the container once the grace period expires."""
+
+    vm = _make_vm(compute_project, manager)
+    manager.query = AsyncioMagicMock()
+    manager.http_query = AsyncioMagicMock(return_value=MagicMock())
+
+    await vm._terminate_container(graceful=True)
+
+    manager.http_query.assert_called_once_with(
+        "POST", "containers/e90e34656842/stop", params={"t": 60}, timeout=90)
+    manager.query.assert_not_called()  # no kill on the graceful path
+
+
+@pytest.mark.asyncio
+async def test_terminate_container_default_is_kill(compute_project, manager):
+    """Without graceful (delete/update/close/crash cleanup) the vendor
+    container gets the base immediate kill — those paths force-delete or
+    recreate the container right after anyway."""
+
+    vm = _make_vm(compute_project, manager)
+    manager.query = AsyncioMagicMock()
+    manager.http_query = AsyncioMagicMock(return_value=MagicMock())
+
+    await vm._terminate_container()
+
+    manager.query.assert_called_once_with("POST", "containers/e90e34656842/kill")
+    manager.http_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_container_already_stopped_is_silent(compute_project, manager):
+    """Docker answers 304 when the container is already stopped — that is not
+    an error for the stop path."""
+
+    from gns3server.compute.docker.docker_error import DockerHttp304Error
+
+    vm = _make_vm(compute_project, manager)
+    manager.http_query = AsyncioMagicMock(
+        side_effect=DockerHttp304Error("Docker has returned an error: 304"))
+    await vm._terminate_container(graceful=True)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_stop_uses_graceful_termination(compute_project, manager):
+    """The full stop() path must route through _terminate_container (the
+    vendor override); the default is the fast kill — only the explicit user
+    stop route passes graceful=True."""
+
+    vm = _make_vm(compute_project, manager)
+    with patch.object(DockerVM, "_clean_servers", new=AsyncioMagicMock()):
+        with patch.object(DockerVM, "_stop_ubridge", new=AsyncioMagicMock()):
+            with patch.object(
+                DockerVM, "_get_container_state", new=AsyncioMagicMock(return_value="running")
+            ):
+                vm._permissions_fixed = True
+                with patch.object(
+                    VendorDockerVM, "_terminate_container", new=AsyncioMagicMock()
+                ) as mock_term:
+                    await vm.stop()
+    mock_term.assert_called_once_with(graceful=False)
+
+
+def test_env_stop_timeout(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=120")
+    assert vm._stop_timeout == 120
+
+
+def test_env_stop_timeout_default_60(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1")
+    assert vm._stop_timeout == 60
+
+
+def test_env_stop_timeout_invalid_keeps_default(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=abc")
+    assert vm._stop_timeout == 60
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=9999")
+    assert vm._stop_timeout == 60
+    # ceiling: controller stop budget (240 s) minus the +30 s HTTP margin
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=211")
+    assert vm._stop_timeout == 60
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=210")
+    assert vm._stop_timeout == 210
+
+
+@pytest.mark.asyncio
+async def test_terminate_container_uses_env_timeout(compute_project, manager):
+    vm = _make_vm(compute_project, manager, environment="GNS3_STOP_TIMEOUT=120")
+    manager.http_query = AsyncioMagicMock(return_value=MagicMock())
+
+    await vm._terminate_container(graceful=True)
+
+    manager.http_query.assert_called_once_with(
+        "POST", "containers/e90e34656842/stop", params={"t": 120}, timeout=150)
+
+
+@pytest.mark.asyncio
+async def test_create_reparse_refreshes_env_knobs(compute_project, manager):
+    """A PUT to the node's environment must take effect on the next create(),
+    not on the next project reload: create() re-parses the vendor knobs."""
+
+    response = _create_response(None, entrypoint=["/init"])
+    vm = _make_vm(compute_project, manager,
+                  environment="GNS3_SKIP_INIT=1\nGNS3_STOP_TIMEOUT=120")
+    assert vm._gns3_init is False and vm._stop_timeout == 120
+
+    vm._environment = "GNS3_STOP_TIMEOUT=5"  # knob removed + value changed
+    with asyncio_patch("gns3server.compute.docker.Docker.list_images",
+                       return_value=[{"image": "srlinux"}]):
+        with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=response):
+            await vm.create()
+
+    assert vm._stop_timeout == 5
+    assert vm._gns3_init is True  # removed entry reset to default

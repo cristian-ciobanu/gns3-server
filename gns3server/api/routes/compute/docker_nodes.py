@@ -78,6 +78,7 @@ async def create_docker_node(project_id: UUID, node_data: schemas.DockerCreate) 
         aux_type=node_data.pop("aux_type", "none"),
         extra_hosts=node_data.get("extra_hosts"),
         extra_volumes=node_data.get("extra_volumes"),
+        extra_configs=node_data.get("extra_configs"),
         memory=node_data.get("memory", 0),
         cpus=node_data.get("cpus", 0),
     )
@@ -87,7 +88,8 @@ async def create_docker_node(project_id: UUID, node_data: schemas.DockerCreate) 
     for key in (
         "console", "console_type", "console_resolution", "console_http_port",
         "console_http_path", "aux", "aux_type", "start_command", "environment",
-        "adapters", "mac_address", "extra_hosts", "extra_volumes", "memory", "cpus",
+        "adapters", "mac_address", "extra_hosts", "extra_volumes", "extra_configs",
+        "memory", "cpus",
     ):
         node_data.pop(key, None)
     for name, value in node_data.items():
@@ -137,6 +139,7 @@ async def update_docker_node(node_data: schemas.DockerUpdate, node: DockerVM = D
         "custom_adapters",
         "extra_hosts",
         "extra_volumes",
+        "extra_configs",
         "memory",
         "cpus",
     ]
@@ -174,10 +177,12 @@ async def start_docker_node(node: DockerVM = Depends(dep_node)) -> None:
 )
 async def stop_docker_node(node: DockerVM = Depends(dep_node)) -> None:
     """
-    Stop a Docker node.
+    Stop a Docker node. This is the explicit user stop — the only path that
+    asks for a graceful SIGTERM shutdown (vendor NOS override); internal
+    paths (delete/update/close) keep the immediate kill.
     """
 
-    await node.stop()
+    await node.stop(graceful=True)
 
 
 @router.post(

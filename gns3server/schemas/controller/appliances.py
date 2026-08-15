@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 from uuid import UUID
 from pydantic import AnyUrl, BaseModel, Discriminator, EmailStr, Field, Tag
+from ..common import ExtraConfig
 
 
 # ============================================================================
@@ -329,6 +330,7 @@ class Docker(BaseModel):
     console_http_path: Optional[str] = Field(None, description='Path of the web interface')
     extra_hosts: Optional[str] = Field(None, description='Hosts which will be written to /etc/hosts into container')
     extra_volumes: Optional[List[str]] = Field(None, description='Additional directories to make persistent that are not included in the images VOLUME directive')
+    extra_configs: Optional[List[ExtraConfig]] = Field(None, description='Configuration files injected into the container (bind-mounted read-only)')
 
 
 class Iou(BaseModel):
@@ -478,6 +480,9 @@ class DockerPropertiesV8(BaseModel):
     extra_hosts: Optional[str] = Field(None, title='Docker extra hosts (added to /etc/hosts)')
     extra_volumes: Optional[List[str]] = Field(
         None, title='Additional directories to make persistent'
+    )
+    extra_configs: Optional[List[ExtraConfig]] = Field(
+        None, title='Configuration files injected into the container (bind-mounted read-only)'
     )
 
 

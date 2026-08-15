@@ -93,14 +93,19 @@ NODE_TYPES = [
     "qemu",
 ]
 
+# Keep in sync with gns3server.schemas.common.ConsoleType. The values are
+# duplicated as literals because this module is shared with the standalone
+# MCP service and cannot import the enum. "null" is gns3fy legacy.
 CONSOLE_TYPES = [
     "vnc",
     "telnet",
+    "ssh",
     "http",
     "https",
     "spice",
     "spice+agent",
     "none",
+    "docker_exec",
     "null",
 ]
 

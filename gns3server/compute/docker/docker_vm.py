@@ -69,6 +69,30 @@ class DockerVM(BaseNode):
     :param extra_volumes: Additional directories to make persistent
     """
 
+    # systemd units masked by GNS3_MASK_UDEV=1: the udev daemon, its activation
+    # sockets and the coldplug/settle triggers. Masking them stops a privileged
+    # systemd container from replaying device events on the host.
+    _UDEV_UNITS = (
+        "systemd-udevd.service",
+        "systemd-udevd-control.socket",
+        "systemd-udevd-kernel.socket",
+        "systemd-udev-trigger.service",
+        "systemd-udev-settle.service",
+    )
+
+    # udevadm binary paths also null-bound by GNS3_MASK_UDEV=1. NOS startup
+    # scripts call udevadm directly -- Cisco XRd's xr_startup.sh runs
+    # `udevadm trigger --action=add --parent-match=<usb device>` (USB license
+    # dongle probing), which synthesizes uevents into the host kernel from a
+    # privileged container and reconnects host USB devices. Masking the units
+    # alone does not stop this; the binary must be neutralized too. XRd boots
+    # fine without udevadm (interfaces are pre-created by GNS3).
+    _UDEVADM_PATHS = (
+        "/bin/udevadm",
+        "/sbin/udevadm",
+        "/usr/bin/udevadm",
+    )
+
     def __init__(
         self,
         name,
@@ -89,6 +113,7 @@ class DockerVM(BaseNode):
         console_http_path="/",
         extra_hosts=None,
         extra_volumes=[],
+        extra_configs=None,
         memory=0,
         cpus=0,
     ):
@@ -118,6 +143,7 @@ class DockerVM(BaseNode):
         self._console_websocket = None
         self._extra_hosts = extra_hosts
         self._extra_volumes = extra_volumes or []
+        self._extra_configs = extra_configs or []
         self._memory = memory
         self._cpus = cpus
         self._permissions_fixed = True
@@ -164,6 +190,7 @@ class DockerVM(BaseNode):
             "node_directory": self.working_path,
             "extra_hosts": self.extra_hosts,
             "extra_volumes": self.extra_volumes,
+            "extra_configs": self.extra_configs,
             "memory": self.memory,
             "cpus": self.cpus,
         }
@@ -296,6 +323,14 @@ class DockerVM(BaseNode):
         self._extra_volumes = extra_volumes
 
     @property
+    def extra_configs(self):
+        return self._extra_configs
+
+    @extra_configs.setter
+    def extra_configs(self, extra_configs):
+        self._extra_configs = extra_configs or []
+
+    @property
     def memory(self):
         return self._memory
 
@@ -389,6 +424,39 @@ class DockerVM(BaseNode):
                 "Type": "bind",
                 "Source": source,
                 "Target": "/gns3volumes{}".format(volume)
+            })
+
+        # Inject extra config files: write each to the node working directory and
+        # bind-mount it read-only at its target path. Single-file binds are applied
+        # at create time, so this works for the generic init.sh path AND for vendor
+        # nodes that skip init.sh (the NOS reads its startup config from the mount).
+        for cfg in self._extra_configs:
+            target = cfg["target"] if isinstance(cfg, dict) else cfg.target
+            content = cfg["content"] if isinstance(cfg, dict) else cfg.content
+            if not target.startswith("/") or target.endswith("/") or ".." in target.split("/"):
+                raise DockerError(
+                    f"Extra config target '{target}' must be an absolute file path and not contain '..'."
+                )
+            for volume in self._volumes:
+                # A single-file bind gets covered by the volume's bind mount at
+                # start (init.sh or the vendor volume bridge), so the injected
+                # content would never be seen — or worse, frozen at whatever
+                # the first-start seed copied.
+                if target == volume or target.startswith(volume.rstrip("/") + "/"):
+                    log.warning(
+                        "Extra config target '%s' on container '%s' is shadowed by persisted volume '%s' "
+                        "and will not take effect; pick a target outside persisted volumes.",
+                        target, self._name, volume,
+                    )
+            host_path = os.path.join(self.working_dir, "configs", target.lstrip("/"))
+            os.makedirs(os.path.dirname(host_path), exist_ok=True)
+            with open(host_path, "w") as f:
+                f.write(content)
+            binds.append({
+                "Type": "bind",
+                "Source": host_path,
+                "Target": target,
+                "ReadOnly": True,
             })
 
         return binds
@@ -490,6 +558,68 @@ class DockerVM(BaseNode):
             "Cmd": [],
             "Entrypoint": image_infos.get("Config", {"Entrypoint": []}).get("Entrypoint"),
         }
+
+        # Optional /dev/shm size and host device mappings requested through the
+        # environment (GNS3_SHM_SIZE in MB, GNS3_DEVICES). These are native Docker
+        # HostConfig keys applied at create time, so they work whether or not
+        # init.sh runs -- heavy NOS containers such as Cisco XRd (which skips
+        # init.sh via the vendor/docker_exec path) rely on them. Only injected
+        # when set, so ordinary nodes keep the default Docker behaviour.
+        if self._environment:
+            for line in self._environment.splitlines():
+                # Strip a trailing comma like the vendor-class parser does, so
+                # "GNS3_MASK_UDEV=1," composed from a comma-separated list
+                # still activates (values are never comma-separated here).
+                line = line.strip().rstrip(",")
+                if line.startswith("GNS3_SHM_SIZE="):
+                    try:
+                        params["HostConfig"]["ShmSize"] = int(line.split("=", 1)[1].strip()) * (1024 * 1024)
+                    except ValueError:
+                        pass
+                elif line.startswith("GNS3_DEVICES="):
+                    devices = self._format_devices(line.split("=", 1)[1])
+                    if devices:
+                        params["HostConfig"]["Devices"] = devices
+                elif line.startswith("GNS3_MASK_UDEV=") and \
+                        line.split("=", 1)[1].strip().lower() in ("1", "true", "yes"):
+                    # A privileged systemd-based NOS container (e.g. Cisco XRd)
+                    # runs systemd-udevd, which coldplugs every device it can see
+                    # -- and in privileged mode that includes the HOST's USB/input/
+                    # audio/disk devices, reconnecting/muting them on every start.
+                    # XRd doesn't need udev (interfaces are pre-created by GNS3), so
+                    # bind /dev/null over the udev units to keep it from running.
+                    for target in [f"/etc/systemd/system/{u}" for u in self._UDEV_UNITS] + list(self._UDEVADM_PATHS):
+                        params["HostConfig"]["Mounts"].append({
+                            "Type": "bind",
+                            "Source": "/dev/null",
+                            "Target": target,
+                            "ReadOnly": True,
+                        })
+                elif line.startswith("GNS3_MASK_SYSTEMD="):
+                    # Generic form: comma/semicolon-separated unit names to mask
+                    # the same way (bind /dev/null over /etc/systemd/system/<unit>).
+                    for unit in line.split("=", 1)[1].replace(";", ",").split(","):
+                        unit = unit.strip()
+                        if unit and "/" not in unit and ".." not in unit:
+                            params["HostConfig"]["Mounts"].append({
+                                "Type": "bind",
+                                "Source": "/dev/null",
+                                "Target": f"/etc/systemd/system/{unit}",
+                                "ReadOnly": True,
+                            })
+
+        # Overlapping bind targets (GNS3_MASK_UDEV together with a
+        # GNS3_MASK_SYSTEMD entry for the same unit, an extra_configs target
+        # equal to a masked unit, a unit named twice in the list) make Docker
+        # reject the create outright ("Duplicate mount point") — keep only
+        # the first occurrence of each target.
+        seen_targets = set()
+        deduped_mounts = []
+        for mount in params["HostConfig"]["Mounts"]:
+            if mount["Target"] not in seen_targets:
+                seen_targets.add(mount["Target"])
+                deduped_mounts.append(mount)
+        params["HostConfig"]["Mounts"] = deduped_mounts
 
         if params["Entrypoint"] is None:
             params["Entrypoint"] = []
@@ -624,6 +754,37 @@ class DockerVM(BaseNode):
         except ValueError:
             raise DockerError(f"Can't apply `ExtraHosts`, wrong format: {extra_hosts}")
         return "\n".join([f"{h[1]}\t{h[0]}" for h in hosts])
+
+    def _format_devices(self, devices_value):
+        """
+        Parse a GNS3_DEVICES value into Docker HostConfig Devices entries.
+
+        Mirrors `docker run --device`: items are whitespace/comma-separated and
+        each is ``host[:container[:permissions]]`` (e.g. /dev/fuse,
+        /dev/fuse:/dev/fuse:rwm). Docker resolves type/major/minor from the host
+        node itself, so the device must exist on the host -- the host-readiness
+        check warns when /dev/fuse is missing (load the fuse module).
+        """
+
+        formatted = []
+        for raw in devices_value.replace(",", " ").split():
+            parts = raw.split(":")
+            if len(parts) == 1:
+                on_host = in_container = parts[0]
+                permissions = "rwm"
+            elif len(parts) == 2:
+                on_host, in_container = parts
+                permissions = "rwm"
+            elif len(parts) == 3:
+                on_host, in_container, permissions = parts
+            else:
+                continue
+            formatted.append({
+                "PathOnHost": on_host,
+                "PathInContainer": in_container,
+                "CgroupPermissions": permissions,
+            })
+        return formatted
 
     async def update(self):
         """
@@ -1045,9 +1206,14 @@ class DockerVM(BaseNode):
                 await telnet_server.wait_closed()
             self._telnet_servers = []
 
-    async def stop(self):
+    async def stop(self, graceful: bool = False):
         """
         Stops this Docker container.
+
+        :param graceful: request a graceful SIGTERM shutdown (honoured by the
+            vendor NOS override). The default immediate kill is used on the
+            internal paths (delete, update, close, crash cleanup), where the
+            container is force-deleted or recreated right after anyway.
         """
 
         try:
@@ -1072,12 +1238,8 @@ class DockerVM(BaseNode):
 
             state = await self._get_container_state()
             if state != "stopped" and state != "exited":
-                # SIGKILL immediately. GNS3 has already persisted container state
-                # (permissions via _fix_permissions, /gns3volumes) before this
-                # point, and the business process (often an interactive shell)
-                # ignores SIGTERM — so a stop grace period buys nothing but latency.
                 try:
-                    await self.manager.query("POST", f"containers/{self._cid}/kill")
+                    await self._terminate_container(graceful=graceful)
                     log.debug(f"Docker container '{self._name}' [{self._image}] stopped")
                 except DockerHttp409Error:
                     # Container is already stopped
@@ -1087,6 +1249,20 @@ class DockerVM(BaseNode):
             log.debug(f"Docker runtime error when closing: {str(e)}")
             return
         self.status = "stopped"
+
+    async def _terminate_container(self, graceful: bool = False):
+        """
+        Final termination of a still-running container: immediate SIGKILL.
+        GNS3 has already persisted container state (permissions via
+        _fix_permissions, /gns3volumes) before this point, and the business
+        process (often an interactive shell) ignores SIGTERM — a stop grace
+        period buys nothing but latency. Vendor NOS containers override this
+        with a graceful SIGTERM shutdown when asked (see VendorDockerVM);
+        the ``graceful`` flag is accepted here only for signature
+        compatibility.
+        """
+
+        await self.manager.query("POST", f"containers/{self._cid}/kill")
 
     async def pause(self):
         """

@@ -35,7 +35,7 @@ import shutil
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.compute.docker.docker_vm import DockerVM
-from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Error
+from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error
 
 log = logging.getLogger(__name__)
 
@@ -55,18 +55,29 @@ class VendorDockerVM(DockerVM):
       (adapter order) instead of default ``eth{N}``.
     * ``GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli`` — command run inside the
       container by the ``docker_exec`` console (defaults to ``/bin/sh``).
+    * ``GNS3_STOP_TIMEOUT=60`` — SIGTERM grace period in seconds when stopping
+      the container (default 60; Docker SIGKILLs once it expires).
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Prototype knobs — parsed from GNS3_-prefixed entries in create().
-        # Parse eagerly so _get_container_ifname can return the right name.
+        self._console_exec_writer = None
+        # Parsed eagerly so _get_container_ifname can return the right name,
+        # and re-parsed on every create() so a PUT to the node's environment
+        # takes effect on the next (re)create instead of the next reload.
+        self._parse_vendor_environment()
+
+    def _parse_vendor_environment(self):
+        """
+        (Re)parse the GNS3_* knobs from the current ``environment`` value,
+        resetting to defaults first so removed entries stop applying.
+        """
+
         self._gns3_init = True
         self._interface_names = []
         self._console_cmd = None
-        self._console_exec_writer = None
-
+        self._stop_timeout = 60
         if self._environment:
             for _line in self._environment.splitlines():
                 _line = _line.strip().rstrip(",")
@@ -78,6 +89,24 @@ class VendorDockerVM(DockerVM):
                     ]
                 elif _line.startswith("GNS3_CONSOLE_CMD="):
                     self._console_cmd = _line.split("=", 1)[1].strip()
+                elif _line.startswith("GNS3_STOP_TIMEOUT="):
+                    try:
+                        timeout = int(_line.split("=", 1)[1].strip())
+                        # Ceiling is derived from the call chain, not arbitrary:
+                        # the controller's stop request times out at 240 s
+                        # (controller/node.py) and the Docker stop query gets
+                        # this value +30 s as its HTTP timeout — so anything
+                        # above 210 would abort upstream first.
+                        if 1 <= timeout <= 210:
+                            self._stop_timeout = timeout
+                    except ValueError:
+                        pass
+
+    async def create(self):
+        # The environment may have changed since __init__ (PUT on the node) —
+        # re-parse the knobs so the recreated container picks them up.
+        self._parse_vendor_environment()
+        return await super().create()
 
     # ---- hook overrides ---------------------------------------------------
 
@@ -138,6 +167,37 @@ class VendorDockerVM(DockerVM):
                 pass
             self._console_exec_writer = None
 
+    async def _terminate_container(self, graceful: bool = False):
+        """
+        Override: vendor NOS containers run systemd and require a graceful
+        shutdown (e.g. Cisco XRd treats an abrupt SIGKILL as an unclean
+        shutdown).
+
+        With ``graceful`` (explicit user stop), send SIGTERM and wait up to
+        ``GNS3_STOP_TIMEOUT`` seconds (default 60, 1-210 — the ceiling keeps
+        the +30 s HTTP margin inside the controller's 240 s stop budget) for
+        the services to stop; Docker SIGKILLs the container itself once the
+        grace period expires, so no fallback kill is needed.
+
+        Without ``graceful`` (delete/update/close/crash cleanup), fall back to
+        the base immediate kill: those paths force-delete or recreate the
+        container right after anyway, so a grace period buys nothing but
+        latency.
+        """
+        if not graceful:
+            await super()._terminate_container(graceful=False)
+            return
+        try:
+            response = await self.manager.http_query(
+                "POST",
+                f"containers/{self._cid}/stop",
+                params={"t": self._stop_timeout},
+                timeout=self._stop_timeout + 30,
+            )
+            response.close()
+        except DockerHttp304Error:
+            pass  # already stopped
+
     async def start(self):
         await super().start()
         if self.status == "started" and not self._gns3_init:
@@ -183,6 +243,12 @@ class VendorDockerVM(DockerVM):
             target = f"/gns3volumes{volume}"
             log.debug("Docker container '%s' fix ownership on %s", self._name, target)
             try:
+                # chown prefers the container's own coreutils over /gns3/bin/busybox:
+                # busybox is static, and its chown dlopens NSS modules from the
+                # container, which mismatch the static glibc and abort (glibc
+                # "sym != NULL") on NOS images whose glibc differs from the host's
+                # (e.g. Cisco XRd). It falls back to busybox on minimal images that
+                # ship no chown. cp/chmod/find/stat don't use NSS, so stay busybox.
                 process = await asyncio.subprocess.create_subprocess_exec(
                     "docker",
                     "exec",
@@ -195,7 +261,7 @@ class VendorDockerVM(DockerVM):
                     f" | /gns3/bin/busybox xargs -0 /gns3/bin/busybox stat -c '%a:%u:%g:%n' > \"{target}/.gns3_perms\""
                     ")"
                     f' && /gns3/bin/busybox chmod -R u+rX "{target}"'
-                    f' && /gns3/bin/busybox chown {uid}:{gid} -R "{target}"',
+                    f' && ( command -v chown >/dev/null 2>&1 && chown {uid}:{gid} -R "{target}" || /gns3/bin/busybox chown {uid}:{gid} -R "{target}" )',
                     stderr=asyncio.subprocess.PIPE,
                 )
             except OSError as e:
@@ -233,7 +299,10 @@ class VendorDockerVM(DockerVM):
                 f'/gns3/bin/busybox mount --bind "{vol_target}" "{volume}" && '
                 f'while IFS=: read -r PERMS OWNER GROUP FILE; do '
                 f'  [ -L "$FILE" ] || /gns3/bin/busybox chmod "$PERMS" "$FILE" 2>/dev/null; '
-                f'  /gns3/bin/busybox chown -h "$OWNER:$GROUP" "$FILE" 2>/dev/null; '
+                # chown: prefer the container's coreutils, fall back to busybox
+                # (see _fix_permissions -- static busybox chown aborts on
+                # mismatched-glibc NOS images like XRd).
+                f'  ( command -v chown >/dev/null 2>&1 && chown -h "$OWNER:$GROUP" "$FILE" || /gns3/bin/busybox chown -h "$OWNER:$GROUP" "$FILE" ) 2>/dev/null; '
                 f'done < "{volume}/.gns3_perms"'
             )
             # fmt: on

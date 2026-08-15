@@ -78,6 +78,7 @@ class DockerTemplate(Template):
     console_resolution = Column(String)
     extra_hosts = Column(String)
     extra_volumes = Column(JSON)
+    extra_configs = Column(JSON)
     memory = Column(Integer)
     cpus = Column(Float)
     custom_adapters = Column(JSON)
