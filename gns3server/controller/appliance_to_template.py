@@ -18,6 +18,8 @@
 
 
 import logging
+from .controller_error import ControllerError
+
 log = logging.getLogger(__name__)
 
 
@@ -30,6 +32,9 @@ class ApplianceToTemplate:
         """
         Creates a new template from an appliance.
         """
+
+        if appliance_config.get("registry_version", 0) >= 8:
+            return self._new_template_v8(appliance_config, version, server)
 
         new_template = {
             "compute_id": server,
@@ -133,3 +138,104 @@ class ApplianceToTemplate:
 
         new_config.update(appliance_config["iou"])
         new_config["path"] = version.get("images").get("image")
+
+    def _new_template_v8(self, appliance_config, version, server):
+        """
+        Creates a new template from an appliance using the registry version 8 format.
+        """
+
+        settings = self._select_v8_settings(appliance_config, version)
+        properties = self._merge_v8_properties(settings, appliance_config)
+
+        new_template = {
+            "compute_id": server,
+            "template_type": settings["template_type"],
+            "name": appliance_config["name"],
+        }
+
+        if version:
+            new_template["version"] = version.get("name")
+
+        # category/usage/symbol can be defined in template_properties (already merged above),
+        # otherwise at the version level, otherwise at the appliance level
+        for prop in ("category", "usage", "symbol"):
+            if prop not in properties:
+                if version and version.get(prop) is not None:
+                    properties[prop] = version[prop]
+                elif appliance_config.get(prop) is not None:
+                    properties[prop] = appliance_config[prop]
+
+        if properties.get("category") == "multilayer_switch":
+            properties["category"] = "switch"
+
+        new_template.update(properties)
+        if "tags" in appliance_config:
+            new_template["tags"] = appliance_config.get("tags")
+
+        if not new_template.get("symbol"):
+            # apply a default symbol based on the category and template type
+            if appliance_config["category"] == "guest":
+                if settings["template_type"] == "docker":
+                    new_template["symbol"] = ":/symbols/docker_guest.svg"
+                else:
+                    new_template["symbol"] = ":/symbols/qemu_guest.svg"
+            else:
+                symbols = {
+                    "router": ":/symbols/router.svg",
+                    "switch": ":/symbols/ethernet_switch.svg",
+                    "multilayer_switch": ":/symbols/multilayer_switch.svg",
+                    "firewall": ":/symbols/firewall.svg",
+                }
+                new_template["symbol"] = symbols.get(appliance_config["category"])
+
+        if version and version.get("images"):
+            new_template.update(version["images"])
+
+        return new_template
+
+    def _select_v8_settings(self, appliance_config, version):
+        """
+        Selects the settings set to use: the one referenced by the version,
+        otherwise the default set, otherwise the only set present.
+        """
+
+        settings_list = appliance_config.get("settings") or []
+        if not settings_list:
+            raise ControllerError(f"Appliance '{appliance_config['name']}' has no settings")
+
+        if version and version.get("settings"):
+            settings_name = version["settings"]
+            for settings in settings_list:
+                if settings.get("name") == settings_name:
+                    return settings
+            raise ControllerError(
+                f"Could not find settings '{settings_name}' referenced by "
+                f"version '{version.get('name')}' in appliance '{appliance_config['name']}'"
+            )
+
+        for settings in settings_list:
+            if settings.get("default"):
+                return settings
+
+        if len(settings_list) == 1:
+            return settings_list[0]
+
+        raise ControllerError(
+            f"Appliance '{appliance_config['name']}' has multiple settings "
+            f"but none is marked as default"
+        )
+
+    def _merge_v8_properties(self, settings, appliance_config):
+        """
+        Merges the template properties of the selected settings with the default
+        settings properties, unless inheritance is disabled or the default set
+        is selected.
+        """
+
+        properties = {}
+        if not settings.get("default") and settings.get("inherit_default_properties", True):
+            for other_settings in appliance_config.get("settings") or []:
+                if other_settings.get("default"):
+                    properties.update(other_settings.get("template_properties") or {})
+        properties.update(settings.get("template_properties") or {})
+        return properties
