@@ -57,6 +57,7 @@ class Node:
         "ports",
         "category",
         "console_auto_start",
+        "netmiko_device_type",
     ]
 
     def __init__(self, project, compute, name, node_id=None, node_type=None, template_id=None, **kwargs):
@@ -112,6 +113,7 @@ class Node:
             self._port_segment_size = 0
         self._first_port_name = None
         self._console_auto_start = False
+        self._netmiko_device_type = None
 
         # This properties will be recomputed
         ignore_properties = ("width", "height", "hover_symbol")
@@ -211,6 +213,14 @@ class Node:
     @console_auto_start.setter
     def console_auto_start(self, val):
         self._console_auto_start = val
+
+    @property
+    def netmiko_device_type(self):
+        return self._netmiko_device_type
+
+    @netmiko_device_type.setter
+    def netmiko_device_type(self, val):
+        self._netmiko_device_type = val
 
     @property
     def properties(self):
@@ -833,6 +843,7 @@ class Node:
                 "console": self._console,
                 "console_type": self._console_type,
                 "console_auto_start": self._console_auto_start,
+                "netmiko_device_type": self._netmiko_device_type,
                 "aux": self._aux,
                 "aux_type": self._aux_type,
                 "properties": self._properties,

@@ -142,6 +142,7 @@ def test_json(node, compute):
         "tags": [],
         "custom_adapters": [],
         "console_auto_start": False,
+        "netmiko_device_type": None,
         "ports": [
             {
                 "adapter_number": 0,
@@ -179,6 +180,7 @@ def test_json(node, compute):
         "custom_adapters": [],
         "tags": [],
         "console_auto_start": False,
+        "netmiko_device_type": None,
     }
 
 
@@ -381,6 +383,36 @@ async def test_update_only_controller(node, compute):
     node._project.emit_notification = AsyncioMagicMock()
     await node.update(x=42)
     assert not node._project.emit_notification.called
+
+
+@pytest.mark.asyncio
+async def test_update_netmiko_device_type(node, compute):
+    """
+    netmiko_device_type is a controller-only property: updating it must not
+    call the compute and must be visible in the node json.
+    """
+
+    compute.put = AsyncioMagicMock()
+    node._project.emit_notification = AsyncioMagicMock()
+    node._project.dump = MagicMock()
+
+    await node.update(netmiko_device_type="cisco_ios_telnet")
+    assert not compute.put.called
+    assert node.netmiko_device_type == "cisco_ios_telnet"
+    assert node.asdict()["netmiko_device_type"] == "cisco_ios_telnet"
+
+
+def test_netmiko_device_type_from_template_kwargs(compute, project):
+    """
+    A node created with the template properties as kwargs inherits
+    netmiko_device_type without sending it to the compute.
+    """
+
+    node = Node(project, compute, "test", node_type="vpcs", netmiko_device_type="nokia_srl")
+    assert node.netmiko_device_type == "nokia_srl"
+    # controller-only: must not leak into the compute properties
+    assert "netmiko_device_type" not in node.properties
+    assert node.asdict(topology_dump=True)["netmiko_device_type"] == "nokia_srl"
 
 
 @pytest.mark.asyncio
