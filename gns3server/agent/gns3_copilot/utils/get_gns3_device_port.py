@@ -62,7 +62,7 @@ def get_device_ports_from_topology(
                 "groups": ["network_devices"],  # For inheriting shared settings
                 "connection_options": {
                     "netmiko": {
-                        "extras": {"device_type": "huawei_telnet"}  # Extracted from tags
+                        "extras": {"device_type": "huawei_telnet"}  # netmiko_device_type field, tag fallback
                     }
                 }
             }
@@ -102,18 +102,21 @@ def get_device_ports_from_topology(
                 logger.warning("Device '%s' missing console_port", device_name)
                 continue
 
-            # Extract device_type and platform from tags
-            device_type = None
+            # Extract device_type and platform.
+            # Precedence: the netmiko_device_type field (node/template/appliance
+            # level, set in GNS3 server >= 3.x) wins over the device_type:<type>
+            # tag, which remains as a fallback.
+            device_type = node_info.get("netmiko_device_type")
             platform = None
             tags = node_info.get("tags", [])
 
             for tag in tags:
-                if tag.startswith("device_type:"):
+                if tag.startswith("device_type:") and device_type is None:
                     device_type = tag.split(":", 1)[1].strip()
                 elif tag.startswith("platform:"):
                     platform = tag.split(":", 1)[1].strip()
 
-            # Return error if device_type not found in tags
+            # Return error if device_type not found anywhere
             # Using a default would cause command execution errors
             if device_type is None:
                 tested_device_types = (
@@ -121,8 +124,9 @@ def get_device_ports_from_topology(
                     "gns3_ruijie_telnet (custom Ruijie)"
                 )
                 error_msg = (
-                    f"Device '{device_name}': device_type tag not found. "
-                    f"Please add 'device_type:<type>' tag to this device in GNS3. "
+                    f"Device '{device_name}': no device type found. "
+                    f"Set the template/node 'netmiko_device_type' field (e.g. 'cisco_ios_telnet'), "
+                    f"or add a 'device_type:<type>' tag to this device in GNS3. "
                     f"To configure via Web UI: right-click the device -> Configure -> Tags -> add 'device_type:<type>'. "
                     f"Tested types: {tested_device_types}. "
                     f"Current tags: {tags}"
@@ -134,7 +138,7 @@ def get_device_ports_from_topology(
                 continue
 
             logger.debug(
-                "Device '%s': extracted device_type=%s from tags",
+                "Device '%s': device_type=%s",
                 device_name,
                 device_type,
             )

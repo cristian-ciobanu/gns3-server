@@ -69,3 +69,84 @@ def test_node_accepts_docker_exec_console():
         status="started",
     )
     assert node.console_type == "docker_exec"
+
+
+def test_node_accepts_netmiko_device_type():
+    """
+    The vendored Node model must keep the netmiko_device_type field so the
+    device-port tools can prefer it over the device_type:<type> tag.
+    """
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node
+
+    node = Node(
+        name="SR1",
+        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
+        node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
+        node_type="docker",
+        console_type="docker_exec",
+        status="started",
+        netmiko_device_type="nokia_srl",
+    )
+    assert node.netmiko_device_type == "nokia_srl"
+
+
+def test_device_ports_prefer_netmiko_field_over_tag(monkeypatch):
+    """
+    netmiko_device_type on the node wins over the device_type:<type> tag;
+    the tag stays as fallback when the field is missing.
+    """
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from gns3server.agent.gns3_copilot.utils import get_gns3_device_port
+    from gns3server.agent.gns3_copilot import gns3_client
+
+    class _FakeTopology:
+        def _run(self, project_id=None, jwt_token=None, url=None):
+            return {
+                "nodes": {
+                    "SR1": {
+                        "console_port": 5000,
+                        "tags": ["device_type:cisco_ios_telnet"],
+                        "netmiko_device_type": "nokia_srl",
+                    },
+                    "R1": {
+                        "console_port": 5001,
+                        "tags": ["device_type:cisco_ios_telnet", "platform:cisco_ios"],
+                        "netmiko_device_type": None,
+                    },
+                }
+            }
+
+    # the function does a lazy from-import inside the body
+    monkeypatch.setattr(gns3_client, "GNS3TopologyTool", _FakeTopology)
+    hosts = get_gns3_device_port.get_device_ports_from_topology(["SR1", "R1"])
+
+    # field wins over tag
+    assert hosts["SR1"]["connection_options"]["netmiko"]["extras"]["device_type"] == "nokia_srl"
+    # tag fallback when the field is absent
+    assert hosts["R1"]["connection_options"]["netmiko"]["extras"]["device_type"] == "cisco_ios_telnet"
+    assert hosts["R1"]["platform"] == "cisco_ios"
+
+
+def test_device_ports_error_without_any_device_type(monkeypatch):
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from gns3server.agent.gns3_copilot.utils import get_gns3_device_port
+    from gns3server.agent.gns3_copilot import gns3_client
+
+    class _FakeTopology:
+        def _run(self, project_id=None, jwt_token=None, url=None):
+            return {
+                "nodes": {
+                    "R2": {
+                        "console_port": 5002,
+                        "tags": ["platform:cisco_ios"],
+                    },
+                }
+            }
+
+    # the function does a lazy from-import inside the body
+    monkeypatch.setattr(gns3_client, "GNS3TopologyTool", _FakeTopology)
+    hosts = get_gns3_device_port.get_device_ports_from_topology(["R2"])
+
+    assert "error" in hosts["R2"]
+    assert "netmiko_device_type" in hosts["R2"]["error"]
