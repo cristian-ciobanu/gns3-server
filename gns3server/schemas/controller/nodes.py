@@ -119,7 +119,7 @@ class NodeBase(BaseModel):
     netmiko_device_type: Optional[str] = Field(
         None,
         description="Device type for Netmiko-based automation tools, overrides the template value",
-        pattern=r"^[a-z0-9_]+$",
+        pattern=r"^[a-z0-9_]+$|^$",
     )
     aux: Optional[int] = Field(None, gt=0, le=65535, description="Auxiliary console TCP port")
     aux_type: Optional[ConsoleType] = None

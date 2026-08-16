@@ -314,3 +314,244 @@ def test_v6_netmiko_device_type_copied_to_template():
 
     template = ApplianceToTemplate().new_template(appliance, None, "local")
     assert template["netmiko_device_type"] == "nokia_srl"
+
+
+def test_v8_iou_version_images_mapped_to_path():
+    """
+    An IOU template takes the image as a path: the version image name must be
+    mapped to 'path', never to an 'image' key.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "IOU L3",
+        "category": "router",
+        "settings": [
+            {"name": "only", "template_type": "iou",
+             "template_properties": {"ethernet_adapters": 4, "ram": 256}},
+        ],
+    }
+    version = {"name": "15.9", "images": {"image": "i86bi-linux-l3-15.9.bin"}}
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["template_type"] == "iou"
+    assert template["path"] == "i86bi-linux-l3-15.9.bin"
+    assert "image" not in template
+
+
+def test_v8_dynamips_idlepc_from_version():
+    appliance = {
+        "registry_version": 8,
+        "name": "Cisco 7200",
+        "category": "router",
+        "settings": [
+            {"name": "only", "template_type": "dynamips",
+             "template_properties": {"ram": 512, "platform": "c7200"}},
+        ],
+    }
+    version = {"name": "12.4", "idlepc": "0x613080c0", "images": {"image": "c7200.bin"}}
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["idlepc"] == "0x613080c0"
+    assert template["image"] == "c7200.bin"
+
+
+def test_v8_dynamips_settings_idlepc_precedence():
+    """
+    An idlepc defined in template_properties wins over the version level.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Cisco 7200",
+        "category": "router",
+        "settings": [
+            {"name": "only", "template_type": "dynamips",
+             "template_properties": {"ram": 512, "idlepc": "0x6142da40"}},
+        ],
+    }
+    version = {"name": "12.4", "idlepc": "0x613080c0", "images": {"image": "c7200.bin"}}
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["idlepc"] == "0x6142da40"
+
+
+def test_v8_qemu_kvm_disable_forces_accel_tcg():
+    """
+    kvm: disable is not a valid template property: it is converted to the
+    equivalent qemu options like for registry versions 1-6.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "QEMU VM",
+        "category": "guest",
+        "settings": [
+            {"name": "only", "template_type": "qemu",
+             "template_properties": {"ram": 512, "options": "-m 512", "kvm": "disable"}},
+        ],
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+
+    assert template["options"] == "-m 512 -machine accel=tcg"
+    assert "kvm" not in template
+
+
+def test_v8_qemu_kvm_allow_keeps_options():
+    appliance = {
+        "registry_version": 8,
+        "name": "QEMU VM",
+        "category": "guest",
+        "settings": [
+            {"name": "only", "template_type": "qemu",
+             "template_properties": {"ram": 512, "options": "-m 512", "kvm": "allow"}},
+        ],
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+
+    assert template["options"] == "-m 512"
+    assert "kvm" not in template
+
+
+def test_v8_no_cross_type_inheritance():
+    """
+    A version referencing a docker settings set must not inherit properties
+    from a default qemu settings set.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Mixed",
+        "category": "router",
+        "settings": [
+            {"name": "default qemu", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 2048, "adapters": 10}},
+            {"name": "docker alt", "template_type": "docker",
+             "template_properties": {"image": "xrd:latest", "adapters": 2}},
+        ],
+    }
+    version = {"name": "1.0", "settings": "docker alt", "images": {"image": "xrd:1.0"}}
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["template_type"] == "docker"
+    assert template["adapters"] == 2
+    assert "ram" not in template
+    assert template["image"] == "xrd:1.0"
+
+
+def test_v8_multiple_defaults_inherit_first_same_type():
+    """
+    With several default settings sets of the same type, the first one is
+    inherited from, matching the selection rule.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Multi",
+        "category": "router",
+        "settings": [
+            {"name": "default one", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 1024}},
+            {"name": "default two", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 2048}},
+            {"name": "alt", "template_type": "qemu", "template_properties": {"cpus": 2}},
+        ],
+    }
+    version = {"name": "1.0", "settings": "alt"}
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["ram"] == 1024
+    assert template["cpus"] == 2
+
+
+def test_v8_symbol_fallback_uses_effective_category():
+    """
+    The default symbol must reflect the effective category (template_properties,
+    then version, then appliance), not the appliance-level one.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Test",
+        "category": "router",
+        "settings": [
+            {"name": "only", "template_type": "qemu",
+             "template_properties": {"ram": 512, "category": "guest"}},
+        ],
+    }
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+    assert template["category"] == "guest"
+    assert template["symbol"] == ":/symbols/qemu_guest.svg"
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Test",
+        "category": "guest",
+        "settings": [
+            {"name": "only", "template_type": "qemu", "template_properties": {"ram": 512}},
+        ],
+    }
+    version = {"name": "1.0", "category": "router"}
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+    assert template["category"] == "router"
+    assert template["symbol"] == ":/symbols/router.svg"
+
+
+def test_v8_reserved_keys_cannot_be_overridden():
+    """
+    template_properties must not override the structural template fields.
+    """
+
+    appliance = {
+        "registry_version": 8,
+        "name": "Test",
+        "category": "router",
+        "settings": [
+            {"name": "only", "template_type": "docker",
+             "template_properties": {
+                 "image": "xrd:latest",
+                 "template_type": "qemu",
+                 "compute_id": "evil-compute",
+                 "version": "9.9",
+             }},
+        ],
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+
+    assert template["template_type"] == "docker"
+    assert template["compute_id"] == "local"
+    assert "version" not in template
+
+
+def test_v8_get_template_type():
+    """
+    get_template_type resolves the emulator type from the settings set
+    selected for the version, like the install flow does.
+    """
+
+    converter = ApplianceToTemplate()
+    appliance = {
+        "registry_version": 8,
+        "name": "Mixed",
+        "category": "router",
+        "settings": [
+            {"name": "default", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 512}},
+            {"name": "alt", "template_type": "docker",
+             "template_properties": {"image": "xrd:latest"}},
+        ],
+    }
+
+    assert converter.get_template_type(appliance, {"name": "1.0", "settings": "alt"}) == "docker"
+    assert converter.get_template_type(appliance, None) == "qemu"
+
+    v6 = {"registry_version": 6, "docker": {"image": "test:latest"}}
+    assert converter.get_template_type(v6, None) == "docker"

@@ -51,7 +51,7 @@ class TemplateBase(BaseModel):
     netmiko_device_type: Optional[str] = Field(
         None,
         description="Device type for Netmiko-based automation tools (e.g. 'cisco_xr' or 'nokia_srl')",
-        pattern=r"^[a-z0-9_]+$",
+        pattern=r"^[a-z0-9_]+$|^$",
     )
     tags: Optional[List[str]] = Field(
         default_factory=list,

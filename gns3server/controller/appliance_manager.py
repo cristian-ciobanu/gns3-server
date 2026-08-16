@@ -174,7 +174,7 @@ class ApplianceManager:
         version_images = version.get("images")
         if version_images:
             for appliance_key, appliance_file in version_images.items():
-                for image in appliance.images:
+                for image in appliance.images or []:
                     if appliance_file == image.get("filename"):
                         image_checksum = image.get("md5sum")
                         image_in_db = await images_repo.get_image_by_checksum(image_checksum)
@@ -225,12 +225,15 @@ class ApplianceManager:
 
         from . import Controller
 
-        # downloading missing custom symbol for this appliance
-        if appliance.symbol and not appliance.symbol.startswith(":/symbols/"):
-            destination_path = os.path.join(Controller.instance().symbols.symbols_path(), appliance.symbol)
+        template_data = ApplianceToTemplate().new_template(appliance.asdict(), version, "local")  # FIXME: "local"
+        # download the custom symbol used by the template if it is missing;
+        # the symbol can be defined at the appliance, version or settings level
+        symbol = template_data.get("symbol")
+        if symbol and not symbol.startswith(":/symbols/"):
+            destination_path = os.path.join(Controller.instance().symbols.symbols_path(), symbol)
             if not os.path.exists(destination_path):
-                await self._download_symbol(appliance.symbol, destination_path)
-        return ApplianceToTemplate().new_template(appliance.asdict(), version, "local")  # FIXME: "local"
+                await self._download_symbol(symbol, destination_path)
+        return template_data
 
     async def install_appliances_from_image(
             self,
@@ -290,11 +293,14 @@ class ApplianceManager:
             if not appliance.versions:
                 raise ControllerBadRequestError(message=f"Appliance '{appliance_id}' do not have versions")
 
-            image_dir = default_images_directory(appliance.type)
             for appliance_version_info in appliance.versions:
                 if appliance_version_info.get("name") == version:
                     try:
-                        await self._find_appliance_version_images(appliance, appliance_version_info, images_repo, image_dir)
+                        template_type = ApplianceToTemplate().get_template_type(appliance.asdict(), appliance_version_info)
+                        if template_type != "docker":
+                            # docker appliances have no image files to find or download
+                            image_dir = default_images_directory(template_type)
+                            await self._find_appliance_version_images(appliance, appliance_version_info, images_repo, image_dir)
                     except InvalidImageError as e:
                         raise ControllerError(message=f"Image error: {e}")
                     template_data = await self._appliance_to_template(appliance, appliance_version_info)
@@ -363,12 +369,14 @@ class ApplianceManager:
         category = appliance["category"]
         if category == "guest":
             if appliance.get("registry_version", 0) >= 8:
-                # registry version 8: look for a Docker settings set instead of a top-level block
-                settings_types = [
-                    settings.get("template_type") for settings in appliance.get("settings") or []
-                ]
-                if "docker" in settings_types:
+                # registry version 8: the emulator type comes from the default
+                # settings set (or the only one present), not a top-level block
+                settings = appliance.get("settings") or []
+                selected = next((s for s in settings if s.get("default")), settings[0] if settings else None)
+                if selected and selected.get("template_type") == "docker":
                     return controller.symbols.get_default_symbol("docker_guest", symbol_theme)
+                if selected:
+                    return controller.symbols.get_default_symbol("qemu_guest", symbol_theme)
             elif "docker" in appliance:
                 return controller.symbols.get_default_symbol("docker_guest", symbol_theme)
             elif "qemu" in appliance:

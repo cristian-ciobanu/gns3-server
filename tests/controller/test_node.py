@@ -401,6 +401,11 @@ async def test_update_netmiko_device_type(node, compute):
     assert node.netmiko_device_type == "cisco_ios_telnet"
     assert node.asdict()["netmiko_device_type"] == "cisco_ios_telnet"
 
+    # the field can also be cleared with an empty string
+    await node.update(netmiko_device_type="")
+    assert node.netmiko_device_type == ""
+    assert node.asdict()["netmiko_device_type"] == ""
+
 
 def test_netmiko_device_type_from_template_kwargs(compute, project):
     """

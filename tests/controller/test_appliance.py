@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import pydantic
+import pytest
+
 from gns3server.controller.appliance import Appliance
 from gns3server.controller.appliance_to_template import ApplianceToTemplate
 from gns3server.schemas.controller.appliances import ApplianceModel
@@ -77,25 +80,24 @@ def test_v8_docker_appliance_type():
 
 def test_v8_type_from_default_settings():
     # the default set wins over the other sets
-    appliance = {
-        "registry_version": 8,
-        "name": "mixed",
-        "status": "stable",
-        "settings": [
-            {"name": "a", "template_type": "docker", "template_properties": {"image": "x"}},
+    appliance = dict(
+        XRD_V8,
+        settings=[
+            {"name": "a", "template_type": "docker", "template_properties": {"image": "test:latest"}},
             {"name": "b", "default": True, "template_type": "qemu", "template_properties": {"ram": 512}},
         ],
-    }
+    )
+    # the fixture must be a loadable appliance, not an unreachable shape
+    ApplianceModel.model_validate(appliance)
     assert _appliance(appliance).type == "qemu"
 
 
 def test_v8_qemu_appliance_type_without_default():
-    appliance = {
-        "registry_version": 8,
-        "name": "single",
-        "status": "stable",
-        "settings": [{"name": "a", "template_type": "qemu", "template_properties": {"ram": 512}}],
-    }
+    appliance = dict(
+        XRD_V8,
+        settings=[{"name": "a", "template_type": "qemu", "template_properties": {"ram": 512}}],
+    )
+    ApplianceModel.model_validate(appliance)
     assert _appliance(appliance).type == "qemu"
 
 
@@ -127,3 +129,82 @@ def test_v8_docker_install_conversion():
         {"adapter_number": 1, "port_name": "Gi0/0/0/0"},
     ]
     assert template["extra_configs"] == [{"target": "/firstboot.cfg", "content": "!\nend\n"}]
+
+
+def test_v8_docker_settings_require_image():
+    """
+    template_properties must be validated against the model matching
+    template_type: a docker settings set without the required image is
+    rejected instead of being silently misrouted to another union member.
+    """
+
+    appliance = dict(
+        XRD_V8,
+        settings=[
+            {"name": "only", "default": True, "template_type": "docker",
+             "template_properties": {"adapters": 2}},
+        ],
+    )
+    with pytest.raises(pydantic.ValidationError):
+        ApplianceModel.model_validate(appliance)
+
+
+def test_v8_template_properties_validated_against_template_type():
+    """
+    Invalid enum values in qemu properties must be rejected at load time,
+    not silently discarded by a misrouted union member.
+    """
+
+    appliance = dict(
+        XRD_V8,
+        settings=[
+            {"name": "only", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 512, "boot_priority": "zzz"}},
+        ],
+    )
+    with pytest.raises(pydantic.ValidationError):
+        ApplianceModel.model_validate(appliance)
+
+
+def test_v8_qemu_kvm_property_validates():
+    appliance = dict(
+        XRD_V8,
+        settings=[
+            {"name": "only", "default": True, "template_type": "qemu",
+             "template_properties": {"ram": 512, "kvm": "disable"}},
+        ],
+    )
+    model = ApplianceModel.model_validate(appliance)
+    assert model.settings[0].template_properties.kvm == "disable"
+
+
+def test_v8_qemu_cpu_throttling_range():
+    """
+    cpu_throttling in v8 properties uses the same type and range as the
+    qemu template (int, 0-800).
+    """
+
+    settings = {"name": "only", "default": True, "template_type": "qemu",
+                "template_properties": {"ram": 512, "cpu_throttling": 500}}
+    model = ApplianceModel.model_validate(dict(XRD_V8, settings=[settings]))
+    assert model.settings[0].template_properties.cpu_throttling == 500
+
+    for bad in (150.5, 900):
+        bad_settings = dict(settings, template_properties={"ram": 512, "cpu_throttling": bad})
+        with pytest.raises(pydantic.ValidationError):
+            ApplianceModel.model_validate(dict(XRD_V8, settings=[bad_settings]))
+
+
+def test_v8_version_idlepc_validates():
+    appliance = dict(XRD_V8, versions=[{"name": "1.0", "idlepc": "0x613080c0"}])
+    ApplianceModel.model_validate(appliance)
+
+    bad = dict(XRD_V8, versions=[{"name": "1.0", "idlepc": "not-an-idlepc"}])
+    with pytest.raises(pydantic.ValidationError):
+        ApplianceModel.model_validate(bad)
+
+
+def test_v8_netmiko_device_type_empty_string_clears():
+    appliance = dict(XRD_V8, netmiko_device_type="")
+    model = ApplianceModel.model_validate(appliance)
+    assert model.netmiko_device_type == ""

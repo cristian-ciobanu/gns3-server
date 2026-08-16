@@ -168,8 +168,22 @@ class ApplianceToTemplate:
                 elif appliance_config.get(prop) is not None:
                     properties[prop] = appliance_config[prop]
 
-        if properties.get("category") == "multilayer_switch":
+        category_before_remap = properties.get("category")
+        if category_before_remap == "multilayer_switch":
             properties["category"] = "switch"
+
+        if settings["template_type"] == "qemu":
+            # kvm is not a valid template property: convert it to the
+            # equivalent qemu options like for registry versions 1-6
+            kvm = properties.pop("kvm", None) or "allow"
+            options = properties.get("options") or ""
+            if kvm == "disable" and "-machine accel=tcg" not in options:
+                options += " -machine accel=tcg"
+            properties["options"] = options.strip()
+
+        # template_properties must not override the structural fields
+        for reserved in ("template_type", "compute_id", "version"):
+            properties.pop(reserved, None)
 
         new_template.update(properties)
         if "tags" in appliance_config:
@@ -179,8 +193,8 @@ class ApplianceToTemplate:
             new_template["netmiko_device_type"] = appliance_config["netmiko_device_type"]
 
         if not new_template.get("symbol"):
-            # apply a default symbol based on the category and template type
-            if appliance_config["category"] == "guest":
+            # apply a default symbol based on the effective category and template type
+            if category_before_remap == "guest":
                 if settings["template_type"] == "docker":
                     new_template["symbol"] = ":/symbols/docker_guest.svg"
                 else:
@@ -192,12 +206,37 @@ class ApplianceToTemplate:
                     "multilayer_switch": ":/symbols/multilayer_switch.svg",
                     "firewall": ":/symbols/firewall.svg",
                 }
-                new_template["symbol"] = symbols.get(appliance_config["category"])
+                new_template["symbol"] = symbols.get(category_before_remap)
 
         if version and version.get("images"):
-            new_template.update(version["images"])
+            if settings["template_type"] == "iou":
+                # IOU templates take the image path, not an image name
+                new_template["path"] = version["images"].get("image")
+            else:
+                new_template.update(version["images"])
+
+        if version and settings["template_type"] == "dynamips" and version.get("idlepc"):
+            # settings level idlepc takes precedence over the version level
+            new_template.setdefault("idlepc", version["idlepc"])
 
         return new_template
+
+    def get_template_type(self, appliance_config, version):
+        """
+        Returns the template type of the settings set used to install the given
+        version: for registry versions 1-6 it comes from the emulator block, for
+        version 8 from the settings set selected for the version.
+        """
+
+        if appliance_config.get("registry_version", 0) >= 8:
+            return self._select_v8_settings(appliance_config, version)["template_type"]
+        if "iou" in appliance_config:
+            return "iou"
+        if "dynamips" in appliance_config:
+            return "dynamips"
+        if "docker" in appliance_config:
+            return "docker"
+        return "qemu"
 
     def _select_v8_settings(self, appliance_config, version):
         """
@@ -235,13 +274,15 @@ class ApplianceToTemplate:
         """
         Merges the template properties of the selected settings with the default
         settings properties, unless inheritance is disabled or the default set
-        is selected.
+        is selected. Only a default set of the same emulator type is inherited
+        from, so properties of a different type never pollute the template.
         """
 
         properties = {}
         if not settings.get("default") and settings.get("inherit_default_properties", True):
             for other_settings in appliance_config.get("settings") or []:
-                if other_settings.get("default"):
+                if other_settings.get("default") and other_settings.get("template_type") == settings["template_type"]:
                     properties.update(other_settings.get("template_properties") or {})
+                    break
         properties.update(settings.get("template_properties") or {})
         return properties

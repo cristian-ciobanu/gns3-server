@@ -166,6 +166,13 @@ class TestTemplateRoutes:
         assert response.json()["name"] == "VPCS_TEST_RENAMED"
         assert response.json()["netmiko_device_type"] == "cisco_ios"
 
+        # the field can also be cleared with an empty string
+        params = {"netmiko_device_type": ""}
+        response = await client.put(app.url_path_for("update_template", template_id=template_id), json=params)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["netmiko_device_type"] == ""
+
     async def test_template_delete(self, app: FastAPI, client: AsyncClient) -> None:
 
         template_id = str(uuid.uuid4())
