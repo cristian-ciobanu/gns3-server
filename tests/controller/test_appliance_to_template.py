@@ -16,9 +16,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import pytest
+import pydantic
 
 from gns3server.controller.appliance_to_template import ApplianceToTemplate
 from gns3server.controller.controller_error import ControllerError
+from gns3server.schemas.controller.appliances import ApplianceModel
 
 
 # reduced mirror of the upstream vyos.gns3a (registry version 8, qemu, 2 settings sets)
@@ -91,6 +93,21 @@ VYOS_V8 = {
         },
     ],
 }
+
+
+def test_v8_netmiko_device_type_copied_to_template():
+    appliance = dict(VYOS_V8, netmiko_device_type="vyos_ssh")
+
+    template = ApplianceToTemplate().new_template(appliance, VYOS_V8["versions"][1], "local")
+    assert template["netmiko_device_type"] == "vyos_ssh"
+
+
+def test_v8_netmiko_device_type_validates():
+    model = ApplianceModel.model_validate(dict(VYOS_V8, netmiko_device_type="vyos_ssh"))
+    assert model.netmiko_device_type == "vyos_ssh"
+
+    with pytest.raises(pydantic.ValidationError):
+        ApplianceModel.model_validate(dict(VYOS_V8, netmiko_device_type="Not Valid!"))
 
 
 def test_v8_version_referenced_settings_with_inheritance():
@@ -283,3 +300,17 @@ def test_v6_path_unchanged():
     assert template["console_type"] == "docker_exec"
     assert template["adapters"] == 35
     assert template["usage"] == "v6 usage"
+
+
+def test_v6_netmiko_device_type_copied_to_template():
+    appliance = {
+        "registry_version": 6,
+        "name": "SRLinux",
+        "category": "router",
+        "symbol": ":/symbols/router.svg",
+        "netmiko_device_type": "nokia_srl",
+        "docker": {"adapters": 35, "image": "ghcr.io/nokia/srlinux:latest"},
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+    assert template["netmiko_device_type"] == "nokia_srl"

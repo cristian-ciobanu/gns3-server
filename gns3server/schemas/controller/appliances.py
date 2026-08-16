@@ -632,6 +632,9 @@ class ApplianceV1_6(BaseModel):
     maintainer_email: Optional[Union[EmailStr, Annotated[str, Field(max_length=0)]]] = Field(None, title='Maintainer email')
     usage: Optional[str] = Field(None, title='How to use the appliance')
     symbol: Optional[str] = Field(None, title='An optional symbol for the appliance')
+    netmiko_device_type: Optional[str] = Field(
+        None, title='Device type for Netmiko-based automation tools', pattern=r'^[a-z0-9_]+$'
+    )
     first_port_name: Optional[str] = Field(None, title='Optional name of the first networking port example: eth0')
     port_name_format: Optional[str] = Field(None, title='Optional formating of the networking port example: eth{0}')
     port_segment_size: Optional[int] = Field(
@@ -685,6 +688,9 @@ class ApplianceV8(BaseModel):
     default_username: Optional[str] = Field(None, title='Default username for the appliance')
     default_password: Optional[str] = Field(None, title='Default password for the appliance')
     symbol: Optional[str] = Field(None, title='An optional symbol for the appliance')
+    netmiko_device_type: Optional[str] = Field(
+        None, title='Device type for Netmiko-based automation tools', pattern=r'^[a-z0-9_]+$'
+    )
     tags: Optional[List[str]] = Field(None, title='User-defined metadata tags for the appliance')
     settings: List[TemplateSetting] = Field(..., title='Settings for running the appliance')
     images: Optional[List[ApplianceImage]] = Field(None, title='Images for this appliance')

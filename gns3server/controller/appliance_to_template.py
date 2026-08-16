@@ -58,6 +58,9 @@ class ApplianceToTemplate:
         if "tags" in appliance_config:
             new_template["tags"] = appliance_config.get("tags")
 
+        if appliance_config.get("netmiko_device_type"):
+            new_template["netmiko_device_type"] = appliance_config["netmiko_device_type"]
+
         if new_template.get("symbol") is None:
             if appliance_config["category"] == "guest":
                 if "docker" in appliance_config:
@@ -171,6 +174,9 @@ class ApplianceToTemplate:
         new_template.update(properties)
         if "tags" in appliance_config:
             new_template["tags"] = appliance_config.get("tags")
+
+        if appliance_config.get("netmiko_device_type"):
+            new_template["netmiko_device_type"] = appliance_config["netmiko_device_type"]
 
         if not new_template.get("symbol"):
             # apply a default symbol based on the category and template type
