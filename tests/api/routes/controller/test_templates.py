@@ -173,6 +173,44 @@ class TestTemplateRoutes:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["netmiko_device_type"] == ""
 
+    async def test_template_appliance_metadata_roundtrip(self, app: FastAPI, client: AsyncClient) -> None:
+        """
+        Appliance metadata persists with the template: create, read back,
+        and replace on update. Unknown fields are kept (extra=allow) so that
+        future appliance registry fields do not vanish.
+        """
+
+        template_id = str(uuid.uuid4())
+        params = {
+            "template_id": template_id,
+            "name": "VPCS_METADATA",
+            "compute_id": "local",
+            "template_type": "vpcs",
+            "appliance_metadata": {
+                "vendor_name": "Test vendor",
+                "default_username": "admin",
+                "future_field": "kept",
+            },
+        }
+
+        response = await client.post(app.url_path_for("create_template"), json=params)
+        assert response.status_code == status.HTTP_201_CREATED
+        metadata = response.json()["appliance_metadata"]
+        assert metadata["vendor_name"] == "Test vendor"
+        assert metadata["default_username"] == "admin"
+        assert metadata["future_field"] == "kept"
+
+        # read back from the database
+        response = await client.get(app.url_path_for("get_template", template_id=template_id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["appliance_metadata"] == metadata
+
+        # the metadata object is replaced as a whole on update
+        params = {"appliance_metadata": {"default_username": "root"}}
+        response = await client.put(app.url_path_for("update_template", template_id=template_id), json=params)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["appliance_metadata"] == {"default_username": "root"}
+
     async def test_template_delete(self, app: FastAPI, client: AsyncClient) -> None:
 
         template_id = str(uuid.uuid4())

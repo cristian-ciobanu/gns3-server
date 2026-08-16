@@ -97,6 +97,10 @@ async def test_install_docker_version_skips_image_resolution(monkeypatch):
     assert template["template_type"] == "docker"
     # the version image name is injected into the template
     assert template["image"] == "xrd:1.0"
+    # appliance metadata survives the install and validates through TemplateCreate
+    metadata = template["appliance_metadata"]
+    assert metadata["vendor_name"] == "Test vendor"
+    assert metadata["appliance_id"] == appliance.id
 
 
 @pytest.mark.asyncio

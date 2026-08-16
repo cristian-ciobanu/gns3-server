@@ -23,6 +23,27 @@ from .controller_error import ControllerError
 log = logging.getLogger(__name__)
 
 
+# appliance fields that describe the appliance (vendor information, default
+# credentials...) and are kept on the template as metadata instead of being
+# dropped at installation time
+_APPLIANCE_METADATA_FIELDS = (
+    "description",
+    "vendor_name",
+    "vendor_url",
+    "vendor_logo_url",
+    "documentation_url",
+    "product_name",
+    "product_url",
+    "status",
+    "availability",
+    "maintainer",
+    "maintainer_email",
+    "installation_instructions",
+    "default_username",
+    "default_password",
+)
+
+
 class ApplianceToTemplate:
     """
     Appliance installation.
@@ -60,6 +81,10 @@ class ApplianceToTemplate:
 
         if appliance_config.get("netmiko_device_type"):
             new_template["netmiko_device_type"] = appliance_config["netmiko_device_type"]
+
+        appliance_metadata = self._build_appliance_metadata(appliance_config, version)
+        if appliance_metadata:
+            new_template["appliance_metadata"] = appliance_metadata
 
         if new_template.get("symbol") is None:
             if appliance_config["category"] == "guest":
@@ -192,6 +217,10 @@ class ApplianceToTemplate:
         if appliance_config.get("netmiko_device_type"):
             new_template["netmiko_device_type"] = appliance_config["netmiko_device_type"]
 
+        appliance_metadata = self._build_appliance_metadata(appliance_config, version)
+        if appliance_metadata:
+            new_template["appliance_metadata"] = appliance_metadata
+
         if not new_template.get("symbol"):
             # apply a default symbol based on the effective category and template type
             if category_before_remap == "guest":
@@ -220,6 +249,26 @@ class ApplianceToTemplate:
             new_template.setdefault("idlepc", version["idlepc"])
 
         return new_template
+
+    def _build_appliance_metadata(self, appliance_config, version):
+        """
+        Builds the appliance metadata kept on the template: the fields that
+        describe the appliance, with version level values (e.g. credentials
+        specific to the installed version) overriding the appliance level ones.
+        """
+
+        version = version or {}
+        metadata = {}
+        for field in _APPLIANCE_METADATA_FIELDS:
+            value = version.get(field)
+            if value is None:
+                value = appliance_config.get(field)
+            if value is not None:
+                metadata[field] = value
+        appliance_id = appliance_config.get("appliance_id")
+        if appliance_id:
+            metadata["appliance_id"] = str(appliance_id)
+        return metadata or None
 
     def get_template_type(self, appliance_config, version):
         """

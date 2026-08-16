@@ -555,3 +555,69 @@ def test_v8_get_template_type():
 
     v6 = {"registry_version": 6, "docker": {"image": "test:latest"}}
     assert converter.get_template_type(v6, None) == "docker"
+
+
+def test_v8_appliance_metadata_copied_to_template():
+    """
+    Appliance metadata (vendor information, default credentials...) is kept
+    on the template instead of being dropped, with version level values
+    overriding the appliance level ones.
+    """
+
+    appliance = dict(VYOS_V8, default_username="vyos", default_password="vyospass")
+    version = dict(VYOS_V8["versions"][1], default_username="vyos145")
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    metadata = template["appliance_metadata"]
+    assert metadata["appliance_id"] == VYOS_V8["appliance_id"]
+    assert metadata["vendor_name"] == "VyOS Inc."
+    assert metadata["status"] == "stable"
+    # the version level default_username overrides the appliance level one
+    assert metadata["default_username"] == "vyos145"
+    assert metadata["default_password"] == "vyospass"
+
+
+def test_v8_appliance_metadata_version_level_overrides():
+    appliance = dict(VYOS_V8, installation_instructions="appliance instructions")
+    version = dict(VYOS_V8["versions"][1], installation_instructions="version instructions")
+
+    template = ApplianceToTemplate().new_template(appliance, version, "local")
+
+    assert template["appliance_metadata"]["installation_instructions"] == "version instructions"
+
+
+def test_v6_appliance_metadata_copied_to_template():
+    """
+    Registry versions 1-6 appliances keep their metadata too (the fields
+    they have: the v8-only ones are simply absent).
+    """
+
+    appliance = {
+        "registry_version": 6,
+        "name": "SRLinux",
+        "category": "router",
+        "description": "Nokia SR Linux",
+        "vendor_name": "Nokia",
+        "docker": {"adapters": 35, "image": "ghcr.io/nokia/srlinux:latest"},
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+
+    metadata = template["appliance_metadata"]
+    assert metadata["description"] == "Nokia SR Linux"
+    assert metadata["vendor_name"] == "Nokia"
+    assert "default_username" not in metadata
+
+
+def test_no_appliance_metadata_when_appliance_has_none():
+    appliance = {
+        "registry_version": 8,
+        "name": "Test",
+        "category": "guest",
+        "settings": [{"name": "only", "template_type": "qemu", "template_properties": {"ram": 512}}],
+    }
+
+    template = ApplianceToTemplate().new_template(appliance, None, "local")
+
+    assert "appliance_metadata" not in template
