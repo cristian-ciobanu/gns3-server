@@ -362,7 +362,14 @@ class ApplianceManager:
             symbol_theme = controller.symbols.theme
         category = appliance["category"]
         if category == "guest":
-            if "docker" in appliance:
+            if appliance.get("registry_version", 0) >= 8:
+                # registry version 8: look for a Docker settings set instead of a top-level block
+                settings_types = [
+                    settings.get("template_type") for settings in appliance.get("settings") or []
+                ]
+                if "docker" in settings_types:
+                    return controller.symbols.get_default_symbol("docker_guest", symbol_theme)
+            elif "docker" in appliance:
                 return controller.symbols.get_default_symbol("docker_guest", symbol_theme)
             elif "qemu" in appliance:
                 return controller.symbols.get_default_symbol("qemu_guest", symbol_theme)

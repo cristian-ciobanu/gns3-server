@@ -481,6 +481,7 @@ class DockerPropertiesV8(BaseModel):
     extra_volumes: Optional[List[str]] = Field(
         None, title='Additional directories to make persistent'
     )
+    custom_adapters: Optional[List[CustomAdapterItem]] = Field(None, title='Custom adapters')
     extra_configs: Optional[List[ExtraConfig]] = Field(
         None, title='Configuration files injected into the container (bind-mounted read-only)'
     )
