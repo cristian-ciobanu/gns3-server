@@ -35,6 +35,7 @@ class Template(BaseTable):
     symbol = Column(String)
     builtin = Column(Boolean, default=False)
     usage = Column(String)
+    netmiko_device_type = Column(String)
     template_type = Column(String)
     tags = Column(JSON)
     compute_id = Column(String)

@@ -146,7 +146,8 @@ class TestTemplateRoutes:
             "version": "3.0",
             "compute_id": "local",
             "template_type": "vpcs",
-            "tags": ["tag1", "tag2"]
+            "tags": ["tag1", "tag2"],
+            "netmiko_device_type": "generic_termserver_telnet"
         }
 
         response = await client.post(app.url_path_for("create_template"), json=params)
@@ -156,12 +157,14 @@ class TestTemplateRoutes:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["template_id"] == template_id
         assert response.json()["tags"] == ["tag1", "tag2"]
+        assert response.json()["netmiko_device_type"] == "generic_termserver_telnet"
 
-        params = {"name": "VPCS_TEST_RENAMED", "console_auto_start": True}
+        params = {"name": "VPCS_TEST_RENAMED", "console_auto_start": True, "netmiko_device_type": "cisco_ios"}
         response = await client.put(app.url_path_for("update_template", template_id=template_id), json=params)
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["name"] == "VPCS_TEST_RENAMED"
+        assert response.json()["netmiko_device_type"] == "cisco_ios"
 
     async def test_template_delete(self, app: FastAPI, client: AsyncClient) -> None:
 
