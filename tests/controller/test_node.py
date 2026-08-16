@@ -143,6 +143,8 @@ def test_json(node, compute):
         "custom_adapters": [],
         "console_auto_start": False,
         "netmiko_device_type": None,
+        "default_username": None,
+        "default_password": None,
         "ports": [
             {
                 "adapter_number": 0,
@@ -181,6 +183,8 @@ def test_json(node, compute):
         "tags": [],
         "console_auto_start": False,
         "netmiko_device_type": None,
+        "default_username": None,
+        "default_password": None,
     }
 
 
@@ -418,6 +422,49 @@ def test_netmiko_device_type_from_template_kwargs(compute, project):
     # controller-only: must not leak into the compute properties
     assert "netmiko_device_type" not in node.properties
     assert node.asdict(topology_dump=True)["netmiko_device_type"] == "nokia_srl"
+
+
+@pytest.mark.asyncio
+async def test_update_default_credentials(node, compute):
+    """
+    default_username/default_password are controller-only properties: updating
+    them must not call the compute and must be persisted in the node json.
+    """
+
+    compute.put = AsyncioMagicMock()
+    node._project.emit_notification = AsyncioMagicMock()
+    node._project.dump = MagicMock()
+
+    await node.update(default_username="admin", default_password="secret")
+    assert not compute.put.called
+    assert node.default_username == "admin"
+    assert node.default_password == "secret"
+    assert node.asdict()["default_username"] == "admin"
+    assert node.asdict(topology_dump=True)["default_password"] == "secret"
+
+    # credentials never leak into the compute properties
+    assert "default_username" not in node.properties
+    assert "default_password" not in node.properties
+
+    # both fields can be cleared with an empty string
+    await node.update(default_username="", default_password="")
+    assert node.default_username == ""
+    assert node.default_password == ""
+
+
+def test_default_credentials_from_template_kwargs(compute, project):
+    """
+    A node created from a template with appliance metadata inherits the
+    default credentials without sending them to the compute.
+    """
+
+    node = Node(project, compute, "test", node_type="vpcs",
+                default_username="root", default_password="cisco123")
+    assert node.default_username == "root"
+    assert node.default_password == "cisco123"
+    assert "default_username" not in node.properties
+    assert "default_password" not in node.properties
+    assert node.asdict(topology_dump=True)["default_username"] == "root"
 
 
 @pytest.mark.asyncio

@@ -205,6 +205,48 @@ async def test_add_node_local(controller):
 
 
 @pytest.mark.asyncio
+async def test_add_node_from_template_seeds_default_credentials(controller):
+    """
+    The appliance metadata stays template level: creating a node from a
+    template seeds the default credentials on the node and must not leak
+    the metadata into the node properties sent to the compute.
+    """
+
+    compute = MagicMock()
+    compute.id = "local"
+    controller._computes["local"] = compute
+    project = Project(controller=controller, name="Test")
+    project.emit_notification = MagicMock()
+
+    response = MagicMock()
+    response.json = {"console": 2048}
+    compute.post = AsyncioMagicMock(return_value=response)
+
+    template = {
+        "name": "VPCS_TEST",
+        "template_type": "vpcs",
+        "compute_id": "local",
+        "default_name_format": "PC{0}",
+        "properties": {"startup_script": "test.cfg"},
+        "appliance_metadata": {
+            "vendor_name": "Test vendor",
+            "default_username": "admin",
+            "default_password": "secret",
+        },
+    }
+
+    node = await project.add_node_from_template(template)
+
+    # credentials seeded from the appliance metadata
+    assert node.default_username == "admin"
+    assert node.default_password == "secret"
+    # the metadata itself never reaches the node properties
+    assert "appliance_metadata" not in node.properties
+    assert "default_username" not in node.properties
+    assert "default_password" not in node.properties
+
+
+@pytest.mark.asyncio
 async def test_add_node_non_local(controller):
     """
     For a non local server we do not send the project path
