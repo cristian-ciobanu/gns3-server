@@ -61,6 +61,7 @@ from . import acl
 from . import pools
 from . import privileges
 from . import api_keys
+from . import netmiko
 
 from .dependencies.authentication import get_current_active_user
 
@@ -157,6 +158,12 @@ router.include_router(
     appliances.router,
     prefix="/appliances",
     tags=["Appliances"]
+)
+
+router.include_router(
+    netmiko.router,
+    prefix="/netmiko",
+    tags=["Netmiko"]
 )
 
 router.include_router(
