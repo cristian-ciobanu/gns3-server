@@ -160,7 +160,7 @@ def get_device_ports_from_topology(
             # This is the Nornir best practice - each host has its own
             # connection configuration (device_type), while sharing common
             # settings (hostname, timeout) via group inheritance.
-            hosts_data[device_name] = {
+            host_entry = {
                 "port": node_info["console_port"],
                 "platform": platform,
                 "groups": ["network_devices"],  # For inheriting hostname, timeout, etc.
@@ -170,6 +170,16 @@ def get_device_ports_from_topology(
                     }
                 },
             }
+
+            # Per-node default credentials (seeded from the template appliance
+            # metadata) override the group's empty fallback. Only inject when
+            # set, so credential-less devices keep inheriting the group values.
+            if node_info.get("default_username"):
+                host_entry["username"] = node_info["default_username"]
+            if node_info.get("default_password"):
+                host_entry["password"] = node_info["default_password"]
+
+            hosts_data[device_name] = host_entry
 
         logger.info("Returning %d device port mappings", len(hosts_data))
 

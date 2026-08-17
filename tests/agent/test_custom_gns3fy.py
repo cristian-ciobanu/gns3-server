@@ -150,3 +150,106 @@ def test_device_ports_error_without_any_device_type(monkeypatch):
 
     assert "error" in hosts["R2"]
     assert "netmiko_device_type" in hosts["R2"]["error"]
+
+
+def test_node_accepts_default_credentials():
+    """
+    The vendored Node model must keep the default credentials so the
+    device-port tools can log into devices that require authentication.
+    """
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node
+
+    node = Node(
+        name="R1",
+        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
+        node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
+        node_type="docker",
+        console_type="telnet",
+        status="started",
+        default_username="admin",
+        default_password="admin123",
+    )
+    assert node.default_username == "admin"
+    assert node.default_password == "admin123"
+
+
+def test_nodes_inventory_emits_default_credentials():
+    """
+    The inventory dict consumed by get_device_ports_from_topology must
+    carry the per-node default credentials.
+    """
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from types import SimpleNamespace
+    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node, Project
+
+    project = Project(
+        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
+        connector=SimpleNamespace(base_url="http://127.0.0.1:3080"),
+    )
+    project.nodes = [
+        Node(
+            name="R1",
+            project_id=project.project_id,
+            node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
+            node_type="dynamips",
+            console=5000,
+            default_username="admin",
+            default_password="admin123",
+        ),
+    ]
+
+    inventory = project.nodes_inventory()
+    assert inventory["R1"]["default_username"] == "admin"
+    assert inventory["R1"]["default_password"] == "admin123"
+
+
+def test_device_ports_inject_default_credentials(monkeypatch):
+    """
+    Per-node default credentials become host-level nornir values (which
+    override the group's empty fallback); missing or cleared ("") values
+    keep inheriting from the group.
+    """
+    pytest.importorskip("jwt", reason="ai-features extras not installed")
+    from gns3server.agent.gns3_copilot.utils import get_gns3_device_port
+    from gns3server.agent.gns3_copilot import gns3_client
+
+    class _FakeTopology:
+        def _run(self, project_id=None, jwt_token=None, url=None):
+            return {
+                "nodes": {
+                    "R1": {
+                        "console_port": 5000,
+                        "tags": [],
+                        "netmiko_device_type": "cisco_ios_telnet",
+                        "default_username": "admin",
+                        "default_password": "admin123",
+                    },
+                    # credentials cleared via PUT arrive as empty strings
+                    "R2": {
+                        "console_port": 5001,
+                        "tags": [],
+                        "netmiko_device_type": "cisco_ios_telnet",
+                        "default_username": "",
+                        "default_password": "",
+                    },
+                    # never seeded
+                    "R3": {
+                        "console_port": 5002,
+                        "tags": [],
+                        "netmiko_device_type": "cisco_ios_telnet",
+                    },
+                }
+            }
+
+    monkeypatch.setattr(gns3_client, "GNS3TopologyTool", _FakeTopology)
+    hosts = get_gns3_device_port.get_device_ports_from_topology(["R1", "R2", "R3"])
+
+    # set credentials land at host level
+    assert hosts["R1"]["username"] == "admin"
+    assert hosts["R1"]["password"] == "admin123"
+    # cleared ("") and absent credentials do not override the group fallback
+    assert "username" not in hosts["R2"]
+    assert "password" not in hosts["R2"]
+    assert "username" not in hosts["R3"]
+    assert "password" not in hosts["R3"]

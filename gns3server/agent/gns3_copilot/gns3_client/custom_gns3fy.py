@@ -1372,6 +1372,8 @@ class Node:
     properties: Any | None = None
     tags: list[str] | None = None
     netmiko_device_type: str | None = None
+    default_username: str | None = None
+    default_password: str | None = None
 
     template: str | None = None
     links: list[Link] = field(default_factory=list, repr=False)
@@ -2489,6 +2491,8 @@ class Project:
                         "y": _n.y,
                         "tags": _n.tags if _n.tags else [],
                         "netmiko_device_type": _n.netmiko_device_type,
+                        "default_username": _n.default_username,
+                        "default_password": _n.default_password,
                     }
                 }
             )
