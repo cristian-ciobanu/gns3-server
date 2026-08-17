@@ -532,6 +532,17 @@ async def test_first_connect_creates_exec(compute_project, manager):
 
 
 @pytest.mark.asyncio
+async def test_first_connect_sets_tall_default_pty_geometry(compute_project, manager):
+    """The exec PTY must start tall/wide: a 24-row initial geometry makes CLIs
+    that page on the PTY window size (IOS-XR pager) park at --More-- for
+    clients that never send NAWS (netmiko, bare telnet)."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    await srv.client_connected_hook()
+    srv._on_naws.assert_called_once_with(511, 10000)
+
+
+@pytest.mark.asyncio
 async def test_reconnect_live_exec_not_recreated(compute_project, manager):
     """Reconnecting while the exec is alive must NOT recreate it."""
 

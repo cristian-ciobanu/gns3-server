@@ -504,7 +504,14 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                     log.warning(f"{self._log_name}: failed to create exec: {exc}", exc_info=True)
                     raise
                 try:
-                    await self._on_naws(80, 24)  # initial size before NAWS
+                    # Tall/wide default geometry before any NAWS arrives: a
+                    # 24-row PTY makes CLIs that page on the PTY window size
+                    # (e.g. the IOS-XR pager) park at --More-- for clients
+                    # that never negotiate NAWS (netmiko, bare telnet).
+                    # Width 511 matches netmiko's 'terminal width 511'.
+                    # Real NAWS clients resize to their own geometry right
+                    # after connecting.
+                    await self._on_naws(511, 10000)
                 except Exception:
                     pass
             else:

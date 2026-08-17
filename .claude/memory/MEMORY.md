@@ -30,7 +30,7 @@
 - **[Docker Container Stop Delay](./docker-container-stop-delay.md)** - Some containers take ~5s to stop because they don't handle SIGTERM (AlpiNet, OstinatoWireshark)
 
 ### Device Console / Copilot Known Bugs
-- **[XRd Console --More-- Pager Bug](./xrd-console-more-pager-bug.md)** - XRd console (docker exec PTY, 24 rows) pager bypasses `terminal length 0`, long-output commands consistently hit netmiko ReadTimeout; `| no-more` does not exist on XR; agreed fix design: copilot tail-anchored `--More--` auto-answer + reconnect before retry + session_log (designed, not yet implemented)
+- **[XRd Console --More-- Pager Bug](./xrd-console-more-pager-bug.md)** - FIXED: root cause was our own 80x24 initial PTY geometry for the docker_exec console (the XR pager reads PTY rows, not `terminal length`); initial geometry is now 511x10000. Copilot reconnect-before-retry + session_log still open; `--More--` auto-answer kept as fallback design
 
 ### MCP Service
 - **[MCP Service Design](./mcp-service-design.md)** - MCP (Model Context Protocol) service architecture using FastMCP with SSE transport, JWT auth, 29 tools across 5 domains
