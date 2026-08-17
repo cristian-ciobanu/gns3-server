@@ -155,7 +155,10 @@ def unauthorized_client(base_client: AsyncClient, test_user: User) -> AsyncClien
 @pytest_asyncio.fixture(loop_scope="class", scope="class")
 def authorized_client(base_client: AsyncClient, test_user: User) -> AsyncClient:
 
-    access_token = auth_service.create_access_token(test_user.username)
+    # Sign with the default secret key: the class-scoped token must stay valid
+    # across every test, but "run_around_tests" resets the config and forces
+    # jwt_secret_key back to the default for each test function.
+    access_token = auth_service.create_access_token(test_user.username, secret_key=DEFAULT_JWT_SECRET_KEY)
     base_client.headers = {
         **base_client.headers,
         "Authorization": f"Bearer {access_token}",
@@ -168,7 +171,9 @@ async def client(base_client: AsyncClient) -> AsyncClient:
 
     # The super admin is automatically created when the users table is created
     # this account that can access all endpoints without restrictions.
-    access_token = auth_service.create_access_token("admin")
+    # Sign with the default secret key so the token matches the one enforced
+    # by "run_around_tests" when the config is reset for each test function.
+    access_token = auth_service.create_access_token("admin", secret_key=DEFAULT_JWT_SECRET_KEY)
     base_client.headers = {
         **base_client.headers,
         "Authorization": f"Bearer {access_token}",
