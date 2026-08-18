@@ -330,7 +330,7 @@ class Cloud(BaseNode):
                         f"Interface '{port_info['interface']}' could not be found on this system, please update '{self.name}'"
                     )
 
-                if sys.platform.startswith("linux"):
+                if sys.platform.startswith("linux") or sys.platform.startswith("openbsd"):
                     await self._add_linux_ethernet(port_info, bridge_name)
                 elif sys.platform.startswith("darwin"):
                     await self._add_osx_ethernet(port_info, bridge_name)
