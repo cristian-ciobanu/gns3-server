@@ -106,7 +106,7 @@ class TestRoutes:
                     async with aconnect_ws(path, client, params=params) as ws:
                         json_notification = await ws.receive_json()
                         assert json_notification['event'] == {
-                            'message': 'Could not authenticate while connecting to controller WebSocket: Could not validate credentials'
+                            'message': 'Could not authenticate while connecting to controller WebSocket: Invalid token (DecodeError)'
                         }
 
 
