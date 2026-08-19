@@ -51,11 +51,16 @@ def test_temporary_directory(compute_project, manager):
     assert isinstance(node.temporary_directory, str)
 
 
-def test_console(compute_project, manager):
+def test_console(compute_project, manager, port_manager):
 
     node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
-    node.console = 5011
-    assert node.console == 5011
+    # pick a port that is actually free on this host: a hardcoded one may be
+    # taken by a running gns3server/qemu on a dev machine, and the setter would
+    # silently replace it with the next free port
+    console_port = port_manager.get_free_tcp_port(node.project)
+    port_manager.release_tcp_port(console_port, node.project)
+    node.console = console_port
+    assert node.console == console_port
     node.console = None
     assert node.console is None
 
