@@ -56,20 +56,21 @@ def _valid_bpf():
     return stack
 
 
-async def _make_link(project, port_cls=EthernetPort):
-    """Build a created UDPLink between two VPCS nodes on a mocked compute.
+async def _make_link(project, port_cls=EthernetPort, node_types=("vpcs", "vpcs")):
+    """Build a created UDPLink between two nodes on a mocked compute.
 
     ``port_cls`` defaults to EthernetPort; pass SerialPort for a serial link
-    (the link's link_type follows the port).
+    (the link's link_type follows the port). ``node_types`` overrides the
+    endpoint node types (e.g. a switch-to-switch link).
     """
 
     compute = MagicMock()
     compute.id = "local"
     compute.host = "example.com"
 
-    node1 = Node(project, compute, "n1", node_type="vpcs")
+    node1 = Node(project, compute, "n1", node_type=node_types[0])
     node1._ports = [port_cls("E0", 0, 0, 0)]
-    node2 = Node(project, compute, "n2", node_type="vpcs")
+    node2 = Node(project, compute, "n2", node_type=node_types[1])
     node2._ports = [port_cls("E0", 0, 0, 1)]
 
     async def subnet(_other):
@@ -112,6 +113,23 @@ async def test_start_marker_stores_entry(project):
     assert entry["highlight_duration"] == 800
     assert entry["enabled"] is True
     assert entry["capture_node_id"] in {n["node"].id for n in link._nodes}
+
+
+@pytest.mark.asyncio
+async def test_start_marker_on_ethernet_switch_link(project):
+    """A switch-to-switch link can host a marker: the brctl Ethernet switch
+    runs a per-port uBridge relay the `mark` filter attaches to."""
+
+    with _valid_bpf():
+        link = await _make_link(project, node_types=("ethernet_switch", "ethernet_switch"))
+        await link.start_marker("icmp", "icmp")
+
+    entry = link.markers["icmp"]
+    switch_ids = {n["node"].id for n in link._nodes}
+    assert entry["capture_node_id"] in switch_ids
+    # the marker rides exactly one side's NIO and is pushed via update()
+    carrying = [d for d in link._link_data if "icmp" in d["markers"]]
+    assert len(carrying) == 1
     assert "inherited_from" not in entry
 
 

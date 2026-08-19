@@ -378,9 +378,9 @@ async def test_available_filters(project, compute):
     link.create = AsyncioMagicMock()
     assert link.available_filters() == []
 
-    # Ethernet switch is not supported should return 0 filters
+    # The brctl Ethernet switch hosts filters on its per-port uBridge relays
     await link.add_node(node1, 0, 4)
-    assert link.available_filters() == []
+    assert len(link.available_filters()) > 0
 
     node2 = Node(project, compute, "node2", node_type="vpcs")
     node2._ports = [EthernetPort("E0", 0, 0, 4)]

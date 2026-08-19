@@ -382,6 +382,7 @@ class TestEthernetSwitchNodesRoutes:
         response = await compute_client.delete(url)
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
+        # the port's relay bridge and TAP are released from the kernel bridge
         br = node._bridge_name
         tap = f"{br}-0"
         relay = f"{node.id}-0"
@@ -389,6 +390,92 @@ class TestEthernetSwitchNodesRoutes:
             call(f'brctl delif "{br}" "{tap}"'),
             call(f"bridge delete {relay}"),
         ])
+
+    async def test_ethernet_switch_update_nio(
+            self,
+            app: FastAPI,
+            compute_client: AsyncClient,
+            compute_project: Project,
+            ethernet_switch: dict
+    ) -> None:
+
+        url = app.url_path_for(
+            "compute:create_ethernet_switch_nio",
+            project_id=ethernet_switch["project_id"],
+            node_id=ethernet_switch["node_id"],
+            adapter_number="0",
+            port_number="0"
+        )
+        params = self._udp_params()
+        params["filters"] = {"delay": [10, 0]}
+        response = await compute_client.post(url, json=params)
+        assert response.status_code == status.HTTP_201_CREATED
+
+        node = compute_project.get_node(ethernet_switch["node_id"])
+        node._ubridge_send.reset_mock()
+
+        params["filters"] = {"packet_loss": [10]}
+        params["markers"] = {}
+        url = app.url_path_for(
+            "compute:update_ethernet_switch_nio",
+            project_id=ethernet_switch["project_id"],
+            node_id=ethernet_switch["node_id"],
+            adapter_number="0",
+            port_number="0"
+        )
+        response = await compute_client.put(url, json=params)
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["filters"] == {"packet_loss": [10]}
+
+        # update_nio re-applies the filters on the port's uBridge relay
+        relay = node._ubridge_bridge_name(0)
+        node._ubridge_send.assert_any_call(f"bridge reset_packet_filters {relay}")
+
+    async def test_ethernet_switch_toggle_marker(
+            self,
+            app: FastAPI,
+            compute_client: AsyncClient,
+            compute_project: Project,
+            ethernet_switch: dict
+    ) -> None:
+
+        # a marker installed via the NIO registers in the node's filter-bridge map
+        url = app.url_path_for(
+            "compute:create_ethernet_switch_nio",
+            project_id=ethernet_switch["project_id"],
+            node_id=ethernet_switch["node_id"],
+            adapter_number="0",
+            port_number="0"
+        )
+        params = self._udp_params()
+        params["markers"] = {"icmp": {"bpf": "icmp", "link_id": "link-1", "enabled": True}}
+        response = await compute_client.post(url, json=params)
+        assert response.status_code == status.HTTP_201_CREATED
+
+        node = compute_project.get_node(ethernet_switch["node_id"])
+        node._ubridge_send.reset_mock()
+
+        url = app.url_path_for(
+            "compute:toggle_ethernet_switch_marker",
+            project_id=ethernet_switch["project_id"],
+            node_id=ethernet_switch["node_id"],
+            marker_name="icmp"
+        )
+        response = await compute_client.put(url, json={"enabled": False})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"marker_name": "icmp", "enabled": False}
+        relay = node._ubridge_bridge_name(0)
+        node._ubridge_send.assert_any_call(f"bridge enable_packet_filter {relay} icmp off")
+
+        # toggling an unknown marker is a 404
+        url = app.url_path_for(
+            "compute:toggle_ethernet_switch_marker",
+            project_id=ethernet_switch["project_id"],
+            node_id=ethernet_switch["node_id"],
+            marker_name="nope"
+        )
+        response = await compute_client.put(url, json={"enabled": True})
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_ethernet_switch_start_capture(
             self,

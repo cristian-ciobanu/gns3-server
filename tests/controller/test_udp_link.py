@@ -452,6 +452,55 @@ async def test_update(project):
 
 
 @pytest.mark.asyncio
+async def test_update_ethernet_switch_nio(project):
+    """
+    Link updates must reach an Ethernet switch endpoint: the brctl switch has
+    a PUT NIO route, so only the Dynamips-hosted hub side stays skipped.
+    """
+
+    compute1 = MagicMock()
+
+    node_vpcs = Node(project, compute1, "node1", node_type="vpcs")
+    node_vpcs._ports = [EthernetPort("E0", 0, 0, 4)]
+    node_switch = Node(project, compute1, "node2", node_type="ethernet_switch")
+    node_switch._ports = [EthernetPort("E0", 0, 3, 1)]
+
+    async def subnet_callback(compute2):
+        return ("192.168.1.1", "192.168.1.2")
+
+    compute1.get_ip_on_same_subnet.side_effect = subnet_callback
+
+    async def compute1_callback(path, data={}, **kwargs):
+        if "/ports/udp" in path:
+            response = MagicMock()
+            response.json = {"udp_port": 1024}
+            return response
+
+    compute1.post.side_effect = compute1_callback
+    compute1.put = AsyncioMagicMock()
+    compute1.host = "example.com"
+
+    link = UDPLink(project)
+    await link.add_node(node_vpcs, 0, 4)
+    await link.add_node(node_switch, 3, 1)
+    assert link.created
+
+    await link.update_filters({"delay": [10, 0]})
+    compute1.put.assert_any_call(
+        "/projects/{}/ethernet_switch/nodes/{}/adapters/3/ports/1/nio".format(project.id, node_switch.id),
+        data={
+            "lport": 1024,
+            "rhost": "192.168.1.1",
+            "rport": 1024,
+            "type": "nio_udp",
+            "suspend": False,
+            "markers": {},
+            "filters": {}
+        }, timeout=221
+    )
+
+
+@pytest.mark.asyncio
 async def test_update_suspend(project):
     compute1 = MagicMock()
     compute2 = MagicMock()
