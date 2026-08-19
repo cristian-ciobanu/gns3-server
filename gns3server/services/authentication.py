@@ -115,10 +115,10 @@ class AuthService:
             token_use: str = payload.claims.get("type", "access")
             token_data = TokenData(username=username, token_version=token_version, token_use=token_use)
         except BadSignatureError as e:
-            log.error("JWT rejected: bad signature (header alg: '%s', error: %s)", _extract_alg(token), e)
+            log.warning("JWT rejected: bad signature (header alg: '%s', error: %s)", _extract_alg(token), e)
             raise auth_error("Invalid token signature")
         except (JoseError, ValidationError, ValueError) as e:
-            log.error("JWT rejected: %s: %s (header alg: '%s')", type(e).__name__, e, _extract_alg(token))
+            log.warning("JWT rejected: %s: %s (header alg: '%s')", type(e).__name__, e, _extract_alg(token))
             raise auth_error(f"Invalid token ({type(e).__name__})")
         return token_data
 

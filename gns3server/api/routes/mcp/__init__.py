@@ -213,14 +213,16 @@ async def _resolve_token(token: str) -> str | None:
 
     Returns None if the token is invalid.
     """
-    # Try JWT first
-    try:
-        token_data = auth_service.get_token_data(token)
-        _jwt_username_var.set(token_data.username)
-        _jwt_token_version_var.set(token_data.token_version)
-        return token
-    except Exception:
-        pass
+    # API keys (gns3_...) are never valid JWTs — skip the JWT attempt for them
+    # so it doesn't log a spurious "JWT rejected" line on every API-key connection.
+    if not token.startswith("gns3_"):
+        try:
+            token_data = auth_service.get_token_data(token)
+            _jwt_username_var.set(token_data.username)
+            _jwt_token_version_var.set(token_data.token_version)
+            return token
+        except Exception:
+            pass
 
     # Try API key — format: gns3_<api_key_id>_<random_secret> → O(1) lookup
     if token.startswith("gns3_") and _app is not None:
