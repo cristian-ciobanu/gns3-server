@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from uuid import UUID
 
@@ -25,6 +25,21 @@ class DockerBase(BaseModel):
     """
     Common Docker node properties.
     """
+
+    @field_validator("start_command", "environment", "extra_hosts", mode="before")
+    @classmethod
+    def _empty_string_to_none(cls, value):
+        # Web clients serialize empty form fields as "" while unset values are
+        # stored as None on the node: normalize before the update diff runs,
+        # otherwise every full PUT would see a phantom change and recreate
+        # the container for nothing.
+        return value or None
+
+    @field_validator("console_http_path", mode="before")
+    @classmethod
+    def _empty_string_to_root_path(cls, value):
+        # the canonical "no path" value is "/" (the creation default)
+        return value or "/"
 
     name: str
     image: str = Field(..., description="Docker image name")

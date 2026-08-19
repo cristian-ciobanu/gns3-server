@@ -129,8 +129,10 @@ class DockerVM(BaseNode):
         if ":" not in image:
             image = f"{image}:latest"
         self._image = image
-        self._start_command = start_command
-        self._environment = environment
+        # assign through the property setters so creation and updates apply
+        # the same value normalization (e.g. "" -> None)
+        self.start_command = start_command
+        self.environment = environment
         self._cid = None
         self._ethernet_adapters = []
         self._temporary_directory = None
@@ -138,10 +140,10 @@ class DockerVM(BaseNode):
         self._vnc_process = None
         self._vncconfig_process = None
         self._console_resolution = console_resolution
-        self._console_http_path = console_http_path
+        self.console_http_path = console_http_path
         self._console_http_port = console_http_port
         self._console_websocket = None
-        self._extra_hosts = extra_hosts
+        self.extra_hosts = extra_hosts
         self._extra_volumes = extra_volumes or []
         self._extra_configs = extra_configs or []
         self._memory = memory
@@ -288,7 +290,9 @@ class DockerVM(BaseNode):
 
     @console_http_path.setter
     def console_http_path(self, path):
-        self._console_http_path = path
+        # the canonical "no path" value is "/" so that "", None and "/"
+        # all compare equal in the update diff
+        self._console_http_path = path or "/"
 
     @property
     def console_http_port(self):
@@ -304,7 +308,8 @@ class DockerVM(BaseNode):
 
     @environment.setter
     def environment(self, command):
-        self._environment = command
+        # "" and None are the same "no environment variables" value
+        self._environment = command or None
 
     @property
     def extra_hosts(self):
@@ -312,7 +317,8 @@ class DockerVM(BaseNode):
 
     @extra_hosts.setter
     def extra_hosts(self, extra_hosts):
-        self._extra_hosts = extra_hosts
+        # "" and None are the same "no extra hosts" value
+        self._extra_hosts = extra_hosts or None
 
     @property
     def extra_volumes(self):
