@@ -55,6 +55,11 @@ class VendorDockerVM(DockerVM):
       (adapter order) instead of default ``eth{N}``.
     * ``GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli`` — command run inside the
       container by the ``docker_exec`` console (defaults to ``/bin/sh``).
+    * ``GNS3_CONSOLE_RESIZE=0`` — ignore client-driven console resizes
+      (WS terminal-size frames / telnet NAWS). Set for CLIs that page on the
+      PTY window size (IOS-XR): the exec PTY must stay at the tall
+      no-NAWS default for every client, including concurrent netmiko
+      sessions on the shared exec.
     * ``GNS3_STOP_TIMEOUT=60`` — SIGTERM grace period in seconds when stopping
       the container (default 60; Docker SIGKILLs once it expires).
     """
@@ -77,6 +82,7 @@ class VendorDockerVM(DockerVM):
         self._gns3_init = True
         self._interface_names = []
         self._console_cmd = None
+        self._console_resize = True
         self._stop_timeout = 60
         if self._environment:
             for _line in self._environment.splitlines():
@@ -89,6 +95,8 @@ class VendorDockerVM(DockerVM):
                     ]
                 elif _line.startswith("GNS3_CONSOLE_CMD="):
                     self._console_cmd = _line.split("=", 1)[1].strip()
+                elif _line.startswith("GNS3_CONSOLE_RESIZE="):
+                    self._console_resize = _line.split("=", 1)[1].strip().lower() not in ("0", "false", "no")
                 elif _line.startswith("GNS3_STOP_TIMEOUT="):
                     try:
                         timeout = int(_line.split("=", 1)[1].strip())
@@ -357,7 +365,13 @@ class VendorDockerVM(DockerVM):
         Command from GNS3_CONSOLE_CMD.
         """
 
-        telnet = _LazyExecTelnetServer(self, self.manager, self._cid, self._console_cmd or "/bin/sh")
+        telnet = _LazyExecTelnetServer(
+            self,
+            self.manager,
+            self._cid,
+            self._console_cmd or "/bin/sh",
+            allow_resize=self._console_resize,
+        )
         try:
             self._telnet_servers.append(
                 await telnet.start(self._manager.port_manager.console_host, self.console)
@@ -384,7 +398,7 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
     CPR, producing a blank/degraded screen on reconnect.
     """
 
-    def __init__(self, vm, manager, cid, command):
+    def __init__(self, vm, manager, cid, command, allow_resize=True):
         super().__init__(
             reader=None,
             writer=None,
@@ -397,6 +411,7 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
         self._manager = manager
         self._cid = cid
         self._command = command
+        self._allow_resize = allow_resize
         self._exec_id = None
         self._broadcast_task = None
         self._lock = asyncio.Lock()
@@ -421,9 +436,9 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
         # inherit it and hit PTY-window paging (the IOS-XR --More-- trap).
         if self._exec_id and not await self._get_connections_snapshot():
             with contextlib.suppress(Exception):
-                await self._on_naws(511, 10000)
+                await self._resize_exec(511, 10000)
 
-    async def _on_naws(self, columns, rows):
+    async def _resize_exec(self, columns, rows):
         if self._exec_id:
             try:
                 await self._manager.query(
@@ -433,6 +448,15 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                 )
             except DockerError:
                 pass
+
+    async def _on_naws(self, columns, rows):
+        # Client-driven resize (WS terminal-size control frames, telnet NAWS).
+        # Ignored for paging CLIs (GNS3_CONSOLE_RESIZE=0): with the exec shared
+        # by all clients, one browser resize would break concurrent netmiko
+        # sessions that rely on the tall no-paging geometry.
+        if not self._allow_resize:
+            return
+        await self._resize_exec(columns, rows)
 
     async def run(self, network_reader, network_writer):
         """Catch and log any exception that kills the client session."""
@@ -523,7 +547,7 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                     # WebUI clients resize to their real geometry right after
                     # connecting, via WS terminal-size control frames turned
                     # into NAWS by start_websocket_console.
-                    await self._on_naws(511, 10000)
+                    await self._resize_exec(511, 10000)
                 except Exception:
                     pass
             else:

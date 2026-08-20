@@ -463,12 +463,15 @@ def test_cleanup_console_resources_no_writer(compute_project, manager):
 # _LazyExecTelnetServer — upstream aliveness + reconnect/recreate logic
 # ---------------------------------------------------------------------------
 
-def _make_lazy_server(compute_project, manager):
+def _make_lazy_server(compute_project, manager, environment="GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli"):
     """Build a _LazyExecTelnetServer with _create_exec mocked out (no docker)."""
-    vm = _make_vm(compute_project, manager, environment="GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli")
-    srv = _LazyExecTelnetServer(vm, manager, "e90e34656842", "/opt/srlinux/bin/sr_cli")
+    vm = _make_vm(compute_project, manager, environment=environment)
+    srv = _LazyExecTelnetServer(
+        vm, manager, "e90e34656842", "/opt/srlinux/bin/sr_cli",
+        allow_resize=vm._console_resize,
+    )
     srv._create_exec = AsyncioMagicMock()
-    srv._on_naws = AsyncioMagicMock()
+    srv._resize_exec = AsyncioMagicMock()
     return srv
 
 
@@ -539,7 +542,46 @@ async def test_first_connect_sets_tall_default_pty_geometry(compute_project, man
 
     srv = _make_lazy_server(compute_project, manager)
     await srv.client_connected_hook()
-    srv._on_naws.assert_called_once_with(511, 10000)
+    srv._resize_exec.assert_called_once_with(511, 10000)
+
+
+@pytest.mark.asyncio
+async def test_client_naws_resizes_exec_by_default(compute_project, manager):
+    """Client-driven NAWS (WS terminal-size frames) reaches the exec resize."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    await srv._on_naws(120, 40)
+    srv._resize_exec.assert_called_once_with(120, 40)
+
+
+@pytest.mark.asyncio
+async def test_client_naws_ignored_when_resize_disabled(compute_project, manager):
+    """GNS3_CONSOLE_RESIZE=0: client resizes must not change the shared exec
+    geometry (paging CLIs need the tall default for concurrent netmiko)."""
+
+    srv = _make_lazy_server(
+        compute_project, manager,
+        environment="GNS3_CONSOLE_RESIZE=0",
+    )
+    assert srv._allow_resize is False
+    await srv._on_naws(120, 40)
+    srv._resize_exec.assert_not_called()
+    # the tall default is still applied at exec creation (internal path)
+    await srv.client_connected_hook()
+    srv._resize_exec.assert_called_once_with(511, 10000)
+
+
+@pytest.mark.asyncio
+async def test_last_client_disconnect_restores_tall_default(compute_project, manager):
+    """When the last console client leaves, the exec goes back to the tall
+    no-NAWS default so a later non-NAWS client (netmiko) doesn't inherit a
+    browser geometry and hit PTY-window paging."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    srv._exec_id = "abc"
+    writer = AsyncioMagicMock()
+    await srv._disconnect_client(writer)
+    srv._resize_exec.assert_called_once_with(511, 10000)
 
 
 @pytest.mark.asyncio
