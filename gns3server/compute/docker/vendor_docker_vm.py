@@ -413,6 +413,7 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
         self._command = command
         self._allow_resize = allow_resize
         self._exec_id = None
+        self._client_size = None  # size received while no exec existed yet
         self._broadcast_task = None
         self._lock = asyncio.Lock()
         self._log_name = f"docker_exec console '{vm.name}'"
@@ -436,18 +437,24 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
         # inherit it and hit PTY-window paging (the IOS-XR --More-- trap).
         if self._exec_id and not await self._get_connections_snapshot():
             with contextlib.suppress(Exception):
+                self._client_size = None
                 await self._resize_exec(511, 10000)
 
     async def _resize_exec(self, columns, rows):
-        if self._exec_id:
-            try:
-                await self._manager.query(
-                    "POST",
-                    f"exec/{self._exec_id}/resize",
-                    params={"h": str(rows), "w": str(columns)},
-                )
-            except DockerError:
-                pass
+        if not self._exec_id:
+            # No exec yet (first client still inside client_connected_hook):
+            # remember the size — the hook applies it right after creation
+            # instead of the tall default, so it doesn't get overwritten.
+            self._client_size = (columns, rows)
+            return
+        try:
+            await self._manager.query(
+                "POST",
+                f"exec/{self._exec_id}/resize",
+                params={"h": str(rows), "w": str(columns)},
+            )
+        except DockerError:
+            pass
 
     async def _on_naws(self, columns, rows):
         # Client-driven resize (WS terminal-size control frames, telnet NAWS).
@@ -544,10 +551,13 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                     # (e.g. the IOS-XR pager) park at --More-- for clients
                     # that never negotiate NAWS (netmiko, bare telnet).
                     # Width 511 matches netmiko's 'terminal width 511'.
-                    # WebUI clients resize to their real geometry right after
-                    # connecting, via WS terminal-size control frames turned
-                    # into NAWS by start_websocket_console.
-                    await self._resize_exec(511, 10000)
+                    # A size already pushed by this client (WS terminal-size
+                    # control frames -> NAWS, racing the exec creation) wins
+                    # over the default.
+                    if self._client_size:
+                        await self._resize_exec(*self._client_size)
+                    else:
+                        await self._resize_exec(511, 10000)
                 except Exception:
                     pass
             else:

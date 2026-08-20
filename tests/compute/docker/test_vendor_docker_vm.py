@@ -585,6 +585,24 @@ async def test_last_client_disconnect_restores_tall_default(compute_project, man
 
 
 @pytest.mark.asyncio
+async def test_size_arriving_before_exec_wins_over_default(compute_project, manager):
+    """A client size that races the exec creation (WS control frame / NAWS
+    arriving inside client_connected_hook) must not be overwritten by the
+    tall default once the exec exists."""
+
+    srv = _make_lazy_server(compute_project, manager)
+    assert srv._exec_id is None
+    # real _resize_exec (not the mock) records the size when no exec exists
+    srv._resize_exec = _LazyExecTelnetServer._resize_exec.__get__(srv)
+    await srv._on_naws(120, 40)
+    assert srv._client_size == (120, 40)
+
+    srv._resize_exec = AsyncioMagicMock()
+    await srv.client_connected_hook()
+    srv._resize_exec.assert_called_once_with(120, 40)
+
+
+@pytest.mark.asyncio
 async def test_reconnect_live_exec_not_recreated(compute_project, manager):
     """Reconnecting while the exec is alive must NOT recreate it."""
 
