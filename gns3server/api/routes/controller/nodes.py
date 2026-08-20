@@ -694,13 +694,19 @@ async def ws_console(
     async def ws_receive(ws_console_compute):
         """
         Receive WebSocket data from client and forward to compute console WebSocket.
+        Text frames carry terminal data; binary frames carry client control
+        messages (e.g. terminal size), forwarded as-is.
         """
 
         try:
             while True:
-                data = await websocket.receive_text()
-                if data:
-                    await ws_console_compute.send_str(data)
+                msg = await websocket.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                if "text" in msg and msg["text"]:
+                    await ws_console_compute.send_str(msg["text"])
+                elif "bytes" in msg and msg["bytes"]:
+                    await ws_console_compute.send_bytes(msg["bytes"])
         except WebSocketDisconnect:
             await ws_console_compute.close()
             log.info(

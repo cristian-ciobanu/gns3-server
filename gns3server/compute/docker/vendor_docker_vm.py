@@ -412,6 +412,17 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
             return False
         return True
 
+    async def _disconnect_client(self, network_writer):
+        await super()._disconnect_client(network_writer)
+        # When the last client leaves, restore the tall no-NAWS default: a
+        # browser client resizes the exec to its own geometry (WS terminal
+        # size control frames -> NAWS), and the next non-NAWS client (netmiko,
+        # bare telnet) connecting to the still-live exec would otherwise
+        # inherit it and hit PTY-window paging (the IOS-XR --More-- trap).
+        if self._exec_id and not await self._get_connections_snapshot():
+            with contextlib.suppress(Exception):
+                await self._on_naws(511, 10000)
+
     async def _on_naws(self, columns, rows):
         if self._exec_id:
             try:
@@ -509,8 +520,9 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                     # (e.g. the IOS-XR pager) park at --More-- for clients
                     # that never negotiate NAWS (netmiko, bare telnet).
                     # Width 511 matches netmiko's 'terminal width 511'.
-                    # Real NAWS clients resize to their own geometry right
-                    # after connecting.
+                    # WebUI clients resize to their real geometry right after
+                    # connecting, via WS terminal-size control frames turned
+                    # into NAWS by start_websocket_console.
                     await self._on_naws(511, 10000)
                 except Exception:
                     pass
