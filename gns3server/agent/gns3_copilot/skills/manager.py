@@ -221,11 +221,18 @@ class SkillsManager:
                 logger.warning("No injection skills loaded, keeping existing skills")
                 return False
 
-            # Validate injection skills
+            # Validate injection skills (drop invalid ones before merging)
+            valid_injection_skills = {}
             for skill_key, skill_data in new_injection_skills.items():
-                if not self.loader.validate_skill_format(skill_data):
+                if self.loader.validate_skill_format(skill_data):
+                    valid_injection_skills[skill_key] = skill_data
+                else:
                     logger.error(f"Invalid skill format for {skill_key}, skipping")
-                    continue
+
+            if not valid_injection_skills:
+                logger.warning("No valid injection skills loaded, keeping existing skills")
+                return False
+            new_injection_skills = valid_injection_skills
 
             # Load new device skills from YAML files
             new_device_skills = self.loader.load_device_skills()
