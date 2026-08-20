@@ -31,17 +31,20 @@ they let a vendor NOS run as a first-class GNS3 Docker router node.
 > schema changes, so existing Docker nodes (FRR, ipterm, …) are unaffected.
 > `console_type: "docker_exec"` is added to the `ConsoleType` enum.
 
-## The three environment knobs
+## Environment knobs
 
-All three are read from the node's `environment` field. Entries prefixed with
+All are read from the node's `environment` field. Entries prefixed with
 `GNS3_` are **not** forwarded into the container (existing GNS3 behaviour), so
-they stay host-side configuration.
+they stay host-side configuration. The console-relevant ones (the full vendor
+set, incl. `GNS3_SHM_SIZE` / `GNS3_DEVICES` / `GNS3_MASK_UDEV` /
+`GNS3_STOP_TIMEOUT`, is documented in [vendor-nos-xrd.md](./vendor-nos-xrd.md)):
 
 | Variable | Purpose |
 |----------|---------|
 | `GNS3_SKIP_INIT=1` | Do **not** prepend `/gns3/init.sh` to the entrypoint. Vendor NOS images must run their own entrypoint (e.g. SR Linux's `sr_linux`); GNS3's init script (busybox bootstrap, `ifup`, eth wait) interferes with them. |
 | `GNS3_INTERFACE_NAMES=mgmt0,e1-1,e1-2,e1-3` | Rename the injected interfaces in adapter order instead of the default `eth{N}`. SR Linux expects `mgmt0` + `e1-N`; without this it does not recognise its datapath. |
 | `GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli` | Command run by the `docker_exec` console inside the container. |
+| `GNS3_CONSOLE_RESIZE=0` | Ignore client-driven console resizes (WS terminal-size control frames / telnet NAWS) and keep the tall no-paging PTY geometry. Set for CLIs that page on the PTY window size (IOS-XR) — see [Terminal geometry](#terminal-geometry-and-size-forwarding). |
 
 ## Architecture: `VendorDockerVM` subclass
 
@@ -87,18 +90,21 @@ Setting `console_type: "docker_exec"` makes the node's primary console port run
 
 ```mermaid
 graph LR
-    A[Web UI xterm.js] -->|console WS| B[GNS3 Compute telnet server]
-    B -->|binary pty stream| C[Docker exec API]
-    C -->|Tty:true pty| D[sr_cli / vendor CLI]
-    A -.->|NAWS size| B
-    B -.->|POST exec/.../resize| C
+    A[Web UI xterm.js] -->|console WS: text frames| B[Controller forward]
+    B -->|WS: text + binary| C[GNS3 Compute telnet server]
+    C -->|binary pty stream| D[Docker exec API]
+    D -->|Tty:true pty| E[sr_cli / vendor CLI]
+    A -.->|binary control frame {"cols","rows"}| B
+    B -.-> C
+    C -.->|POST exec/.../resize| D
 ```
 
 The console uses GNS3's **existing shared/broadcast telnet model**: a single
 exec instance (one CLI session) is broadcast to every console client, exactly
 like the primary console shares one PID 1. There is deliberately **no
 per-client session isolation** — this matches how every other GNS3 console
-behaves.
+behaves. The PTY geometry is likewise shared: the last client resize wins
+(see [Terminal geometry](#terminal-geometry-and-size-forwarding)).
 
 ### Implementation
 
@@ -159,8 +165,11 @@ reconnect logic is unit-tested.
    non-multiplexed bidirectional pty byte stream — no frame demux needed.
 
 5. **NAWS → exec resize.** The telnet server runs with `naws=True`; the
-   `window_size_changed_callback` calls `POST exec/{eid}/resize?h=&w=` so the
-   TUI lays out for the xterm.js window size.
+   `window_size_changed_callback` (`_on_naws`, gated by
+   `GNS3_CONSOLE_RESIZE`) calls `POST exec/{eid}/resize?h=&w=` so the TUI
+   lays out for the client's window size. The internal `_resize_exec` path
+   (creation-time default, restore-on-idle) is not gated. See
+   [Terminal geometry](#terminal-geometry-and-size-forwarding).
 
 6. **Binary passthrough + redraw.** `binary=True` so TUI escape sequences reach
    xterm.js intact; `echo=False` (the pty echoes). On every client (re)connect
@@ -168,9 +177,66 @@ reconnect logic is unit-tested.
    screen for a previous client redraws for the new one (otherwise a
    reconnect shows a blank screen until the next output).
 
+### Terminal geometry and size forwarding
+
+The exec PTY geometry is a shared resource with three consumers that want
+different things:
+
+- **Browser clients (xterm.js)** need the PTY to match their real window, or
+  TUI CLIs misrender and over-render (below).
+- **Non-NAWS clients** (netmiko, bare telnet — no terminal-size negotiation)
+  need the PTY *tall*: CLIs that page on the PTY window size (the IOS-XR
+  pager ignores `terminal length 0`) park at `--More--` on a 24-row PTY.
+- **Concurrent sessions share one exec** — one browser resize changes what
+  every attached client sees.
+
+Resolution:
+
+1. **Tall default.** The exec is created at 511×10000 (width 511 matches
+   netmiko's `terminal width 511` convention). Non-NAWS clients get no paging
+   and no hard wrapping.
+2. **WS terminal-size forwarding.** Console WebSocket clients may send
+   **binary control frames** — UTF-8 JSON `{"cols": N, "rows": N}` —
+   alongside text frames carrying terminal data (xterm.js's AttachAddon only
+   sends text, so binary is an unambiguous side channel; valid ranges are
+   cols 2–5000, rows 2–100000, anything else is silently ignored). The
+   controller forwards binary frames (previously only text was forwarded —
+   and a binary frame would have crashed the old `receive_text` loop), and
+   the compute side turns them into a telnet NAWS subnegotiation for
+   telnet-based consoles (docker_exec included) or an asyncssh
+   `change_terminal_size` for SSH consoles
+   (`base_node.py` `start_websocket_console`).
+3. **Races.** A size frame that arrives before/during the exec creation is
+   remembered and applied right after creation — it is **not** overwritten by
+   the tall default. When the **last** client disconnects the exec goes back
+   to 511×10000, so a later non-NAWS client attaching to the still-live exec
+   doesn't inherit a browser geometry and hit PTY-window paging.
+4. **`GNS3_CONSOLE_RESIZE=0`** makes the console ignore client resizes
+   entirely (the tall default is then permanent). Set it for paging CLIs
+   where a browser resize would break concurrent netmiko sessions on the
+   shared exec — XRd, which is line-oriented and doesn't need browser
+   resizing at all.
+
+**Why the browser must send its size — the SR Linux flicker.** `sr_cli` is a
+prompt_toolkit TUI that anchors its layout with cursor-position requests
+(CPR), which xterm.js answers. On a 10000-row PTY canvas the CPR-anchored
+model conflicts with the winsize model, and every incremental render re-emits
+the accumulated output: measured with a CPR-answering client, one `info`
+command produces **~145 KB instead of ~60 KB** (~7× duplicated lines either
+way — the CLI re-renders its output region as a scroll-append stream; that
+part is inherent to `sr_cli` and identical outside GNS3, verified via manual
+`docker exec`). The inflation is driven by **rows** (24/32 → normal, 10000 →
+pathological, at any width) and is invisible without CPR answers — which is
+why plain-telnet probes and real xterm.js sessions behaved so differently.
+In the Web UI the excess renders as frequent full-screen clear/redraw — the
+"flicker". With the browser's real size forwarded (rows ≈ 30), output volume
+and rendering return to normal.
+
 **File**: `gns3server/compute/base_node.py` — the console WebSocket guard now
 allows `docker_exec` (alongside `telnet`/`ssh`), since the WS bridge connects to
-the console TCP port exactly as it does for telnet.
+the console TCP port exactly as it does for telnet. The same WS handler also
+intercepts binary control frames and propagates client terminal sizes (see
+[Terminal geometry](#terminal-geometry-and-size-forwarding)).
 
 ### Why earlier approaches failed (context)
 
@@ -418,17 +484,35 @@ present on the host.
   effect. If it does not, the image needs the bridge earlier (a
   vendor-specific entrypoint wrapper, not covered by this prototype).
 
+**11. Web console flickers (full-screen clear/redraw) on every command**
+- The PTY is stuck at the tall 511×10000 default while a CPR-answering client
+  is attached — see
+  [Terminal geometry](#terminal-geometry-and-size-forwarding). Check that the
+  Web UI actually sends the binary size control frames on connect/resize
+  (F12 → the console WS should show outgoing binary frames), and that the
+  server is new enough to forward them (the controller used to forward text
+  frames only). A client that never negotiates/forwards size (old Web UI,
+  bare telnet without NAWS) cannot trigger the fix — but also never answers
+  CPR, so it doesn't flicker either.
+- The much milder per-keystroke/5 s cursor toggles (`\e[?25l…\e[?25h`) from
+  the TUI are normal and not this bug.
+
 ## Limitations
 
 1. **Shared session (broadcast).** All console clients share one CLI session
    and can see each other's input — identical to GNS3's existing primary
-   console model. There is no per-client independent session.
+   console model. There is no per-client independent session. The PTY
+   geometry is shared too (last resize wins): two browsers of different sizes
+   disagree harmlessly, but a browser on a *paging* CLI needs
+   `GNS3_CONSOLE_RESIZE=0` to stop resizing on behalf of concurrent netmiko
+   sessions (see [Terminal geometry](#terminal-geometry-and-size-forwarding)).
 2. **`reset_console` not wired.** The console-reset action only handles
    `telnet`/`ssh`; it is a no-op for `docker_exec` (non-blocking; reconnect
    works fine).
 3. **Prototype knobs.** `GNS3_SKIP_INIT` / `GNS3_INTERFACE_NAMES` /
-   `GNS3_CONSOLE_CMD` are environment-driven; they are not yet first-class node
-   schema fields and are not declared in the appliance (`gns3a`) schema.
+   `GNS3_CONSOLE_CMD` / `GNS3_CONSOLE_RESIZE` are environment-driven; they are
+   not yet first-class node schema fields and are not declared in the
+   appliance (`gns3a`) schema.
 4. **Rootful-Docker assumption** (`UsernsMode: host`, set for all GNS3
    Docker nodes) so the container-side chown acts on the host files' real
    uid/gid (see the volume-persistence section).
@@ -448,7 +532,11 @@ present on the host.
   `_get_container_ifname`, `_cleanup_console_resources`).
 - `gns3server/compute/docker/__init__.py` — `Docker._select_node_class` /
   `create_node` factory.
-- `gns3server/compute/base_node.py` — console WebSocket guard.
+- `gns3server/compute/base_node.py` — console WebSocket guard; binary
+  terminal-size control frames → NAWS / asyncssh resize
+  (`start_websocket_console`).
+- `gns3server/api/routes/controller/nodes.py` — console WS forwarding
+  (text and binary frames).
 - `gns3server/schemas/common.py` — `ConsoleType.docker_exec`.
 - containerlab `nodes/srl/srl.go` — reference for SR Linux launch command and
   interface naming.
@@ -457,6 +545,7 @@ present on the host.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-08-20 | Terminal geometry and size forwarding: WS binary control frames `{"cols","rows"}` → NAWS / asyncssh resize (controller now forwards binary frames; compute intercepts them); tall 511×10000 default kept for non-NAWS clients, applied post-creation and restored on last disconnect (client size racing exec creation wins over the default); new `GNS3_CONSOLE_RESIZE=0` knob for paging CLIs (XRd) where a browser resize would break concurrent netmiko sessions on the shared exec; documented the SR Linux flicker root cause (tall rows × CPR-answering client → ~2.4× re-emitted output; rows-driven, width-independent). |
 | 1.5 | 2026-08-13 | Add appliance (`gns3a`) packaging section: 35-adapter full-chassis design, the three server-side schema fixes (DockerConsoleType, ApplianceV1_6.custom_adapters, extra_volumes passthrough), and the symbol-theme caveat (any `:/symbols/` symbol is rewritten to the category default at load). |
 | 1.4 | 2026-08-13 | Reconnect fix: drop the while-true wrapper (it restarted the CLI with no client to answer CPR → blank screen on reconnect); the exec is now recreated on connect when the upstream has died. `_LazyExecTelnetServer` extracted to module level and unit-tested. |
 | 1.3 | 2026-08-12 | Document runtime ownership safety (root processes, self-healing daemons, ACL evidence for SR Linux), the boot-ordering caveat (bridge after boot → verify save/stop/start closed loop), and troubleshooting #10. |
