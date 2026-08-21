@@ -15,13 +15,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys
 import json
+import asyncio
+import aiohttp
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from gns3server.controller.project import Project
 from gns3server.controller.compute import Compute
-from gns3server.controller.controller_error import ControllerError, ControllerNotFoundError, ComputeConflictError
+from gns3server.controller.controller_error import (
+    ControllerError,
+    ControllerNotFoundError,
+    ControllerUnauthorizedError,
+    ComputeConflictError,
+)
 from pydantic import SecretStr
 from tests.utils import asyncio_patch, AsyncioMagicMock
 
@@ -524,3 +533,100 @@ async def test_get_ip_on_same_subnet(controller):
         },
     ]
     assert await compute1.get_ip_on_same_subnet(compute2) == ('192.168.2.1', '192.168.1.2')
+
+
+class FakeWebSocket:
+    """
+    Minimal aiohttp WebSocketResponse stand-in for notification stream tests.
+    """
+
+    def __init__(self, frames):
+        self._frames = list(frames)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._frames:
+            raise StopAsyncIteration
+        return self._frames.pop(0)
+
+
+def _text_frame(payload):
+    return SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=json.dumps(payload))
+
+
+@pytest.mark.asyncio
+async def test_connect_notification_poison_frame_autoreconnects(compute, monkeypatch):
+    """
+    A malformed frame must not permanently kill the notification stream: the
+    error is logged, clients are notified and a reconnection is scheduled.
+    """
+
+    emit_mock = MagicMock()
+    monkeypatch.setattr(compute._controller.notification, "controller_emit", emit_mock)
+    frames = [
+        _text_frame({"action": "ping", "event": {"cpu_usage_percent": 10.0, "memory_usage_percent": 20.0, "disk_usage_percent": 30.0}}),
+        _text_frame({"event": {"poison": True}}),  # missing "action": raises KeyError in the receive loop
+    ]
+    session = MagicMock()
+    session.closed = False
+    session.ws_connect = MagicMock(return_value=FakeWebSocket(frames))
+    compute._http_session = session
+
+    # allow the reconnection to be scheduled during the test
+    monkeypatch.delattr(sys, "_called_from_test", raising=False)
+    from gns3server.api.server import app as gns3_app
+    monkeypatch.setattr(gns3_app.state, "exiting", False)
+
+    async def fake_connect():
+        compute._reconnect_attempted = True
+    monkeypatch.setattr(compute, "connect", fake_connect)
+
+    # must not raise despite the poison frame
+    await compute._connect_notification()
+
+    actions = [c.args[0] for c in emit_mock.call_args_list]
+    assert actions.count("compute.updated") >= 2  # one for the ping, one for the disconnect
+    assert compute._connected is False
+
+    # the reconnection scheduled by the finally block fires after 1 second
+    await asyncio.sleep(1.2)
+    assert compute._reconnect_attempted is True
+
+
+@pytest.mark.asyncio
+async def test_connect_http_error_notifies_schedules_retry_and_raises(compute, monkeypatch):
+    """
+    HTTP-level failures (401/403/404...) reach connect() as ControllerError
+    subclasses. They must notify clients, schedule a retry and still raise for
+    explicit callers. They used to silently kill the fire-and-forget connect()
+    task started at controller startup: no notification, no retry.
+    """
+
+    compute._connected = False
+    emit_mock = MagicMock()
+    monkeypatch.setattr(compute._controller.notification, "controller_emit", emit_mock)
+
+    async def raise_unauthorized(*args, **kwargs):
+        raise ControllerUnauthorizedError("Invalid authentication for compute 'my_compute_id'")
+
+    monkeypatch.setattr(compute, "_run_http_query", raise_unauthorized)
+    monkeypatch.delattr(sys, "_called_from_test", raising=False)
+    scheduled_delays = []
+    monkeypatch.setattr(asyncio.get_event_loop(), "call_later", lambda delay, callback: scheduled_delays.append(delay))
+
+    with pytest.raises(ControllerUnauthorizedError):
+        await compute.connect()
+
+    assert compute._last_error == "Invalid authentication for compute 'my_compute_id'"
+    assert compute.connected is False
+    actions = [c.args[0] for c in emit_mock.call_args_list]
+    assert "compute.updated" in actions
+    assert scheduled_delays == [5]  # first exponential backoff delay
