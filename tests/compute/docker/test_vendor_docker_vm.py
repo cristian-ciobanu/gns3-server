@@ -24,8 +24,10 @@ These tests cover:
   * init.sh prepend being skipped with GNS3_SKIP_INIT;
   * GNS3_INTERFACE_NAMES renaming injected interfaces (move_to_ns target);
   * the hardcoded /etc/network mount being dropped for SKIP_INIT containers;
+  * persistent volumes being seeded host-side and bound directly at their
+    real in-container paths (no post-start bridge racing the NOS boot);
   * the docker_exec console dispatch in start();
-  * the SKIP_INIT volume bridge and container-side _fix_permissions passes.
+  * the container-side _fix_permissions passes.
 """
 
 import uuid
@@ -235,28 +237,36 @@ async def test_create_interface_names_sets_max_ethernet(compute_project, manager
 async def test_create_drops_etc_network_for_skip_init(compute_project, manager):
 
     response = _create_response(None, volumes={"/opt/srlinux/appmgr": None})
+    seed_proc = MagicMock()
+    seed_proc.communicate = AsyncioMagicMock(return_value=(b"seedcid", b""))
+    seed_proc.returncode = 0
     with asyncio_patch("gns3server.compute.docker.Docker.list_images",
                        return_value=[{"image": "srlinux"}]):
         with asyncio_patch("gns3server.compute.docker.Docker.query",
                            return_value=response) as mock:
-            vm = VendorDockerVM("srlinux-1", str(uuid.uuid4()), compute_project,
-                                manager, "srlinux:latest",
-                                console_type="docker_exec",
-                                environment="GNS3_SKIP_INIT=1",
-                                extra_volumes=["/etc/opt/srlinux"])
-            await vm.create()
-            sent = mock.call_args.kwargs["data"]
-            targets = [m["Target"] for m in sent["HostConfig"]["Mounts"]]
-            # /etc/network must NOT be mounted
-            assert "/gns3volumes/etc/network" not in targets
-            # but the declared volumes ARE mounted
-            assert "/gns3volumes/opt/srlinux/appmgr" in targets
-            assert "/gns3volumes/etc/opt/srlinux" in targets
-            # GNS3_VOLUMES env must also exclude /etc/network
-            vol_env = [v for v in sent["Env"] if v.startswith("GNS3_VOLUMES=")][0]
-            assert "/etc/network" not in vol_env
-            # host skeleton dir removed
-            assert not os.path.exists(os.path.join(vm.working_dir, "etc", "network"))
+            with patch("asyncio.subprocess.create_subprocess_exec",
+                       return_value=seed_proc):
+                vm = VendorDockerVM("srlinux-1", str(uuid.uuid4()), compute_project,
+                                    manager, "srlinux:latest",
+                                    console_type="docker_exec",
+                                    environment="GNS3_SKIP_INIT=1",
+                                    extra_volumes=["/etc/opt/srlinux"])
+                await vm.create()
+                sent = mock.call_args.kwargs["data"]
+                targets = [m["Target"] for m in sent["HostConfig"]["Mounts"]]
+                # /etc/network must NOT be mounted
+                assert "/gns3volumes/etc/network" not in targets
+                assert "/etc/network" not in targets
+                # the declared volumes are bound DIRECTLY at their real paths —
+                # no /gns3volumes aliasing and no post-start bridge
+                assert "/opt/srlinux/appmgr" in targets
+                assert "/etc/opt/srlinux" in targets
+                assert not any(t.startswith("/gns3volumes/") for t in targets)
+                # GNS3_VOLUMES env must also exclude /etc/network
+                vol_env = [v for v in sent["Env"] if v.startswith("GNS3_VOLUMES=")][0]
+                assert "/etc/network" not in vol_env
+                # host skeleton dir removed
+                assert not os.path.exists(os.path.join(vm.working_dir, "etc", "network"))
 
 
 @pytest.mark.asyncio
@@ -321,7 +331,6 @@ async def test_start_docker_exec_dispatches_console(compute_project, manager):
     vm._get_namespace = AsyncioMagicMock(return_value=42)
     vm._add_ubridge_connection = AsyncioMagicMock()
     vm._start_docker_exec_console = AsyncioMagicMock()
-    vm._setup_skip_init_volumes = AsyncioMagicMock()
     vm._fix_permissions = AsyncioMagicMock()
 
     with patch("gns3server.compute.docker.Docker.install_busybox"):
@@ -330,8 +339,8 @@ async def test_start_docker_exec_dispatches_console(compute_project, manager):
 
     vm._start_docker_exec_console.assert_called_once()
     assert vm.status == "started"
-    # SKIP_INIT path runs the volume bridge + permission fix
-    vm._setup_skip_init_volumes.assert_called_once()
+    # SKIP_INIT path still runs the permission fix (volumes are already
+    # seeded and bound at create time — no post-start bridge anymore)
     vm._fix_permissions.assert_called_once()
 
 
@@ -346,19 +355,18 @@ async def test_start_without_skip_init_skips_vendor_passes(compute_project, mana
     vm._get_namespace = AsyncioMagicMock(return_value=42)
     vm._add_ubridge_connection = AsyncioMagicMock()
     vm._start_docker_exec_console = AsyncioMagicMock()
-    vm._setup_skip_init_volumes = AsyncioMagicMock()
     vm._fix_permissions = AsyncioMagicMock()
 
     with patch("gns3server.compute.docker.Docker.install_busybox"):
         with asyncio_patch("gns3server.compute.docker.Docker.query"):
             await vm.start()
 
-    # init.sh runs (no SKIP_INIT) → no vendor bridge/fix passes
-    vm._setup_skip_init_volumes.assert_not_called()
+    # init.sh runs (no SKIP_INIT) → no vendor permission pass
+    vm._fix_permissions.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _fix_permissions — container-side, skips dead containers, targets /gns3volumes
+# _fix_permissions — container-side, skips dead containers, targets volume paths
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -387,7 +395,7 @@ async def test_fix_permissions_skips_missing_container(compute_project, manager)
 
 
 @pytest.mark.asyncio
-async def test_fix_permissions_targets_gns3volumes(compute_project, manager):
+async def test_fix_permissions_targets_volume_paths(compute_project, manager):
 
     vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1")
     vm._volumes = ["/etc/opt/srlinux", "/var/log/srlinux"]
@@ -404,37 +412,120 @@ async def test_fix_permissions_targets_gns3volumes(compute_project, manager):
         await vm._fix_permissions()
         # one exec per volume
         assert mock_exec.call_count == 2
-        # each script must target /gns3volumes<volume>, not the raw path
+        # each script must target the real in-container path (the direct
+        # bind mount), never the old /gns3volumes alias
         for call_obj in mock_exec.call_args_list:
             script = call_obj.args[-1]  # last positional arg is the sh -c script
-            assert "/gns3volumes" in script
-            # must NOT chown the in-container path directly
-            assert 'chown' in script and '"/gns3volumes' in script
+            assert "/gns3volumes" not in script
+            assert '"/etc/opt/srlinux"' in script or '"/var/log/srlinux"' in script
+            assert 'chown' in script
 
 
 # ---------------------------------------------------------------------------
-# _setup_skip_init_volumes — bridge via docker exec
+# _prepare_volumes — host-side seeding (docker create + cp + rm)
 # ---------------------------------------------------------------------------
+
+def _seed_proc(stdout=b"seedcid\n", returncode=0):
+    proc = MagicMock()
+    proc.communicate = AsyncioMagicMock(return_value=(stdout, b""))
+    proc.returncode = returncode
+    return proc
+
 
 @pytest.mark.asyncio
-async def test_setup_skip_init_volumes_runs_exec(compute_project, manager):
+async def test_prepare_volumes_seeds_unmarked_volume(compute_project, manager):
 
     vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1",
                   extra_volumes=["/etc/opt/srlinux"])
-    vm._volumes = ["/etc/opt/srlinux"]
-
-    proc = MagicMock()
-    proc.communicate = AsyncioMagicMock(return_value=(b"", b""))
-    proc.returncode = 0
+    image_info = {"Config": {"Volumes": {}}}
 
     with patch("asyncio.subprocess.create_subprocess_exec",
-               return_value=proc) as mock_exec:
-        await vm._setup_skip_init_volumes()
-        assert mock_exec.call_count == 1
-        script = mock_exec.call_args.args[-1]
-        # must do the bind mount
-        assert "mount --bind" in script
-        assert "/gns3volumes/etc/opt/srlinux" in script
+               return_value=_seed_proc()) as mock_exec:
+        await vm._prepare_volumes(image_info)
+        # docker create + docker cp + docker rm
+        assert mock_exec.call_count == 3
+        argvs = [c.args for c in mock_exec.call_args_list]
+        assert argvs[0][1:3] == ("create", "srlinux:latest")
+        assert argvs[1][1:4] == ("cp", "-a", "seedcid:/etc/opt/srlinux/.")
+        assert argvs[2][1:3] == ("rm", "-f")
+        host_dir = os.path.join(vm.working_dir, "etc", "opt", "srlinux")
+        assert os.path.exists(os.path.join(host_dir, ".gns3_perms"))
+
+        # a second create() must not re-seed (marker present): no docker CLI call
+        await vm._prepare_volumes(image_info)
+        assert mock_exec.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_prepare_volumes_never_overwrites_marked_volume(compute_project, manager):
+    """Regression guard: a volume that ever started (marker present) holds the
+    node's saved configuration — re-seeding would reset it to factory."""
+
+    vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1",
+                  extra_volumes=["/etc/opt/srlinux"])
+    host_dir = os.path.join(vm.working_dir, "etc", "opt", "srlinux")
+    os.makedirs(host_dir, exist_ok=True)
+    marker = os.path.join(host_dir, ".gns3_perms")
+    open(marker, "w").close()
+    saved = os.path.join(host_dir, "config.json")
+    with open(saved, "w") as f:
+        f.write('{"user": "config"}')
+
+    with patch("asyncio.subprocess.create_subprocess_exec",
+               return_value=_seed_proc()) as mock_exec:
+        await vm._prepare_volumes({"Config": {"Volumes": {}}})
+        mock_exec.assert_not_called()
+    with open(saved) as f:
+        assert f.read() == '{"user": "config"}'
+
+
+@pytest.mark.asyncio
+async def test_prepare_volumes_tolerates_missing_image_path(compute_project, manager):
+    """A volume path the image does not contain (e.g. XRd's /xr-storage-shadow)
+    starts empty — cp fails, the marker is still written, no raise."""
+
+    vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1",
+                  extra_volumes=["/xr-storage-shadow"])
+    calls = {"n": 0}
+
+    def proc_factory(*args, **kwargs):
+        # first call (docker create) succeeds, second (docker cp) fails,
+        # third (docker rm) succeeds
+        codes = [0, 1, 0]
+        proc = _seed_proc(returncode=codes[calls["n"]])
+        calls["n"] += 1
+        return proc
+
+    with patch("asyncio.subprocess.create_subprocess_exec",
+               side_effect=proc_factory):
+        await vm._prepare_volumes({"Config": {"Volumes": {}}})
+        assert calls["n"] == 3  # rm still ran (finally path)
+    host_dir = os.path.join(vm.working_dir, "xr-storage-shadow")
+    assert os.path.exists(os.path.join(host_dir, ".gns3_perms"))
+
+
+@pytest.mark.asyncio
+async def test_prepare_volumes_skips_without_skip_init(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)  # no SKIP_INIT
+    with patch("asyncio.subprocess.create_subprocess_exec",
+               return_value=_seed_proc()) as mock_exec:
+        await vm._prepare_volumes({"Config": {"Volumes": {"/etc/opt/srlinux": None}}})
+        mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_prepare_volumes_raises_when_seed_container_fails(compute_project, manager):
+    """If `docker create` itself fails, creation must abort loudly instead of
+    binding an empty directory over the NOS's config path."""
+
+    vm = _make_vm(compute_project, manager, environment="GNS3_SKIP_INIT=1",
+                  extra_volumes=["/etc/opt/srlinux"])
+    proc = _seed_proc(stdout=b"", returncode=1)
+
+    with patch("asyncio.subprocess.create_subprocess_exec", return_value=proc):
+        with pytest.raises(DockerError):
+            await vm._prepare_volumes({"Config": {"Volumes": {}}})
 
 
 # ---------------------------------------------------------------------------

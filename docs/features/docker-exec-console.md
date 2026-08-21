@@ -322,41 +322,46 @@ This is the one place where skipping init.sh changes behaviour beyond boot:
 **nothing writes through to the host** — the container writes to its overlay
 filesystem and the data is lost on stop.
 
-The bridge (see init.sh lines 35–52) has two parts:
+init.sh (as the entrypoint) is safe because it runs **before** the
+application: for each volume it seeds the host directory with the image's
+original files on first start, then `mount --bind /gns3volumes<path> <path>`
+bridges persistent storage into place.
+
+`VendorDockerVM` cannot use that position (the NOS must own its entrypoint),
+so the same persistence is established entirely **outside the container and
+before it exists**:
 
 ```
-host  ──Docker bind mount──▶  /gns3volumes/etc/opt/srlinux   (always mounted)
-                                  │  init.sh: mount --bind
-                                  ▼
-                              /etc/opt/srlinux               (where the NOS writes)
+create() 之前:  host dir seeded from the image (docker create + docker cp, first time only)
+create() 时:    host ──Docker bind mount──▶ /etc/opt/srlinux   (direct, at the real path)
+启动:           NOS native entrypoint — the persisted config is visible from the first process
 ```
 
-`VendorDockerVM` replicates this for SKIP_INIT containers:
+1. **`_prepare_volumes()`** — host-side, at `create()` time (after the image
+   is present, before the container is created). For each persistent volume
+   whose host directory lacks the `.gns3_perms` marker, a throwaway
+   `docker create` container (nothing executes) is used as a `docker cp -a`
+   source to seed the host directory with the image's original content. The
+   marker is written after the copy attempt — a volume that has it (every
+   node that ever started, on any GNS3 version) is **never re-seeded**, so
+   saved configuration is never overwritten with factory content.
 
-1. **`_setup_skip_init_volumes()`** — runs once per start, right after the
-   container is up (`VendorDockerVM.start()`). For each persistent volume it
-   `docker exec`s a busybox script that:
-   - seeds the host directory with the container's original files on first
-     start (`cp -a` + `.gns3_perms` marker), exactly like init.sh;
-   - `mount --bind /gns3volumes<path> <path>` to bridge persistent storage
-     back to the in-container path — on subsequent starts the persisted data
-     replaces the fresh overlay content;
-   - restores the permissions recorded in `.gns3_perms` at the previous stop
-     (best-effort).
+2. **`_mount_binds()` override** — the volume binds target the **real
+   in-container paths** (`/etc/opt/srlinux`) instead of `/gns3volumes<volume>`.
+   With the content seeded first, the image's files are never shadowed by an
+   empty mount, and the NOS sees its persisted configuration from the very
+   first process — no post-start mount pass that could race the NOS reading
+   its startup config (see "History: the exec-bridge race" below).
 
-2. **Container-side `_fix_permissions()` override targeting `/gns3volumes`**
-   — `DockerVM._fix_permissions` operates on the in-container paths
-   (`/etc/opt/srlinux`, …), which only resolve to persistent storage while
-   the `mount --bind` bridge is up; after a container restart the bridge is
-   gone and it would chown the overlay copy instead of the host files. It
-   also restarts an exited container just to chown. The override instead
-   runs the same busybox record/chmod/chown script **inside the container
-   (as root) on the `/gns3volumes<path>` paths** — the Docker bind-mount
-   targets, which exist for the whole container lifetime and need no bridge.
-   A stopped/exited container is **not** restarted: the pass is skipped and
-   the next start fixes ownership. It runs at start (so the controller can
-   read project files while the node runs) and at stop (for files written
-   during runtime).
+3. **Container-side `_fix_permissions()` override** — runs the same busybox
+   record/chmod/chown script **inside the container (as root) on the volume
+   paths**. Because the volumes are Docker bind mounts created with the
+   container, the in-container paths resolve to the host files for the whole
+   container lifetime. A stopped/exited container is **not** restarted (the
+   base class would, just to chown; vendor NOS images are heavy to boot):
+   the pass is skipped and the next start fixes ownership. It runs at start
+   (so the controller can read project files while the node runs) and at
+   stop (for files written during runtime).
 
 > The fix must run container-side: files written by the container are
 > host-side root-owned, and an unprivileged GNS3 process cannot chown them
@@ -375,9 +380,10 @@ the base class just created. Without `GNS3_SKIP_INIT` the mount is kept
 
 | Phase | Normal Docker node | `VendorDockerVM` + `GNS3_SKIP_INIT` |
 |-------|--------------------|--------------------------------------|
-| start | init.sh seeds + bind-mounts + restores perms (in-container, before the app starts) | `docker exec` after start: seed + bind-mount + restore perms; then container-side chown on `/gns3volumes` |
-| stop | container-side `_fix_permissions` on in-container paths (restarts an exited container) | container-side `_fix_permissions` on `/gns3volumes` paths (skips dead containers, no restart) |
-| volume config | identical `_mount_binds` (host → `/gns3volumes<path>`) | identical |
+| create | — | `_prepare_volumes()` seeds host dirs from the image (first create only); volumes bound **directly** at their real paths |
+| start | init.sh seeds + bind-mounts + restores perms (in-container, before the app starts) | container-side `_fix_permissions` on the volume paths (skips dead containers, no restart) |
+| stop | container-side `_fix_permissions` on in-container paths (restarts an exited container) | container-side `_fix_permissions` on the volume paths (skips dead containers, no restart) |
+| volume config | `_mount_binds`: host → `/gns3volumes<path>` | `_mount_binds` override: host → `<path>` directly |
 
 ### Runtime ownership safety
 
@@ -403,17 +409,28 @@ ever matters, drop the start-time pass and keep only the stop-time one
 (standard behaviour — the trade-off is mid-run `Permission denied` in the
 file browser, identical to regular Docker nodes).
 
-### Boot-ordering caveat
+### History: the exec-bridge race (fixed)
 
-The volume bridge (`mount --bind`) is established **after** the vendor
-entrypoint has started (there is no init.sh to do it before), so the NOS's
-early boot reads the overlay copy of the volume paths — default image
-content, not the persisted data. Whether the persisted config takes effect
-depends on the NOS re-reading those files after the bridge is up (SR Linux's
-daemons do re-read/write their managed files during boot, as observed).
-Always verify the closed loop when adopting a new image: `save` a config →
-stop the node → start it → confirm the config is actually applied, not just
-present on the host.
+The first SKIP_INIT implementation replicated init.sh's script **via
+`docker exec` after the container started** instead of binding directly at
+create time. That copied the mechanism but not the invariant that makes
+init.sh safe — the entrypoint position, which guarantees the volume is in
+place *before* the application runs. An exec-based bind runs **concurrently**
+with the NOS boot, so whether the NOS reads its persisted config or the
+overlay's factory copy was a timing race:
+
+- a single node stop/start on an idle system won it (the exec landed ~1 s
+  in, SR Linux reads its startup config at ~2–4 s) — which is why the
+  round-trip "save → stop → start → config still there" passed;
+- a server restart + project reload lost it (all nodes start concurrently,
+  the Docker API queue delays the execs by several seconds) — SR Linux
+  booted factory while the persisted `config.json` sat intact on the host;
+- XRd was immune either way (systemd boots for tens of seconds before any
+  XR process touches `/xr-storage`), which is why the race was never seen
+  on it.
+
+The direct-bind-at-create design removes the window entirely; there is no
+ordering requirement left to verify when adopting a new NOS image.
 
 ## Troubleshooting
 
@@ -472,17 +489,17 @@ present on the host.
   root-owned files at runtime.
 
 **9. Persistent volume empty on the host after `save` + stop**
-- Ensure `GNS3_SKIP_INIT=1` is set (so the host-side bridge path is taken) and
-  the volume path is in `extra_volumes`; check the compute log for
-  `Volume '<path>' bound to persistent storage`.
+- Ensure `GNS3_SKIP_INIT=1` is set (so the direct-bind path is taken) and
+  the volume path is in `extra_volumes`; check that the host directory
+  carries the `.gns3_perms` marker (written at create-time seeding) and the
+  compute log for `Seeded persistent volume`.
 
 **10. Persisted config present on the host but not applied after restart**
-- The volume bridge is established after the NOS has booted (see
-  *Boot-ordering caveat*); the NOS may have already loaded the overlay's
-  default config into memory. Verify with a visible change (hostname,
-  interface description): `save` → stop → start → check the change took
-  effect. If it does not, the image needs the bridge earlier (a
-  vendor-specific entrypoint wrapper, not covered by this prototype).
+- On builds since the direct-bind rework this should not happen: the volume
+  is in place before the first process. If you see it, confirm the server
+  build includes the rework (older builds established the bind via a
+  post-start `docker exec` that could lose the race against the NOS reading
+  its startup config — see *History: the exec-bridge race*).
 
 **11. Web console flickers (full-screen clear/redraw) on every command**
 - The PTY is stuck at the tall 511×10000 default while a CPR-answering client
@@ -516,17 +533,16 @@ present on the host.
 4. **Rootful-Docker assumption** (`UsernsMode: host`, set for all GNS3
    Docker nodes) so the container-side chown acts on the host files' real
    uid/gid (see the volume-persistence section).
-5. **Post-boot volume bridge.** The bind-mount bridge is established after the
-   vendor entrypoint has started (init.sh would do it before). A NOS that
-   strictly requires its persisted files at its very first read may need a
-   different boot arrangement (see *Boot-ordering caveat*).
+5. **Docker CLI dependency.** Volume seeding shells out to the `docker`
+   binary (`docker create` + `docker cp` + `docker rm`) at create time —
+   the same dependency the permission passes already have.
 
 ## References
 
 - `gns3server/compute/docker/vendor_docker_vm.py` — `VendorDockerVM`:
   `_start_docker_exec_console`, `_LazyExecTelnetServer`,
-  `_setup_skip_init_volumes`, container-side `_fix_permissions` on
-  `/gns3volumes`, `start()`.
+  `_prepare_volumes` (host-side seeding), direct volume binds in
+  `_mount_binds`, container-side `_fix_permissions`, `start()`.
 - `gns3server/compute/docker/docker_vm.py` — `DockerVM` extension hooks
   (`_prepare_init_and_interface_env`, `_start_console_server`,
   `_get_container_ifname`, `_cleanup_console_resources`).
@@ -545,6 +561,7 @@ present on the host.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-08-22 | SKIP_INIT volume persistence rebuilt: host-side seeding at create time (`docker create` + `docker cp -a`, marker-gated so saved config is never overwritten) and direct bind mounts at the real in-container paths replace the post-start `docker exec` bridge. Root cause: the exec bridge raced the NOS reading its startup config — SR Linux read `config.json` at ~2–4 s and booted factory whenever concurrent node starts (server restart + project reload) delayed the exec past that point, while single-node stop/start and XRd (systemd touches `/xr-storage` tens of seconds in) never lost the race. New `_prepare_volumes` hook on `DockerVM`; `_fix_permissions` now targets the volume paths directly. |
 | 1.6 | 2026-08-20 | Terminal geometry and size forwarding: WS binary control frames `{"cols","rows"}` → NAWS / asyncssh resize (controller now forwards binary frames; compute intercepts them); tall 511×10000 default kept for non-NAWS clients, applied post-creation and restored on last disconnect (client size racing exec creation wins over the default); new `GNS3_CONSOLE_RESIZE=0` knob for paging CLIs (XRd) where a browser resize would break concurrent netmiko sessions on the shared exec; documented the SR Linux flicker root cause (tall rows × CPR-answering client → ~2.4× re-emitted output; rows-driven, width-independent). |
 | 1.5 | 2026-08-13 | Add appliance (`gns3a`) packaging section: 35-adapter full-chassis design, the three server-side schema fixes (DockerConsoleType, ApplianceV1_6.custom_adapters, extra_volumes passthrough), and the symbol-theme caveat (any `:/symbols/` symbol is rewritten to the category default at load). |
 | 1.4 | 2026-08-13 | Reconnect fix: drop the while-true wrapper (it restarted the CLI with no client to answer CPR → blank screen on reconnect); the exec is now recreated on connect when the upstream has died. `_LazyExecTelnetServer` extracted to module level and unit-tested. |

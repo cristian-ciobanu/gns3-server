@@ -41,7 +41,7 @@ graph TB
         MASK["GNS3_MASK_UDEV → /dev/null binds"]
         HOSTCFG["ShmSize / Devices"]
         CFGINJ["extra_configs → RO single-file bind"]
-        VBRIDGE["VendorDockerVM volume bridge"]
+        VBRIDGE["VendorDockerVM volume seeding + direct binds"]
         HOSTCHK["host-readiness check (read-only)"]
     end
     subgraph Container["XRd container"]
@@ -158,11 +158,12 @@ sequenceDiagram
     participant X as XRd container
     U->>S: create node from template
     S->>S: parse GNS3_* env host-side
-    S->>D: container create (ShmSize, Devices, /dev/null binds, firstboot.cfg RO bind)
+    S->>D: seed volume host dirs from image (docker create + cp, first time only)
+    S->>D: container create (ShmSize, Devices, /dev/null binds, firstboot.cfg RO bind, volumes bound directly at /xr-storage*)
     U->>S: start
     S->>X: container start (native entrypoint /usr/sbin/init)
     Note over X: systemd boots; udevd + udevadm masked → host untouched
-    S->>X: docker exec volume bridge (container's own chown)
+    S->>X: docker exec permission fix (container's own chown)
     U->>S: open console
     S->>X: docker exec pty: /pkg/bin/xr_cli.sh
     X-->>U: IOS XR CLI (first boot: apply /firstboot.cfg, save to /xr-storage-shadow)
@@ -198,7 +199,7 @@ sequenceDiagram
 - `gns3server/compute/docker/docker_vm.py` — HostConfig env injection,
   `_UDEV_UNITS`/`_UDEVADM_PATHS`, `extra_configs` binds, `_format_devices()`
 - `gns3server/compute/docker/vendor_docker_vm.py` — vendor path, volume
-  bridge, container-chown
+  seeding + direct binds, container-chown
 - `gns3server/compute/docker/__init__.py` — `_check_host_readiness()`
 - `gns3server/schemas/common.py` — `ExtraConfig`
 - `gns3server/db/models/templates.py` + `db_migrations/` — persistence
@@ -211,6 +212,7 @@ sequenceDiagram
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-08-21 | SKIP_INIT volume persistence rebuilt: host-side seeding at create time (`docker create` + `docker cp`) and direct bind mounts at the real in-container paths replace the post-start `docker exec` bridge, which raced the NOS reading its startup config (visible on SR Linux: factory boot after a server restart + project reload; XRd was immune only because systemd touches `/xr-storage` tens of seconds in). No behaviour change for XRd beyond the race removal. |
 | 1.5 | 2026-08-20 | Appliance env gains `GNS3_CONSOLE_RESIZE=0`: client-driven console resizes are ignored so the shared exec PTY stays at the tall no-paging geometry for concurrent netmiko/copilot sessions (browsers included). |
 | 1.4 | 2026-08-15 | Code-review hardening: stop-query HTTP timeout scales with `GNS3_STOP_TIMEOUT` (values >300 s no longer abort); overlapping mask/config bind targets deduplicated (Docker "Duplicate mount point"); `ExtraConfig.target` validated at save time and directory forms rejected; host-readiness check no longer aborts on one unreadable `/proc/sys` key; base env parser strips trailing commas; vendor env knobs re-parsed on create (PUT environment takes effect); graceful stop limited to explicit user stop (delete/update/close keep the immediate kill); extra_configs under a persisted volume warns. |
 | 1.3 | 2026-08-14 | Persistence corrected: XR's live data layer is `/xr-storage` (the image's symlink farm is materialized into real directories at bootstrap; `/xr-storage-shadow` is a pristine spare) — the appliance persists both. Vendor containers now stop gracefully (SIGTERM + `GNS3_STOP_TIMEOUT` grace, default 60 s) instead of being SIGKILLed on the spot. |
