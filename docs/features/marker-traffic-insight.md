@@ -97,8 +97,8 @@ IOU runs a single `IOL-BRIDGE` per node shared by every interface, so `bridge`+`
 identical across that node's links. uBridge keeps a separate filter list **per port
 (bay/unit)** within the bridge, so each interface gets its own `global-{name}` filter, its own
 pcap file, and its own `link=`. The shared bridge name is irrelevant to attribution. Other
-capable node types (`qemu`, `docker`, `vpcs`, `cloud`) already use one bridge per link; `link`
-applies uniformly to all of them.
+capable node types (`qemu`, `docker`, `vpcs`, `cloud`, `ethernet_switch`) already use one
+bridge per link (the switch's per-port relay); `link` applies uniformly to all of them.
 
 ## Direction
 
@@ -137,7 +137,7 @@ pass `capture_node_id` on marker **create**:
 ```
 
 The value must be one of the link's two endpoints and a marker-capable type (`vpcs`, `qemu`,
-`docker`, `iou`, `dynamips`, `cloud`); any other id is rejected with `409`. Omit it to keep
+`docker`, `iou`, `dynamips`, `cloud`, `ethernet_switch`); any other id is rejected with `409`. Omit it to keep
 the auto-pick. The chosen id is echoed back as `capture_node_id` in the marker entry and in
 each `MARK` signal's `node=<id>`, so the Web UI always knows the observer regardless of who
 picked it.
@@ -357,7 +357,9 @@ direction relative to the capture node; see [Direction](#direction).
   runs one `tcpdump -d` rather than *N*. (uBridge still runs `pcap_compile` itself at
   install time, so an invalid expression can never slip through.)
 - **Supported node types.** A marker needs a uBridge bridge: `vpcs`, `qemu`, `docker`,
-  `iou`, `dynamips`, `cloud` (one capable endpoint suffices). Types without a uBridge are
+  `iou`, `dynamips`, `cloud`, `ethernet_switch` (one capable endpoint suffices). The
+  `ethernet_switch` hosts markers on its per-port uBridge relays (brctl backend); the
+  `ethernet_hub` is still Dynamips-hosted and has no uBridge. Types without a uBridge are
   silently skipped by the inheritance fan-out. IOU uses one shared `IOL-BRIDGE` per node but
   keeps filters, pcap files, and `link=` ids per port, so multi-interface nodes are handled
   (see [Per-link attribution](#per-link-attribution)).

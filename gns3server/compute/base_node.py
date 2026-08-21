@@ -19,6 +19,9 @@ import os
 import stat
 import shutil
 import asyncio
+import contextlib
+import json
+import struct
 import tempfile
 import psutil
 import platform
@@ -561,6 +564,51 @@ class BaseNode:
             log.warning(f"Cannot connect to node {self.name} console server: {e}")
             return
 
+        def _parse_terminal_size_message(data: bytes):
+            """
+            Binary control frames sent by WebSocket console clients to propagate
+            their terminal geometry: {"cols": int, "rows": int}. Terminal data
+            travels as text frames (xterm.js AttachAddon), so binary frames are
+            an unambiguous side channel. Returns (cols, rows) or None.
+            """
+
+            try:
+                message = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return None
+            if not isinstance(message, dict):
+                return None
+            cols, rows = message.get("cols"), message.get("rows")
+            if (
+                isinstance(cols, int) and not isinstance(cols, bool)
+                and isinstance(rows, int) and not isinstance(rows, bool)
+                and 2 <= cols <= 5000
+                and 2 <= rows <= 100000
+            ):
+                return cols, rows
+            return None
+
+        async def resize_console(cols: int, rows: int) -> None:
+            """
+            Propagate a client terminal resize to the node console stream:
+            SSH channels use a pty request update, telnet-based consoles
+            (including docker_exec) speak a NAWS subnegotiation to the console
+            telnet server, which resizes the underlying stream (e.g. the
+            docker exec pty).
+            """
+
+            if self._console_type == "ssh":
+                with contextlib.suppress(AttributeError):
+                    ssh_process.change_terminal_size(cols, rows)
+            else:
+                telnet_writer.write(
+                    bytes([255, 251, 31])  # IAC WILL NAWS
+                    + bytes([255, 250, 31])  # IAC SB NAWS
+                    + struct.pack("!HH", cols, rows).replace(b"\xff", b"\xff\xff")
+                    + bytes([255, 240])  # IAC SE
+                )
+                await telnet_writer.drain()
+
         async def ws_forward(telnet_writer):
 
             try:
@@ -571,6 +619,14 @@ class BaseNode:
                     if "text" in msg and msg["text"]:
                         data = msg["text"].encode()
                     elif "bytes" in msg and msg["bytes"]:
+                        size = _parse_terminal_size_message(msg["bytes"])
+                        if size is not None:
+                            log.debug(
+                                f"Console WebSocket client {websocket.client.host}:{websocket.client.port}"
+                                f" resized terminal to {size[0]}x{size[1]}"
+                            )
+                            await resize_console(*size)
+                            continue
                         data = msg["bytes"]
                     else:
                         continue

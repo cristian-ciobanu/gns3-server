@@ -535,6 +535,8 @@ class Gns3Connector:
 
         - `tags` (list): List of tags for the template (e.g.,
           ["device_type:cisco_ios_telnet", "platform:cisco_ios"])
+        - `netmiko_device_type` (str): Netmiko device type (e.g. "cisco_ios_telnet");
+          preferred over the device_type:<type> tag
         - Any other template attributes supported by GNS3 API
         """
         # Get existing template
@@ -571,6 +573,8 @@ class Gns3Connector:
 
         - `tags` (list): List of tags for the template (e.g.,
           ["device_type:cisco_ios_telnet", "platform:cisco_ios"])
+        - `netmiko_device_type` (str): Netmiko device type (e.g. "cisco_ios_telnet");
+          preferred over the device_type:<type> tag
         - Any other template attributes supported by GNS3 API
 
         **Example:**
@@ -579,7 +583,8 @@ class Gns3Connector:
         >>> connector.create_template(
         ...     name="cisco_router",
         ...     template_type="dynamips",
-        ...     tags=["device_type:cisco_ios_telnet", "platform:cisco_ios"]
+        ...     tags=["device_type:cisco_ios_telnet", "platform:cisco_ios"],
+        ...     netmiko_device_type="cisco_ios_telnet"
         ... )
         ```
         """
@@ -1366,6 +1371,9 @@ class Node:
     template_id: str | None = None
     properties: Any | None = None
     tags: list[str] | None = None
+    netmiko_device_type: str | None = None
+    default_username: str | None = None
+    default_password: str | None = None
 
     template: str | None = None
     links: list[Link] = field(default_factory=list, repr=False)
@@ -2482,6 +2490,9 @@ class Project:
                         "x": _n.x,
                         "y": _n.y,
                         "tags": _n.tags if _n.tags else [],
+                        "netmiko_device_type": _n.netmiko_device_type,
+                        "default_username": _n.default_username,
+                        "default_password": _n.default_password,
                     }
                 }
             )

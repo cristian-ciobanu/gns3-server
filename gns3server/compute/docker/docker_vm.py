@@ -129,8 +129,10 @@ class DockerVM(BaseNode):
         if ":" not in image:
             image = f"{image}:latest"
         self._image = image
-        self._start_command = start_command
-        self._environment = environment
+        # assign through the property setters so creation and updates apply
+        # the same value normalization (e.g. "" -> None)
+        self.start_command = start_command
+        self.environment = environment
         self._cid = None
         self._ethernet_adapters = []
         self._temporary_directory = None
@@ -138,10 +140,10 @@ class DockerVM(BaseNode):
         self._vnc_process = None
         self._vncconfig_process = None
         self._console_resolution = console_resolution
-        self._console_http_path = console_http_path
+        self.console_http_path = console_http_path
         self._console_http_port = console_http_port
         self._console_websocket = None
-        self._extra_hosts = extra_hosts
+        self.extra_hosts = extra_hosts
         self._extra_volumes = extra_volumes or []
         self._extra_configs = extra_configs or []
         self._memory = memory
@@ -288,7 +290,9 @@ class DockerVM(BaseNode):
 
     @console_http_path.setter
     def console_http_path(self, path):
-        self._console_http_path = path
+        # the canonical "no path" value is "/" so that "", None and "/"
+        # all compare equal in the update diff
+        self._console_http_path = path or "/"
 
     @property
     def console_http_port(self):
@@ -304,7 +308,8 @@ class DockerVM(BaseNode):
 
     @environment.setter
     def environment(self, command):
-        self._environment = command
+        # "" and None are the same "no environment variables" value
+        self._environment = command or None
 
     @property
     def extra_hosts(self):
@@ -312,7 +317,8 @@ class DockerVM(BaseNode):
 
     @extra_hosts.setter
     def extra_hosts(self, extra_hosts):
-        self._extra_hosts = extra_hosts
+        # "" and None are the same "no extra hosts" value
+        self._extra_hosts = extra_hosts or None
 
     @property
     def extra_volumes(self):
@@ -373,6 +379,51 @@ class DockerVM(BaseNode):
         result = await self.manager.query("GET", f"images/{self._image}/json")
         return result
 
+    def _persistent_volume_list(self, image_info, include_network_config=True):
+        """
+        The in-container paths that get a persistent volume mount: GNS3's
+        /etc/network, every VOLUME declared by the image and the node's
+        extra_volumes. Overlapping paths are de-duplicated so that a path
+        covered by a more general volume is not mounted twice.
+
+        :param include_network_config: include GNS3's hardcoded /etc/network
+            volume (consumed by init.sh; subclasses that skip init.sh pass
+            False so the list matches the mounts they actually create).
+        """
+
+        for volume in self._extra_volumes:
+            if not volume.strip() or volume[0] != "/" or volume.find("..") >= 0:
+                raise DockerError(
+                    f"Persistent volume '{volume}' has invalid format. It must start with a '/' and not contain '..'."
+                )
+        volumes = []
+        if include_network_config:
+            volumes.append("/etc/network")
+        volumes.extend((image_info.get("Config", {}).get("Volumes") or {}).keys())
+        volumes.extend(self._extra_volumes)
+
+        deduped = []
+        # define lambdas for validation checks
+        nf = lambda x: re.sub(r"//+", "/", (x if x.endswith("/") else x + "/"))
+        generalises = lambda v1, v2: nf(v2).startswith(nf(v1))
+        for volume in volumes:
+            # remove any mount that is equal or more specific, then append this one
+            deduped = list(filter(lambda v: not generalises(volume, v), deduped))
+            # if there is nothing more general, append this mount
+            if not [v for v in deduped if generalises(v, volume)]:
+                deduped.append(volume)
+        return deduped
+
+    async def _prepare_volumes(self, image_info):
+        """
+        Hook: prepare persistent volumes before the container (and its
+        mounts) are created. The default implementation does nothing —
+        init.sh performs the first-copy seeding inside the container at
+        boot. Subclasses that skip init.sh override this to seed the host
+        directories from the image instead, so their mounts can be bound
+        directly at the real in-container paths from the very first process.
+        """
+
     def _mount_binds(self, image_info):
         """
         :returns: Return the path that we need to map to local folders
@@ -396,26 +447,7 @@ class DockerVM(BaseNode):
             self._create_network_config()
         except OSError as e:
             raise DockerError(f"Could not create network config in the container: {e}")
-        volumes = ["/etc/network"]
-
-        volumes.extend((image_info.get("Config", {}).get("Volumes") or {}).keys())
-        for volume in self._extra_volumes:
-            if not volume.strip() or volume[0] != "/" or volume.find("..") >= 0:
-                raise DockerError(
-                    f"Persistent volume '{volume}' has invalid format. It must start with a '/' and not contain '..'."
-                )
-        volumes.extend(self._extra_volumes)
-
-        self._volumes = []
-        # define lambdas for validation checks
-        nf = lambda x: re.sub(r"//+", "/", (x if x.endswith("/") else x + "/"))
-        generalises = lambda v1, v2: nf(v2).startswith(nf(v1))
-        for volume in volumes:
-            # remove any mount that is equal or more specific, then append this one
-            self._volumes = list(filter(lambda v: not generalises(volume, v), self._volumes))
-            # if there is nothing more general, append this mount
-            if not [v for v in self._volumes if generalises(v, volume)]:
-                self._volumes.append(volume)
+        self._volumes = self._persistent_volume_list(image_info)
 
         for volume in self._volumes:
             source = os.path.join(self.working_dir, os.path.relpath(volume, "/"))
@@ -537,6 +569,10 @@ class DockerVM(BaseNode):
                 f"You have allocated too many CPUs for the Docker container "
                 f"(max available is {available_cpus} CPUs)"
             )
+
+        # Prepare persistent volume content before the container and its
+        # mounts are created (no-op for the init.sh path).
+        await self._prepare_volumes(image_infos)
 
         params = {
             "Hostname": self._name,

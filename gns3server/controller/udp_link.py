@@ -24,12 +24,13 @@ from .link import Link, _UNSET
 from .node_types import BUILTIN_NODE_TYPES
 from gns3server.utils.packet_filter_validation import validate_bpf_syntax, FilterValidationError
 
-# Node types without a uBridge bridge — a marker filter has nothing to attach to.
 # Node types that can host a marker (have a uBridge bridge to attach the
 # `mark` filter to).  Mirrors _get_filter_node in link.py, minus "nat"
-# (which has no uBridge).
+# (which has no uBridge) and "ethernet_hub" (still Dynamips-hosted, no
+# uBridge of its own).  "ethernet_switch" hosts markers on the per-port
+# uBridge relays of its brctl kernel-bridge backend.
 _MARKER_CAPABLE_TYPES = frozenset({
-    "vpcs", "qemu", "docker", "iou", "dynamips", "cloud",
+    "vpcs", "qemu", "docker", "iou", "dynamips", "cloud", "ethernet_switch",
 })
 
 
@@ -234,7 +235,10 @@ class UDPLink(Link):
         self._link_data[0]["filters"] = node1_filters
         self._link_data[0]["markers"] = node1_markers
         self._link_data[0]["suspend"] = self._suspended
-        if node1.node_type not in ("ethernet_switch", "ethernet_hub"):
+        # The Ethernet hub is still Dynamips-hosted (no uBridge of its own and
+        # no PUT NIO route) — keep skipping its side. Every other node type,
+        # including the brctl Ethernet switch, re-applies via the NIO update.
+        if node1.node_type != "ethernet_hub":
             await node1.put(
                 f"/adapters/{adapter_number1}/ports/{port_number1}/nio", data=self._link_data[0], timeout=120
             )
@@ -244,7 +248,7 @@ class UDPLink(Link):
         self._link_data[1]["filters"] = node2_filters
         self._link_data[1]["markers"] = node2_markers
         self._link_data[1]["suspend"] = self._suspended
-        if node2.node_type not in ("ethernet_switch", "ethernet_hub"):
+        if node2.node_type != "ethernet_hub":
             await node2.put(
                 f"/adapters/{adapter_number2}/ports/{port_number2}/nio", data=self._link_data[1], timeout=221
             )

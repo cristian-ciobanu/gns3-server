@@ -85,7 +85,11 @@ bridge start {node_id}-{port}
 ```
 
 Captures and marker signals are applied via the existing `_ubridge_apply_filters`
-and `_ubridge_apply_markers` helpers from `BaseNode`.
+and `_ubridge_apply_markers` helpers from `BaseNode`. The controller therefore allows
+packet filters and traffic-insight markers on switch links (including switch-to-switch):
+`ethernet_switch` is a marker/filter-capable node type, and the compute API exposes the
+matching NIO-update and per-marker endpoints. The `ethernet_hub` — still Dynamips-hosted,
+no uBridge — remains excluded.
 
 ### `remove_nio(port_number)`
 

@@ -624,6 +624,8 @@ class Link:
                 "nat",
                 "virtualbox",
                 "docker",
+                # the brctl Ethernet switch applies filters on its per-port uBridge relays
+                "ethernet_switch",
             ):
                 return node["node"]
         return None

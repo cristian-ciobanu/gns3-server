@@ -48,13 +48,20 @@ class VendorDockerVM(DockerVM):
     (host-side only — GNS3_ entries are never forwarded into the container):
 
     * ``GNS3_SKIP_INIT=1`` — do not prepend /gns3/init.sh; the container runs
-      its own entrypoint (e.g. SR Linux's ``sr_linux``). Init.sh's volume
-      persistence (bind-mount /gns3volumes → target) is replicated via
-      ``docker exec`` after the container starts.
+      its own entrypoint (e.g. SR Linux's ``sr_linux``). Persistent volumes
+      are seeded host-side and bound directly at their real in-container
+      paths at create time (see ``_prepare_volumes`` / ``_mount_binds``), so
+      the NOS sees its saved configuration from the very first process —
+      no post-start mount pass that could race the NOS reading its config.
     * ``GNS3_INTERFACE_NAMES=mgmt0,e1-1,e1-2`` — rename injected interfaces
       (adapter order) instead of default ``eth{N}``.
     * ``GNS3_CONSOLE_CMD=/opt/srlinux/bin/sr_cli`` — command run inside the
       container by the ``docker_exec`` console (defaults to ``/bin/sh``).
+    * ``GNS3_CONSOLE_RESIZE=0`` — ignore client-driven console resizes
+      (WS terminal-size frames / telnet NAWS). Set for CLIs that page on the
+      PTY window size (IOS-XR): the exec PTY must stay at the tall
+      no-NAWS default for every client, including concurrent netmiko
+      sessions on the shared exec.
     * ``GNS3_STOP_TIMEOUT=60`` — SIGTERM grace period in seconds when stopping
       the container (default 60; Docker SIGKILLs once it expires).
     """
@@ -77,6 +84,7 @@ class VendorDockerVM(DockerVM):
         self._gns3_init = True
         self._interface_names = []
         self._console_cmd = None
+        self._console_resize = True
         self._stop_timeout = 60
         if self._environment:
             for _line in self._environment.splitlines():
@@ -89,6 +97,8 @@ class VendorDockerVM(DockerVM):
                     ]
                 elif _line.startswith("GNS3_CONSOLE_CMD="):
                     self._console_cmd = _line.split("=", 1)[1].strip()
+                elif _line.startswith("GNS3_CONSOLE_RESIZE="):
+                    self._console_resize = _line.split("=", 1)[1].strip().lower() not in ("0", "false", "no")
                 elif _line.startswith("GNS3_STOP_TIMEOUT="):
                     try:
                         timeout = int(_line.split("=", 1)[1].strip())
@@ -119,6 +129,17 @@ class VendorDockerVM(DockerVM):
         Removes the bind, drops the volume from self._volumes (so
         GNS3_VOLUMES and the vendor passes stay consistent) and deletes the
         host-side skeleton directory the base class just created.
+
+        Additionally, the persistent volumes are bound directly at their
+        real in-container paths instead of /gns3volumes<volume>. With
+        init.sh skipped there is no in-container mount pass, so a volume
+        bound at /gns3volumes would only be moved into place by a post-start
+        ``docker exec`` — racing the NOS reading its startup configuration
+        (an SR Linux node booted factory whenever the exec lost that race,
+        e.g. on the concurrent node starts of a project reload). Binding at
+        the real path is safe because the content is seeded host-side before
+        the container is created (see _prepare_volumes): the image's files
+        are never shadowed by an empty mount.
         """
         binds = super()._mount_binds(image_info)
         if self._gns3_init:
@@ -128,7 +149,115 @@ class VendorDockerVM(DockerVM):
         shutil.rmtree(os.path.join(self.working_dir, "etc", "network"), ignore_errors=True)
         with contextlib.suppress(OSError):
             os.rmdir(os.path.join(self.working_dir, "etc"))
-        return binds
+
+        # Re-target the volume binds from /gns3volumes<volume> to <volume>.
+        retargeted = []
+        for bind in binds:
+            target = bind.get("Target", "")
+            if target.startswith("/gns3volumes"):
+                volume = target[len("/gns3volumes"):]
+                if volume in self._volumes:
+                    bind = {**bind, "Target": volume}
+            retargeted.append(bind)
+        return retargeted
+
+    async def _prepare_volumes(self, image_info):
+        """
+        Override: for SKIP_INIT containers, seed every persistent volume's
+        host directory with the image's original content *before* the
+        container is created. This is the host-side replacement of init.sh's
+        first-copy: because the volume is then bound directly at its real
+        in-container path (see _mount_binds), the seed must exist first or
+        the NOS would boot with an empty config directory.
+
+        ``.gns3_perms`` doubles as the seeded marker: a volume that has it
+        (every node that ever started, on any GNS3 version) is never
+        re-seeded — a re-seed would overwrite the node's saved
+        configuration with the factory image content.
+        """
+        if self._gns3_init:
+            return
+        volumes = self._persistent_volume_list(image_info, include_network_config=False)
+        to_seed = []
+        for volume in volumes:
+            host_dir = os.path.join(self.working_dir, os.path.relpath(volume, "/"))
+            os.makedirs(host_dir, exist_ok=True)
+            if not os.path.exists(os.path.join(host_dir, ".gns3_perms")):
+                to_seed.append((volume, host_dir))
+        if not to_seed:
+            return
+        seed_cid = await self._create_seed_container()
+        try:
+            for volume, host_dir in to_seed:
+                await self._seed_volume_from_container(seed_cid, volume, host_dir)
+                # Write the marker only after the copy attempt, mirroring
+                # init.sh: a volume without it is (re)seeded on the next
+                # create(), so a partial seed self-heals.
+                open(os.path.join(host_dir, ".gns3_perms"), "a").close()
+        finally:
+            await self._remove_seed_container(seed_cid)
+
+    async def _create_seed_container(self):
+        """
+        A throwaway ``docker create`` container (nothing executes) used as
+        the copy source for seeding persistent volumes with the image's
+        original content.
+        """
+
+        try:
+            process = await asyncio.subprocess.create_subprocess_exec(
+                "docker", "create", self._image,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as e:
+            raise DockerError(f"Could not seed persistent volumes for '{self._name}': {e}")
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise DockerError(
+                f"Could not create a seeding container for image '{self._image}': "
+                f"{stderr.decode(errors='replace').strip()}"
+            )
+        return stdout.decode().strip()
+
+    async def _seed_volume_from_container(self, seed_cid, volume, host_dir):
+        """
+        Copy one volume's original content from the seeding container to its
+        host directory with ``docker cp -a`` (preserves modes/ownership; no
+        dependency on tools inside the image).
+        """
+
+        try:
+            process = await asyncio.subprocess.create_subprocess_exec(
+                "docker", "cp", "-a", f"{seed_cid}:{volume}/.", host_dir + "/",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as e:
+            raise DockerError(f"Could not seed persistent volume '{volume}' for '{self._name}': {e}")
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            # A path the image does not contain (e.g. XRd's /xr-storage-shadow)
+            # is not an error: the volume starts empty. Same tolerance as
+            # init.sh's first copy (cp -a ... 2>/dev/null).
+            log.info(
+                "Persistent volume '%s' on '%s' not seedable from image '%s' (%s); starting empty",
+                volume, self._name, self._image, stderr.decode(errors="replace").strip(),
+            )
+            return
+        log.info("Seeded persistent volume '%s' for '%s' from image '%s'", volume, self._name, self._image)
+
+    async def _remove_seed_container(self, seed_cid):
+        """
+        Best-effort removal of the seeding container.
+        """
+
+        try:
+            process = await asyncio.subprocess.create_subprocess_exec(
+                "docker", "rm", "-f", seed_cid,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError:
+            return
+        await process.communicate()
 
     def _prepare_init_and_interface_env(self, params):
         """
@@ -201,23 +330,22 @@ class VendorDockerVM(DockerVM):
     async def start(self):
         await super().start()
         if self.status == "started" and not self._gns3_init:
-            await self._setup_skip_init_volumes()
-            # Fix host-side ownership of the seeded volume right away so the
-            # controller can read project files while the node runs. Reset the
-            # "fixed" flag afterwards: files written by the container during
-            # runtime still need the stop-time pass.
+            # Persistent volumes are seeded and bound directly at create time
+            # (see _prepare_volumes / _mount_binds), so there is no post-start
+            # bridge to run. Fix host-side ownership right away so the
+            # controller can read project files while the node runs, and reset
+            # the "fixed" flag: files written by the container during runtime
+            # still need the stop-time pass.
             await self._fix_permissions()
             self._permissions_fixed = False
 
     async def _fix_permissions(self):
         """
         Container-side override of DockerVM._fix_permissions for vendor NOS
-        containers. It targets the Docker bind-mount paths
-        (`/gns3volumes<volume>`) directly instead of the in-container paths:
-        the in-container paths only resolve to persistent storage while the
-        `mount --bind` bridge from _setup_skip_init_volumes is up, and after a
-        container restart the bridge is gone — the base implementation would
-        then chown the overlay copy instead of the host files.
+        containers. The persistent volumes are Docker bind mounts created
+        with the container (see _mount_binds), so the in-container paths
+        resolve to the host-side files for the container's whole lifetime —
+        no /gns3volumes aliasing is needed.
 
         The busybox script runs inside the container as root (a host-side
         GNS3 process may be unprivileged and cannot chown root-owned files).
@@ -240,7 +368,7 @@ class VendorDockerVM(DockerVM):
 
         uid, gid = os.getuid(), os.getgid()
         for volume in self._volumes:
-            target = f"/gns3volumes{volume}"
+            target = volume
             log.debug("Docker container '%s' fix ownership on %s", self._name, target)
             try:
                 # chown prefers the container's own coreutils over /gns3/bin/busybox:
@@ -276,61 +404,6 @@ class VendorDockerVM(DockerVM):
             else:
                 self._permissions_fixed = True
 
-    async def _setup_skip_init_volumes(self):
-        """
-        Replicate the volume-persistence portion of init.sh (lines 35–52) for
-        containers that skip init.sh (GNS3_SKIP_INIT=1).
-
-        On first start the container's original files are seeded into the
-        persistent host directory; on subsequent starts the persisted data
-        is bind-mounted over the in-container path so writes land on the host.
-        Permission-changes recorded by _fix_permissions at the previous
-        stop are restored (best-effort).
-        """
-        for volume in self._volumes:
-            vol_target = f"/gns3volumes{volume}"
-            # fmt: off
-            script = (
-                f'mkdir -p "{volume}" && '
-                f'if [ ! -f "{vol_target}/.gns3_perms" ]; then '
-                f'  /gns3/bin/busybox cp -a "{volume}/." "{vol_target}/" 2>/dev/null; '
-                f'  /gns3/bin/busybox touch "{vol_target}/.gns3_perms"; '
-                f'fi && '
-                f'/gns3/bin/busybox mount --bind "{vol_target}" "{volume}" && '
-                f'while IFS=: read -r PERMS OWNER GROUP FILE; do '
-                f'  [ -L "$FILE" ] || /gns3/bin/busybox chmod "$PERMS" "$FILE" 2>/dev/null; '
-                # chown: prefer the container's coreutils, fall back to busybox
-                # (see _fix_permissions -- static busybox chown aborts on
-                # mismatched-glibc NOS images like XRd).
-                f'  ( command -v chown >/dev/null 2>&1 && chown -h "$OWNER:$GROUP" "$FILE" || /gns3/bin/busybox chown -h "$OWNER:$GROUP" "$FILE" ) 2>/dev/null; '
-                f'done < "{volume}/.gns3_perms"'
-            )
-            # fmt: on
-            try:
-                process = await asyncio.subprocess.create_subprocess_exec(
-                    "docker",
-                    "exec",
-                    self._cid,
-                    "sh",
-                    "-c",
-                    script,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await process.communicate()
-                if process.returncode != 0:
-                    err = stderr.decode(errors="replace").strip()
-                    log.warning(
-                        "Volume setup for '%s' on container '%s' returned %d: %s",
-                        volume, self._name, process.returncode, err,
-                    )
-                else:
-                    log.info("Volume '%s' bound to persistent storage for '%s'", volume, self._name)
-            except OSError as e:
-                log.warning(
-                    "Could not setup volume '%s' for container '%s': %s", volume, self._name, e
-                )
-
     async def _start_console_server(self):
         """
         Override: add the ``docker_exec`` console type alongside the
@@ -357,7 +430,13 @@ class VendorDockerVM(DockerVM):
         Command from GNS3_CONSOLE_CMD.
         """
 
-        telnet = _LazyExecTelnetServer(self, self.manager, self._cid, self._console_cmd or "/bin/sh")
+        telnet = _LazyExecTelnetServer(
+            self,
+            self.manager,
+            self._cid,
+            self._console_cmd or "/bin/sh",
+            allow_resize=self._console_resize,
+        )
         try:
             self._telnet_servers.append(
                 await telnet.start(self._manager.port_manager.console_host, self.console)
@@ -384,7 +463,7 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
     CPR, producing a blank/degraded screen on reconnect.
     """
 
-    def __init__(self, vm, manager, cid, command):
+    def __init__(self, vm, manager, cid, command, allow_resize=True):
         super().__init__(
             reader=None,
             writer=None,
@@ -397,7 +476,9 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
         self._manager = manager
         self._cid = cid
         self._command = command
+        self._allow_resize = allow_resize
         self._exec_id = None
+        self._client_size = None  # size received while no exec existed yet
         self._broadcast_task = None
         self._lock = asyncio.Lock()
         self._log_name = f"docker_exec console '{vm.name}'"
@@ -412,16 +493,42 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
             return False
         return True
 
+    async def _disconnect_client(self, network_writer):
+        await super()._disconnect_client(network_writer)
+        # When the last client leaves, restore the tall no-NAWS default: a
+        # browser client resizes the exec to its own geometry (WS terminal
+        # size control frames -> NAWS), and the next non-NAWS client (netmiko,
+        # bare telnet) connecting to the still-live exec would otherwise
+        # inherit it and hit PTY-window paging (the IOS-XR --More-- trap).
+        if self._exec_id and not await self._get_connections_snapshot():
+            with contextlib.suppress(Exception):
+                self._client_size = None
+                await self._resize_exec(511, 10000)
+
+    async def _resize_exec(self, columns, rows):
+        if not self._exec_id:
+            # No exec yet (first client still inside client_connected_hook):
+            # remember the size — the hook applies it right after creation
+            # instead of the tall default, so it doesn't get overwritten.
+            self._client_size = (columns, rows)
+            return
+        try:
+            await self._manager.query(
+                "POST",
+                f"exec/{self._exec_id}/resize",
+                params={"h": str(rows), "w": str(columns)},
+            )
+        except DockerError:
+            pass
+
     async def _on_naws(self, columns, rows):
-        if self._exec_id:
-            try:
-                await self._manager.query(
-                    "POST",
-                    f"exec/{self._exec_id}/resize",
-                    params={"h": str(rows), "w": str(columns)},
-                )
-            except DockerError:
-                pass
+        # Client-driven resize (WS terminal-size control frames, telnet NAWS).
+        # Ignored for paging CLIs (GNS3_CONSOLE_RESIZE=0): with the exec shared
+        # by all clients, one browser resize would break concurrent netmiko
+        # sessions that rely on the tall no-paging geometry.
+        if not self._allow_resize:
+            return
+        await self._resize_exec(columns, rows)
 
     async def run(self, network_reader, network_writer):
         """Catch and log any exception that kills the client session."""
@@ -504,7 +611,18 @@ class _LazyExecTelnetServer(AsyncioTelnetServer):
                     log.warning(f"{self._log_name}: failed to create exec: {exc}", exc_info=True)
                     raise
                 try:
-                    await self._on_naws(80, 24)  # initial size before NAWS
+                    # Tall/wide default geometry before any NAWS arrives: a
+                    # 24-row PTY makes CLIs that page on the PTY window size
+                    # (e.g. the IOS-XR pager) park at --More-- for clients
+                    # that never negotiate NAWS (netmiko, bare telnet).
+                    # Width 511 matches netmiko's 'terminal width 511'.
+                    # A size already pushed by this client (WS terminal-size
+                    # control frames -> NAWS, racing the exec creation) wins
+                    # over the default.
+                    if self._client_size:
+                        await self._resize_exec(*self._client_size)
+                    else:
+                        await self._resize_exec(511, 10000)
                 except Exception:
                     pass
             else:

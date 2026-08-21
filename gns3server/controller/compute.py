@@ -24,7 +24,6 @@ import sys
 import io
 
 from fastapi import HTTPException
-from aiohttp import web
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as asynctimeout
@@ -373,6 +372,27 @@ class Compute:
         except ControllerError:
             pass
 
+    async def _report_connection_failure(self, error):
+        """
+        Update the connection state after a failure, notify clients and
+        schedule a reconnection attempt with exponential backoff.
+        """
+
+        self._connected = False
+        self._last_error = str(error)
+        self._controller.notification.controller_emit("compute.updated", self.asdict())
+        # Try to reconnect if server unavailable only if not during tests (otherwise we create a ressource usage bomb)
+        if hasattr(sys, "_called_from_test") and sys._called_from_test:
+            return
+        self._connection_failure += 1
+        # After 10 failures we close the project using the compute to avoid sync issues
+        if self._connection_failure == 10:
+            log.error(f"Could not connect to compute '{self._id}' after multiple attempts: {error}")
+            await self._controller.close_compute_projects(self)
+        # Exponential backoff: 5s, 10s, 20s, 40s, 80s, then cap at 300s
+        delay = min(5 * (2 ** (self._connection_failure - 1)), 300)
+        asyncio.get_event_loop().call_later(delay, lambda: asyncio.ensure_future(self._try_reconnect()))
+
     @locking
     async def connect(self, report_failed_connection=False):
         """
@@ -385,32 +405,20 @@ class Compute:
                 response = await self._run_http_query("GET", "/capabilities")
             except ComputeError as e:
                 # Update connection status and notify UI
-                self._connected = False
-                self._last_error = str(e)
-                self._controller.notification.controller_emit("compute.updated", self.asdict())
-
+                await self._report_connection_failure(e)
                 if report_failed_connection:
                     raise
                 log.warning(f"Cannot connect to compute '{self._id}': {e}")
-                # Try to reconnect if server unavailable only if not during tests (otherwise we create a ressource usage bomb)
-                if not hasattr(sys, "_called_from_test") or not sys._called_from_test:
-                    self._connection_failure += 1
-                    # After 10 failures we close the project using the compute to avoid sync issues
-                    if self._connection_failure == 10:
-                        log.error(f"Could not connect to compute '{self._id}' after multiple attempts: {e}")
-                        await self._controller.close_compute_projects(self)
-                    # Exponential backoff: 5s, 10s, 20s, 40s, 80s, then cap at 300s
-                    delay = min(5 * (2 ** (self._connection_failure - 1)), 300)
-                    asyncio.get_event_loop().call_later(delay, lambda: asyncio.ensure_future(self._try_reconnect()))
                 return
-            except web.HTTPNotFound:
-                raise ControllerNotFoundError(f"The server {self._id} is not a GNS3 server or it's a 1.X server")
-            except web.HTTPUnauthorized:
-                raise ControllerUnauthorizedError(f"Invalid auth for server {self._id}")
-            except web.HTTPServiceUnavailable:
-                raise ControllerNotFoundError(f"The server {self._id} is unavailable")
-            except ValueError:
-                raise ComputeError(f"Invalid server url for server {self._id}")
+            except (ControllerError, HTTPException) as e:
+                # _run_http_query translates HTTP status errors into ControllerError
+                # subclasses (or a raw HTTPException for unexpected status codes).
+                # They used to escape this method and silently kill the fire-and-forget
+                # connect() task started at controller startup: no notification, no retry.
+                # Schedule the retry, then re-raise so explicit callers still get the error.
+                await self._report_connection_failure(e)
+                log.warning(f"Cannot connect to compute '{self._id}': {e}")
+                raise
 
             if "version" not in response.json:
                 msg = f"The server {self._id} is not a GNS3 server"
@@ -488,22 +496,27 @@ class Compute:
                         elif response.type == aiohttp.WSMsgType.CLOSED:
                             pass
                         break
-        except aiohttp.ClientError as e:
-            log.error(f"Client response error received on compute '{self._id}' WebSocket '{ws_url}': {e}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # A malformed frame or an error raised while dispatching a compute event
+            # used to escape this task (only aiohttp.ClientError was caught) and
+            # permanently killed the notification stream: no more compute.updated
+            # events and no reconnection until the server was restarted. Log the
+            # error with its traceback and reconnect below.
+            log.error(f"Error on compute '{self._id}' notification stream '{ws_url}': {e!r}", exc_info=True)
         finally:
             self._connected = False
+            self._cpu_usage_percent = None
+            self._memory_usage_percent = None
+            self._disk_usage_percent = None
             log.info(f"Connection closed to compute '{self._id}' WebSocket '{ws_url}'")
-
-        # Try to reconnect after 1 second if server unavailable only if not during tests (otherwise we create a resources usage bomb)
-        from gns3server.api.server import app
-        if not app.state.exiting and not hasattr(sys, "_called_from_test"):
-            log.info(f"Reconnecting to compute '{self._id}' WebSocket '{ws_url}'")
-            asyncio.get_event_loop().call_later(1, lambda: asyncio.ensure_future(self.connect()))
-
-        self._cpu_usage_percent = None
-        self._memory_usage_percent = None
-        self._disk_usage_percent = None
-        self._controller.notification.controller_emit("compute.updated", self.asdict())
+            self._controller.notification.controller_emit("compute.updated", self.asdict())
+            # Try to reconnect after 1 second if server unavailable only if not during tests (otherwise we create a resources usage bomb)
+            from gns3server.api.server import app
+            if not app.state.exiting and not hasattr(sys, "_called_from_test"):
+                log.info(f"Reconnecting to compute '{self._id}' WebSocket '{ws_url}'")
+                asyncio.get_event_loop().call_later(1, lambda: asyncio.ensure_future(self.connect()))
 
     def _getUrl(self, path):
         host = self._host

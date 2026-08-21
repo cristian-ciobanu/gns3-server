@@ -25,6 +25,7 @@ via Gns3Connector (from custom_gns3fy).
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import hashlib
 import logging
 
 from gns3server.services import auth_service
@@ -312,6 +313,12 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "ws_url": ws_url,
         "command": f"websocat -t --no-close {ws_url}",
     }
+    if ws_token:
+        # Fingerprint of the minted token: compare it against what actually reached the
+        # server (logged on WebSocket auth rejection) to detect copy corruption, and
+        # re-request the URL once token_ttl_seconds has elapsed.
+        result["token_sha256_prefix"] = hashlib.sha256(ws_token.encode()).hexdigest()[:8]
+        result["token_ttl_seconds"] = 600
     if console_type in ("vnc",):
         result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
     return result

@@ -192,6 +192,33 @@ async def create_ethernet_switch_nio(
     return nio.asdict()
 
 
+@router.put(
+    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/nio",
+    status_code=status.HTTP_201_CREATED,
+    response_model=schemas.UDPNIO,
+)
+async def update_ethernet_switch_nio(
+        *,
+        adapter_number: int = Path(..., ge=0, le=0),
+        port_number: int,
+        nio_data: schemas.UDPNIO,
+        node: EthernetSwitch = Depends(dep_node)
+) -> schemas.UDPNIO:
+    """
+    Update a NIO (Network Input/Output) on the node: re-apply the packet
+    filters and traffic-insight markers carried by the NIO onto the port's
+    uBridge relay. The adapter number on the switch is always 0.
+    """
+
+    nio = node.get_nio(port_number)
+    nio.filters.clear()
+    if nio_data.filters:
+        nio.filters = nio_data.filters
+    nio.markers = nio_data.markers or {}
+    await node.update_nio(port_number, nio)
+    return nio.asdict()
+
+
 @router.delete("/{node_id}/adapters/{adapter_number}/ports/{port_number}/nio", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_ethernet_switch_nio(
         *,
@@ -257,3 +284,75 @@ async def stream_pcap_file(
     nio = node.get_nio(port_number)
     stream = Builtin.instance().stream_pcap_file(nio, node.project.id)
     return StreamingResponse(stream, media_type="application/vnd.tcpdump.pcap")
+
+
+@router.put("/{node_id}/markers/{marker_name}")
+async def toggle_ethernet_switch_marker(
+        marker_name: str,
+        toggle_data: schemas.MarkerToggle,
+        node: EthernetSwitch = Depends(dep_node)
+) -> dict:
+    """
+    Toggle a marker filter on/off without an NIO rebuild (ubridge contract §3.2).
+    """
+
+    if not any(n == marker_name for (n, lid) in node._marker_filter_bridges):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Marker '{marker_name}' is not installed on this node",
+        )
+    await node._ubridge_set_marker_filter_state(marker_name, toggle_data.enabled)
+    return {"marker_name": marker_name, "enabled": toggle_data.enabled}
+
+
+@router.post("/{node_id}/markers/pause", status_code=status.HTTP_204_NO_CONTENT)
+async def pause_ethernet_switch_markers(node: EthernetSwitch = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_pause()
+
+
+@router.post("/{node_id}/markers/resume", status_code=status.HTTP_204_NO_CONTENT)
+async def resume_ethernet_switch_markers(node: EthernetSwitch = Depends(dep_node)) -> None:
+
+    await node._ubridge_marker_resume()
+
+
+@router.delete(
+    "/{node_id}/adapters/{adapter_number}/ports/{port_number}/markers/{marker_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_ethernet_switch_marker_capture(
+        *,
+        marker_name: str,
+        adapter_number: int = Path(..., ge=0, le=0),
+        port_number: int,
+        link_id: str = "",
+        node: EthernetSwitch = Depends(dep_node)
+) -> None:
+    """
+    Delete a marker's capture pcap (called by the controller when the marker is
+    removed) so the file is cleaned up even with the switch stopped. Also drops
+    the marker from the port NIO's cached spec so a switch restart won't
+    reinstall it (and recreate an empty pcap). The adapter number is always 0.
+    """
+
+    nio = node.get_nio(port_number)
+    await node.delete_marker_capture(marker_name, link_id, nio)
+
+
+@router.put("/{node_id}/markers/{marker_name}/rebuild")
+async def rebuild_ethernet_switch_marker(
+        marker_name: str,
+        rebuild_data: schemas.MarkerRebuild,
+        node: EthernetSwitch = Depends(dep_node)
+) -> dict:
+    """
+    Re-install a single marker filter with new BPF/tag/direction (delete + add,
+    no bridge reset) so sibling markers' pcaps stay open.
+    """
+
+    await node.rebuild_marker_filter(
+        marker_name, rebuild_data.link_id, rebuild_data.bpf,
+        rebuild_data.tag, rebuild_data.direction, rebuild_data.enabled,
+    )
+    return {"marker_name": marker_name}

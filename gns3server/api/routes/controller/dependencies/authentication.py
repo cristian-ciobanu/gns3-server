@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import asyncio
+import hashlib
 import logging
 import bcrypt
 
@@ -176,7 +177,14 @@ async def get_current_active_user_from_websocket(
         return user
 
     except HTTPException as e:
-        err_msg = f"Could not authenticate while connecting to controller WebSocket: {e.detail}"
+        # Fingerprint the received token so clients can compare it against the fingerprint
+        # returned when the token was issued (e.g. token_sha256_prefix from the
+        # node_console_info MCP tool) and detect copy corruption on their side.
+        token_sha256_prefix = hashlib.sha256(token.encode()).hexdigest()[:8]
+        err_msg = (
+            f"Could not authenticate while connecting to controller WebSocket: {e.detail} "
+            f"(received token sha256 prefix: {token_sha256_prefix})"
+        )
         websocket_error = {"action": "log.error", "event": {"message": err_msg}}
         await websocket.send_json(websocket_error)
         log.error(err_msg)

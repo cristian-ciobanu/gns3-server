@@ -584,6 +584,12 @@ class Project:
         default_name_format = template.pop("default_name_format", "{name}-{0}")
         if name is None:
             name = default_name_format.replace("{name}", template_name)
+        # the appliance metadata stays template level: only the default
+        # credentials are seeded on the node (where they can be overridden)
+        appliance_metadata = template.pop("appliance_metadata", None) or {}
+        for field in ("default_username", "default_password"):
+            if appliance_metadata.get(field):
+                template[field] = appliance_metadata[field]
         node_id = str(uuid.uuid4())
         node = await self.add_node(compute, name, node_id, node_type=node_type, **template)
         return node
