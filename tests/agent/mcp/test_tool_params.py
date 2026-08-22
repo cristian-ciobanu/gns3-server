@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-MCP_DIR = Path(__file__).resolve().parents[4] / "gns3server" / "api" / "routes" / "mcp"
+MCP_DIR = Path(__file__).resolve().parents[3] / "gns3server" / "agent" / "mcp"
 TOOL_FILE = MCP_DIR / "__init__.py"
 
 HANDLER_FILES = {
