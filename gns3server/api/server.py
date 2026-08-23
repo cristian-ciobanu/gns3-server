@@ -51,7 +51,7 @@ from gns3server.core import tasks
 from gns3server.agent import MCP_AVAILABLE
 
 if MCP_AVAILABLE:
-    from gns3server.api.routes import mcp
+    from gns3server.agent import mcp
     _mcp_router = mcp.router
 else:
     from fastapi import APIRouter

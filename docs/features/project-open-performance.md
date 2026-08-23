@@ -113,14 +113,14 @@ if await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.enco
 |---------|--------|-------|------|
 | Node creation Pool | 5 | 100 | `controller/project.py` |
 | Link creation Pool | 5 | 100 | `controller/project.py` |
-| MCP BATCH_MAX_WORKERS | 10 | 100 | `api/routes/mcp/nodes.py` |
+| MCP BATCH_MAX_WORKERS | 10 | 100 | `agent/mcp/nodes.py` |
 | MCP HTTP timeout | 10s | 30s | `agent/gns3_copilot/gns3_client/custom_gns3fy.py` |
 | HTTP connection pool | 10 (default) | 500/1000 | `agent/gns3_copilot/gns3_client/custom_gns3fy.py` |
 | Start nodes Pool | 3 | 3 (unchanged) | `controller/project.py` |
 
 ### 8. MCP Auth Returns JWT
 
-**File:** `gns3server/api/routes/mcp/__init__.py`
+**File:** `gns3server/agent/mcp/__init__.py`
 
 When an MCP client connects with an API key, the `_resolve_token` function validates the key then returns a fresh short-lived JWT instead of the raw API key. The JWT is stored in a `ContextVar` and reused for all subsequent tool calls within the same SSE session — zero extra bcrypt.
 
@@ -141,8 +141,8 @@ if user:
 | `gns3server/controller/udp_link.py` | Pre-allocated port consumption |
 | `gns3server/api/routes/controller/api_keys.py` | O(1) key format |
 | `gns3server/api/routes/controller/dependencies/authentication.py` | O(1) auth + thread pool bcrypt |
-| `gns3server/api/routes/mcp/__init__.py` | Auth returns JWT, tool enhancements |
-| `gns3server/api/routes/mcp/nodes.py` | fields filter, inherited template_id, name passthrough |
-| `gns3server/api/routes/mcp/links.py` | fields filter, compact array format |
+| `gns3server/agent/mcp/__init__.py` | Auth returns JWT, tool enhancements |
+| `gns3server/agent/mcp/nodes.py` | fields filter, inherited template_id, name passthrough |
+| `gns3server/agent/mcp/links.py` | fields filter, compact array format |
 | `gns3server/agent/gns3_copilot/gns3_client/custom_gns3fy.py` | Timeout 30s, connection pool 500/1000 |
 | `gns3server/utils/images.py` | md5sum cache error → warning |

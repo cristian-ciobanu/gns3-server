@@ -85,7 +85,10 @@ MCP_AVAILABLE = False
 
 # Try to import MCP dependencies
 try:
-    import mcp.server.fastmcp  # noqa: F401 — test import only
+    # Use importlib so the top-level SDK name "mcp" is not bound in this
+    # namespace — it would shadow the gns3server.agent.mcp subpackage.
+    import importlib
+    importlib.import_module("mcp.server.fastmcp")
     MCP_AVAILABLE = True
 except ImportError:
     # MCP dependencies not installed, disable MCP feature

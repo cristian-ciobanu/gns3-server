@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-MCP_DIR = Path(__file__).resolve().parents[4] / "gns3server" / "api" / "routes" / "mcp"
+MCP_DIR = Path(__file__).resolve().parents[3] / "gns3server" / "agent" / "mcp"
 TOOL_FILE = MCP_DIR / "__init__.py"
 
 HANDLER_FILES = {
@@ -63,6 +63,8 @@ HANDLER_FILES = {
     "start_capture_handler": "links.py",
     "stop_capture_handler": "links.py",
     "download_capture_file_handler": "links.py",
+    "link_marker_handler": "links.py",
+    "marker_definition_handler": "links.py",
     "list_templates_handler": "templates.py",
     "get_template_handler": "templates.py",
     "create_template_handler": "templates.py",
@@ -115,10 +117,19 @@ def _get_handler_params(handler_name):
 
     params = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if node.name != handler_name:
             continue
+        # A handler that forwards params.items() generically (e.g. building the
+        # request body from all params) accepts any key — return a wildcard and
+        # let the caller skip static consistency checks for it.
+        for sub in ast.walk(node):
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "items"
+                    and isinstance(sub.func.value, ast.Name)
+                    and sub.func.value.id in ("params", "params_data")):
+                return {"*"}
         # Found the handler function, search for params.get("xxx")
         for sub in ast.walk(node):
             if not isinstance(sub, ast.Call):
@@ -134,89 +145,83 @@ def _get_handler_params(handler_name):
     return params
 
 
-def _get_tool_params(tool_name, tool_file=TOOL_FILE):
-    """Parse __init__.py and extract params passed to _run_handler_sync for a given tool.
-
-    Returns the dict literal keys from the _run_handler_sync call.
-    """
-    tree = ast.parse(tool_file.read_text())
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        if node.name != tool_name:
-            continue
-
-        # Search for _run_handler_sync calls inside this function
-        for sub in ast.walk(node):
-            if not isinstance(sub, ast.Call):
-                continue
-            if not hasattr(sub.func, "id") or sub.func.id != "_run_handler_sync":
-                continue
-            # _run_handler_sync(handler, {dict}) or _run_handler_sync(handler, params)
-            if len(sub.args) >= 2:
-                second_arg = sub.args[1]
-                if isinstance(second_arg, ast.Dict):
-                    keys = set()
-                    for k in second_arg.keys:
-                        if isinstance(k, ast.Constant) and isinstance(k.value, str):
-                            keys.add(k.value)
-                    return keys
-                elif isinstance(second_arg, ast.Name) and second_arg.id == "params":
-                    return {"*params*"}  # special marker for all params passed through
-    return None
-
-
 def test_handler_params_all_readable():
     """Every handler registered in __init__.py should have a corresponding file."""
-    # Extract all handler names from __init__.py by looking for _run_handler_sync calls
+    # Extract all handler names from __init__.py by looking for dispatch calls
     tree = ast.parse(TOOL_FILE.read_text())
     handlers_found = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and hasattr(node.func, "id") and node.func.id == "_run_handler_sync":
-            if node.args and isinstance(node.args[0], ast.Name):
-                handlers_found.add(node.args[0].id)
+        if not isinstance(node, ast.Call):
+            continue
+        handler_name, _ = _dispatch_args(node)
+        if handler_name:
+            handlers_found.add(handler_name)
 
     unknown = [h for h in handlers_found if h not in HANDLER_FILES]
     assert not unknown, f"Handlers not mapped in HANDLER_FILES: {unknown}"
 
 
-def _get_tool_fn_name(handler_name):
-    """Reverse lookup: find which MCP tool function calls this handler."""
-    tree = ast.parse(TOOL_FILE.read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and hasattr(node.func, "id") and node.func.id == "_run_handler_sync":
-            if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == handler_name:
-                # Find enclosing function
-                for parent in ast.walk(tree):
-                    if isinstance(parent, ast.FunctionDef):
-                        for child in ast.walk(parent):
-                            if child is node:
-                                return parent.name
+def _dict_literal_keys(d):
+    """String keys of an ast.Dict literal (non-constant keys like **spread are skipped)."""
+    keys = set()
+    for k in d.keys:
+        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+            keys.add(k.value)
+    return keys
+
+
+def _initial_params_keys(fn_node):
+    """Keys of the initial 'params = {...}' dict literal inside a tool function, or None.
+
+    Conditional additions (params["k"] = v) after the literal are not included.
+    """
+    for stmt in ast.walk(fn_node):
+        if isinstance(stmt, ast.Assign):
+            if (len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
+                    and stmt.targets[0].id == "params" and isinstance(stmt.value, ast.Dict)):
+                return _dict_literal_keys(stmt.value)
     return None
+
+
+def _dispatch_args(node):
+    """Extract (handler_name, payload_arg) from a handler dispatch call.
+
+    Matches both forms used by tools:
+      - _run_handler_sync(handler, payload)
+      - asyncio.to_thread(_run_handler_sync, handler, payload)
+    Returns (None, None) if the call is neither.
+    """
+    if isinstance(node.func, ast.Name) and node.func.id == "_run_handler_sync":
+        args = node.args
+    elif (isinstance(node.func, ast.Attribute) and node.func.attr == "to_thread"
+            and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == "_run_handler_sync"):
+        args = node.args[1:]
+    else:
+        return None, None
+    if len(args) < 2 or not isinstance(args[0], ast.Name):
+        return None, None
+    return args[0].id, args[1]
 
 
 def test_tool_handler_param_consistency():
     """For each tool, the params passed to the handler should match what the handler reads."""
     tree = ast.parse(TOOL_FILE.read_text())
 
-    # Collect all _run_handler_sync calls with dict literals
+    # Group dispatch calls by (tool, handler): a tool may dispatch the same
+    # handler from multiple branches (e.g. node_create single/batch modes),
+    # each passing only its branch's keys — the union covers all of them.
+    groups = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not hasattr(node.func, "id") or node.func.id != "_run_handler_sync":
-            continue
-        if len(node.args) < 2:
-            continue
-
-        handler_name = node.args[0].id if isinstance(node.args[0], ast.Name) else None
+        handler_name, second_arg = _dispatch_args(node)
         if not handler_name:
             continue
 
         # Find the tool function name (enclosing function)
         tool_name = None
         for parent in ast.walk(tree):
-            if isinstance(parent, ast.FunctionDef):
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for child in ast.walk(parent):
                     if child is node:
                         tool_name = parent.name
@@ -224,31 +229,50 @@ def test_tool_handler_param_consistency():
         if not tool_name:
             continue
 
-        second_arg = node.args[1]
+        exact = False
         if isinstance(second_arg, ast.Dict):
-            passed_keys = set()
-            for k in second_arg.keys:
-                if isinstance(k, ast.Constant) and isinstance(k.value, str):
-                    passed_keys.add(k.value)
+            passed_keys = _dict_literal_keys(second_arg)
+            exact = True
+        elif isinstance(second_arg, ast.Name) and second_arg.id == "params":
+            # Tool builds 'params' as a variable — resolve its initial dict literal.
+            fn = next((n for n in ast.walk(tree)
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == tool_name), None)
+            passed_keys = _initial_params_keys(fn) if fn is not None else None
+        else:
+            passed_keys = None
+        if not passed_keys:
+            continue
 
-            handler_params = _get_handler_params(handler_name)
-            if handler_params is None:
-                continue
+        group = groups.setdefault((tool_name, handler_name), {"passed": set(), "exact": False})
+        group["passed"] |= passed_keys
+        group["exact"] = group["exact"] or exact
 
-            # Check: every passed key is read by the handler
-            extra_passed = passed_keys - handler_params
-            assert not extra_passed, (
-                f"[{tool_name}] Params passed to handler '{handler_name}' but not read: {extra_passed}"
+    for (tool_name, handler_name), group in groups.items():
+        handler_params = _get_handler_params(handler_name)
+        if handler_params is None or "*" in handler_params:
+            continue
+
+        passed_keys = group["passed"]
+
+        # Check: every passed key is read by the handler
+        extra_passed = passed_keys - handler_params
+        assert not extra_passed, (
+            f"[{tool_name}] Params passed to handler '{handler_name}' but not read: {extra_passed}"
+        )
+
+        if not group["exact"]:
+            # The initial literal underestimates what the tool passes (keys may be
+            # added conditionally), so only the extra-passed direction is checked.
+            continue
+
+        # Check: every handler param is passed (except common/optional ones)
+        missing = handler_params - passed_keys
+        # Filter out well-known optional params that handlers check
+        known_optional = {"fields", "template", "name", "version", "compute_id",
+                         "x", "y", "link_type", "filters", "suspend", "link_style",
+                         "show_filters_icon", "label"}
+        truly_missing = missing - known_optional
+        if truly_missing:
+            pytest.fail(
+                f"[{tool_name}] Handler '{handler_name}' reads params not passed: {truly_missing}"
             )
-
-            # Check: every handler param is passed (except common/optional ones)
-            missing = handler_params - passed_keys
-            # Filter out well-known optional params that handlers check
-            known_optional = {"fields", "template", "name", "version", "compute_id",
-                             "x", "y", "link_type", "filters", "suspend", "link_style",
-                             "show_filters_icon", "label"}
-            truly_missing = missing - known_optional
-            if truly_missing:
-                pytest.fail(
-                    f"[{tool_name}] Handler '{handler_name}' reads params not passed: {truly_missing}"
-                )

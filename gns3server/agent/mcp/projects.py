@@ -66,7 +66,10 @@ def create_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> 
     if not name:
         return {"error": "name is required"}
     conn = _get_connector(gns3_ctx)
-    return conn.http_call("post", f"{conn.base_url}/projects", json_data={"name": name}).json()
+    json_data: dict[str, Any] = {"name": name}
+    if params.get("auto_close") is not None:
+        json_data["auto_close"] = params["auto_close"]
+    return conn.http_call("post", f"{conn.base_url}/projects", json_data=json_data).json()
 
 
 def delete_project_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:

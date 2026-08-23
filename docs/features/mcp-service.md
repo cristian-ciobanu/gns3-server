@@ -471,10 +471,10 @@ websocat ws://192.168.1.3:3080/v3/projects/{project_id}/nodes/{node_id}/console/
 
 | File | Purpose |
 |------|---------|
-| `gns3server/api/routes/mcp/__init__.py` | FastMCP server, tool decorators, SSE transport, JWT auth wrapper |
-| `gns3server/api/routes/mcp/projects.py` | Project tool handlers |
-| `gns3server/api/routes/mcp/nodes.py` | Node tool handlers |
-| `gns3server/api/routes/mcp/links.py` | Link tool handlers |
-| `gns3server/api/routes/mcp/templates.py` | Template tool handlers |
-| `gns3server/api/routes/mcp/computes.py` | Compute tool handlers |
+| `gns3server/agent/mcp/__init__.py` | FastMCP server, tool decorators, SSE transport, JWT auth wrapper |
+| `gns3server/agent/mcp/projects.py` | Project tool handlers |
+| `gns3server/agent/mcp/nodes.py` | Node tool handlers |
+| `gns3server/agent/mcp/links.py` | Link tool handlers |
+| `gns3server/agent/mcp/templates.py` | Template tool handlers |
+| `gns3server/agent/mcp/computes.py` | Compute tool handlers |
 | `gns3server/api/server.py` | Mounts MCP routes via `register_starlette_routes()` |
