@@ -27,12 +27,12 @@ from pydantic import (
     field_validator,
     model_validator
 )
-from typing import List
+from typing import List, Optional
 
 
 class ControllerSettings(BaseModel):
 
-    jwt_secret_key: str = Field(
+    jwt_secret_key: Optional[str] = Field(
         None,
         description="Secret key used to sign the JWT authentication tokens "
                     "(normally managed via the secrets directory, not the configuration file)")
@@ -72,7 +72,7 @@ class DynamipsSettings(BaseModel):
 
 class IOUSettings(BaseModel):
 
-    iourc_path: str = Field(
+    iourc_path: Optional[str] = Field(
         None, description="Path of your .iourc file, the file is searched in $HOME/.iourc if not provided")
     license_check: bool = Field(
         True,
@@ -99,13 +99,13 @@ class QemuSettings(BaseModel):
 
 class VirtualBoxSettings(BaseModel):
 
-    vboxmanage_path: str = None
+    vboxmanage_path: Optional[str] = None
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 
 
 class VMwareSettings(BaseModel):
 
-    vmrun_path: str = None
+    vmrun_path: Optional[str] = None
     vmnet_start_range: int = Field(2, ge=1, le=255)
     vmnet_end_range: int = Field(255, ge=1, le=255)  # should be limited to 19 on Windows
     block_host_traffic: bool = False
@@ -174,17 +174,17 @@ class ServerSettings(BaseModel):
         ServerProtocol.http, description="Protocol used by the server: http or https")
     host: str = Field("0.0.0.0", description="IP address where the server listens for connections")
     port: int = Field(3080, gt=0, le=65535, description="HTTP port used to control the server")
-    secrets_dir: DirectoryPath = Field(
+    secrets_dir: Optional[DirectoryPath] = Field(
         None, description="Directory where secrets are stored (e.g. the JWT secret key)")
-    certfile: FilePath = Field(None, description="SSL certificate file, requires enable_ssl")
-    certkey: FilePath = Field(None, description="SSL key file, requires enable_ssl")
+    certfile: Optional[FilePath] = Field(None, description="SSL certificate file, requires enable_ssl")
+    certkey: Optional[FilePath] = Field(None, description="SSL key file, requires enable_ssl")
     enable_ssl: bool = Field(False, description="Enable SSL encryption")
     images_path: str = Field("~/GNS3/images", description="Path where binary images are stored")
     projects_path: str = Field("~/GNS3/projects", description="Path where user projects are stored")
     appliances_path: str = Field("~/GNS3/appliances", description="Path where custom user appliances are stored")
     symbols_path: str = Field("~/GNS3/symbols", description="Path where custom user symbols are stored")
     configs_path: str = Field("~/GNS3/configs", description="Path where custom user configs are stored")
-    resources_path: str = Field(
+    resources_path: Optional[str] = Field(
         None,
         description="Path where files like built-in appliances and Docker resources are stored "
                     "(defaults to the local user data directory)")
@@ -235,7 +235,7 @@ class ServerSettings(BaseModel):
         default_factory=list,
         description="Only allow these interfaces to be used by GNS3, for the Cloud node for example "
                     "(comma-separated; do not forget virbr0 for the NAT node to work)")
-    default_nat_interface: str = Field(
+    default_nat_interface: Optional[str] = Field(
         None, description="Interface used by the NAT node, default is virbr0 on Linux (requires libvirt)")
     allow_remote_console: bool = Field(
         False,
