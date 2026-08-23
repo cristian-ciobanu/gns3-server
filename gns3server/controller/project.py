@@ -1685,6 +1685,14 @@ class Project:
     def _topology_file(self):
         return os.path.join(self.path, self._filename)
 
+    @property
+    def topology_file(self):
+        """
+        Absolute path of the .gns3 topology file
+        """
+
+        return self._topology_file()
+
     @locking
     async def open(self, auto_start=True):
         """

@@ -746,6 +746,21 @@ async def get_file(file_path: str, project: Project = Depends(dep_project)) -> F
     return FileResponse(path, media_type="application/octet-stream")
 
 
+@router.get("/{project_id}/gns3file", dependencies=[Depends(has_privilege("Project.Audit"))])
+async def get_project_gns3_file(project: Project = Depends(dep_project)) -> FileResponse:
+    """
+    Return the .gns3 topology file of a project.
+
+    Required privilege: Project.Audit
+    """
+
+    path = project.topology_file
+    if not os.path.exists(path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    return FileResponse(path, media_type="application/json")
+
+
 @router.post(
     "/{project_id}/files/{file_path:path}",
     status_code=status.HTTP_204_NO_CONTENT,
