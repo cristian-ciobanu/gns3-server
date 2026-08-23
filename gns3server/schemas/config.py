@@ -43,10 +43,12 @@ class ControllerSettings(BaseModel):
         43200, description="Lifetime of the JWT refresh tokens in minutes (30 days by default)")
     default_admin_username: str = Field(
         "admin",
-        description="Initial default super admin username, cannot be changed once the controller has started once")
+        description="Username of the super admin account seeded when the controller database is created; "
+                    "changing it has no effect until the database is re-created (which resets the account)")
     default_admin_password: SecretStr = Field(
         SecretStr("admin"),
-        description="Initial default super admin password, cannot be changed once the controller has started once")
+        description="Password of the super admin account seeded when the controller database is created; "
+                    "changing it has no effect until the database is re-created (which resets the account)")
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
 
 
