@@ -51,9 +51,23 @@ class TestProject:
     def test_create(self, ctx):
         from gns3server.agent.mcp.projects import create_project_handler
         with patch(f"{BASE}.{self.mod}._get_connector") as m:
-            m.return_value = _mock_conn({"project_id": "p1"})
-            result = create_project_handler({"name": "New"}, ctx)
+            conn = _mock_conn({"project_id": "p1"})
+            m.return_value = conn
+            result = create_project_handler({"name": "New", "auto_close": False}, ctx)
             assert result["project_id"] == "p1"
+            conn.http_call.assert_called_once_with(
+                "post", f"{conn.base_url}/projects", json_data={"name": "New", "auto_close": False}
+            )
+
+    def test_create_without_auto_close(self, ctx):
+        from gns3server.agent.mcp.projects import create_project_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"project_id": "p2"})
+            m.return_value = conn
+            create_project_handler({"name": "New"}, ctx)
+            conn.http_call.assert_called_once_with(
+                "post", f"{conn.base_url}/projects", json_data={"name": "New"}
+            )
 
     def test_delete(self, ctx):
         from gns3server.agent.mcp.projects import delete_project_handler
