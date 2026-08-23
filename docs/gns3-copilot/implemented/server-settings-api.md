@@ -25,6 +25,7 @@ flowchart LR
 ```
 
 - **Exposure** — all sections except the deprecated `VirtualBox`/`VMware`: `Server`, `Controller`, `VPCS`, `Dynamips`, `IOU`, `Qemu`, `WebWireshark`. `Controller.jwt_secret_key` is excluded entirely: it is loaded from `<secrets_dir>/gns3_jwt_secret_key` and writing it to the configuration file is a no-op.
+- **Schema metadata** — every field carries a pydantic `description`, default value and validation bounds. They flow into `/openapi.json` (the `SettingsResponse` component), so clients can render the settings form — labels, tooltips, initial values, input validation — from the OpenAPI schema alone, without maintaining a field table. The human-readable annotated reference is `gns3server/config_samples/gns3_server.conf`, kept in sync with the schema.
 - **Write strategy** — `Config.update_config()` re-reads the configuration files with `configparser`, applies only the submitted options, and atomically rewrites the main configuration file. Comments and formatting are lost (accepted trade-off); options unknown to the schema are preserved.
 - **Validate before write** — the merged view of all configuration files is validated as `ServerConfig` *before* any disk write. A validation error must never reach disk: the `FileWatcher` reload callback would raise and permanently stop polling that file.
 
@@ -101,3 +102,4 @@ Response example (abbreviated):
 | `gns3server/schemas/controller/settings.py` | response/update models, `SECRET_MASK` |
 | `gns3server/api/routes/controller/settings.py` | GET/PUT endpoints, `restart_required`, notification |
 | `gns3server/db/models/privileges.py` | `Server.Audit` / `Server.Modify` privilege seeds |
+| `gns3server/config_samples/gns3_server.conf` | annotated sample configuration, human-readable reference kept in sync with the schema |
