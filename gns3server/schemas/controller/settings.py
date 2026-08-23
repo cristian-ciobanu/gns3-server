@@ -50,24 +50,33 @@ class ServerSettingsResponse(ServerSettings):
 
     # plain strings instead of FilePath/DirectoryPath: paths are validated when
     # the settings are loaded or updated, not when echoed back to the client
-    secrets_dir: Optional[str] = None
-    certfile: Optional[str] = None
-    certkey: Optional[str] = None
+    secrets_dir: Optional[str] = Field(
+        None, description="Directory where secrets are stored (e.g. the JWT secret key)")
+    certfile: Optional[str] = Field(None, description="SSL certificate file, requires enable_ssl")
+    certkey: Optional[str] = Field(None, description="SSL key file, requires enable_ssl")
     # Optional overrides: typed as plain "str = None" in the config schema,
     # which fails re-validation when the value actually is None
-    resources_path: Optional[str] = None
-    default_nat_interface: Optional[str] = None
+    resources_path: Optional[str] = Field(
+        None,
+        description="Path where files like built-in appliances and Docker resources are stored "
+                    "(defaults to the local user data directory)")
+    default_nat_interface: Optional[str] = Field(
+        None, description="Interface used by the NAT node, default is virbr0 on Linux (requires libvirt)")
 
 
 class ControllerSettingsResponse(ControllerSettings):
 
     # never serialized: managed via the secrets directory, not the configuration file
-    jwt_secret_key: Optional[str] = Field(default=None, exclude=True)
+    jwt_secret_key: Optional[str] = Field(
+        default=None, exclude=True,
+        description="Secret key used to sign the JWT authentication tokens "
+                    "(normally managed via the secrets directory, not the configuration file)")
 
 
 class IOUSettingsResponse(IOUSettings):
 
-    iourc_path: Optional[str] = None
+    iourc_path: Optional[str] = Field(
+        None, description="Path of your .iourc file, the file is searched in $HOME/.iourc if not provided")
 
 
 class SettingsResponse(BaseModel):
