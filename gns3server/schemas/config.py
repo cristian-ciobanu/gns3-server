@@ -202,28 +202,36 @@ class ServerSettings(BaseModel):
     def split_mcp_allowed_hosts(cls, v):
         if v and isinstance(v, str):
             return v.split(",")
-        return list()
+        if not v:
+            return list()
+        return v
 
     @field_validator("mcp_allowed_origins", mode="before")
     @classmethod
     def split_mcp_allowed_origins(cls, v):
         if v and isinstance(v, str):
             return v.split(",")
-        return list()
+        if not v:
+            return list()
+        return v
 
     @field_validator("additional_images_paths", mode="before")
     @classmethod
     def split_additional_images_paths(cls, v):
-        if v:
+        if v and isinstance(v, str):
             return v.split(";")
-        return list()
+        if not v:
+            return list()
+        return v
 
     @field_validator("allowed_interfaces", mode="before")
     @classmethod
     def split_allowed_interfaces(cls, v):
-        if v:
+        if v and isinstance(v, str):
             return v.split(",")
-        return list()
+        if not v:
+            return list()
+        return v
 
     @model_validator(mode="after")
     def check_console_port_range(self) -> "ServerSettings":
