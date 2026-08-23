@@ -62,6 +62,7 @@ from . import pools
 from . import privileges
 from . import api_keys
 from . import netmiko
+from . import settings
 
 from .dependencies.authentication import get_current_active_user
 
@@ -70,6 +71,12 @@ router = APIRouter()
 router.include_router(
     controller.router,
     tags=["Controller"]
+)
+
+router.include_router(
+    settings.router,
+    prefix="/settings",
+    tags=["Server settings"]
 )
 
 router.include_router(

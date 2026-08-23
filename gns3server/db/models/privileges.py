@@ -238,6 +238,14 @@ def create_default_roles(target, connection, **kw):
         {
             "description": "Update an LLM model configuration",
             "name": "LLMConfig.Modify"
+        },
+        {
+            "description": "View server settings",
+            "name": "Server.Audit"
+        },
+        {
+            "description": "Update server settings",
+            "name": "Server.Modify"
         }
     ]
 
