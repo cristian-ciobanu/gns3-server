@@ -435,8 +435,43 @@ class TestControllerProjectRoutes:
     
         response = await client.get(app.url_path_for("get_file", project_id=project.id, file_path="../hello"))
         assert response.status_code == status.HTTP_404_NOT_FOUND
-    
-    
+
+
+    async def test_get_project_gns3_file(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
+
+        response = await client.get(app.url_path_for("get_project_gns3_file", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.headers["content-type"].startswith("application/json")
+        topology = response.json()
+        assert topology["name"] == "test"
+        assert "topology" in topology
+
+
+    async def test_get_project_gns3_file_raw_content(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
+
+        # the endpoint must serve the raw file content, without the project being opened
+        topology = {
+            "name": "test",
+            "topology": {
+                "nodes": [{"node_id": "abc", "name": "n1", "x": 10, "y": 20}],
+                "links": [],
+                "drawings": [{"drawing_id": "def", "svg": "<svg/>"}],
+            },
+        }
+        with open(project.topology_file, "w+") as f:
+            json.dump(topology, f)
+
+        response = await client.get(app.url_path_for("get_project_gns3_file", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == topology
+
+
+    async def test_get_project_gns3_file_project_not_found(self, app: FastAPI, client: AsyncClient) -> None:
+
+        response = await client.get(app.url_path_for("get_project_gns3_file", project_id=str(uuid.uuid4())))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
     async def test_get_file_forbidden_location(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
     
         file_path = "foo/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd"
