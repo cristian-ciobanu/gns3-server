@@ -56,6 +56,7 @@ except ImportError:
     pass
 
 from .controller.rbac import RoleCreate, RoleUpdate, Role, Privilege, ACECreate, ACEUpdate, ACE
+from .controller.settings import SettingsResponse, SettingsUpdate, SettingsUpdateResponse
 from .controller.pools import Resource, ResourceCreate, ResourcePoolCreate, ResourcePoolUpdate, ResourcePool
 from .controller.tokens import Token, ApiKeyCreate, RefreshTokenRequest
 from .controller.snapshots import SnapshotCreate, Snapshot
