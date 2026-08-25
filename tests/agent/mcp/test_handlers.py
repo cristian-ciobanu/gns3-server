@@ -523,6 +523,36 @@ class TestTemplate:
             assert "deleted" in str(result).lower()
 
 
+# ── Image ───────────────────────────────────────────────────────────────
+
+
+class TestImage:
+
+    mod = "images"
+
+    def test_install_manifest(self, ctx):
+        from gns3server.agent.mcp.images import install_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({
+                "created": [{"template_id": "t1", "name": "Empty VM", "version": "100G", "template_type": "qemu"}],
+                "skipped": [{"name": "csr1000v.qcow2", "reason": "image is already used by one or more templates"}],
+            })
+            m.return_value = conn
+            result = install_images_handler({}, ctx)
+            assert result["created"][0]["name"] == "Empty VM"
+            assert result["skipped"][0]["name"] == "csr1000v.qcow2"
+
+    def test_install_empty_body(self, ctx):
+        from gns3server.agent.mcp.images import install_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn()
+            conn.http_call.return_value.content = b""
+            conn.http_call.return_value.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+            m.return_value = conn
+            result = install_images_handler({}, ctx)
+            assert result == {"message": "Image installation completed"}
+
+
 # ── Marker (traffic-insight) ────────────────────────────────────────────
 
 

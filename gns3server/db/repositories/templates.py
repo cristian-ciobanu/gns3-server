@@ -71,6 +71,17 @@ class TemplatesRepository(BaseRepository):
         result = await self._db_session.execute(query)
         return result.scalars().first()
 
+    async def get_template_by_name(self, name: str) -> Union[None, models.Template]:
+        """
+        Return the first template with this name, regardless of version.
+        """
+
+        query = select(models.Template).\
+            options(selectinload(models.Template.images)).\
+            where(models.Template.name == name)
+        result = await self._db_session.execute(query)
+        return result.scalars().first()
+
     async def get_templates(self) -> List[models.Template]:
 
         query = select(models.Template).options(selectinload(models.Template.images))

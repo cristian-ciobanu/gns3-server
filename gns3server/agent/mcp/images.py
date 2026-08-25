@@ -72,6 +72,9 @@ def prune_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def install_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    # Returns 204 No Content on success (empty body, no .json())
-    conn.http_call("post", f"{conn.base_url}/images/install")
+    response = conn.http_call("post", f"{conn.base_url}/images/install")
+    if response.content:
+        # the install endpoint reports which templates were created or skipped
+        return response.json()
+    # tolerate an empty body in case an older server still replies with 204
     return {"message": "Image installation completed"}

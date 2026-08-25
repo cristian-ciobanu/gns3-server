@@ -1435,7 +1435,9 @@ async def image_install() -> list[dict[str, Any]]:
 
     This is NOT for downloading images. Images must be uploaded first (via the GNS3 Web UI).
     If an uploaded image matches a known appliance, a template is automatically created.
-    Images already referenced by existing templates are skipped.
+    Returns {"created": [...], "skipped": [...]}: images already referenced by existing
+    templates are skipped, and no template is auto-created when one with the same name
+    already exists (regardless of version).
     """
     return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
 

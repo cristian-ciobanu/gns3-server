@@ -245,11 +245,16 @@ class ApplianceManager:
             rbac_repo: RbacRepository,
             current_user: schemas.User,
             image_dir: str
-    ) -> None:
+    ) -> List[dict]:
         """
-        Install appliances using an image checksum
+        Install appliances using an image checksum.
+
+        Returns a manifest of what happened: one entry per attempted template,
+        either {"status": "created", ...template fields} or
+        {"status": "skipped", "name", "reason"}.
         """
 
+        results: List[dict] = []
         appliances_info = self._find_appliances_from_image_checksum(image_checksum)
         for appliance, image_version in appliances_info:
             try:
@@ -257,15 +262,48 @@ class ApplianceManager:
                 ApplianceModel.model_validate(appliance.asdict())
             except ValidationError as e:
                 log.warning(f"Could not validate appliance '{appliance.id}': {e}")
+                results.append({
+                    "status": "skipped",
+                    "name": appliance.name,
+                    "reason": f"could not validate appliance '{appliance.id}': {e}",
+                })
+                continue
             if appliance.versions:
                 for version in appliance.versions:
                     if version.get("name") == image_version:
                         try:
                             await self._find_appliance_version_images(appliance, version, images_repo, image_dir)
                             template_data = await self._appliance_to_template(appliance, version)
-                            await self._create_template(template_data, templates_repo, rbac_repo, current_user)
+                            name = template_data.get("name")
+                            existing = await templates_repo.get_template_by_name(name) if name else None
+                            if existing is not None:
+                                # never automatically create a second template with the same
+                                # name: the name+version check in TemplatesService would allow
+                                # duplicates when the appliance version differs, but two
+                                # templates sharing a name is never what the user asked for here
+                                log.warning(f"Template '{name}' already exists, skipping automatic template creation")
+                                results.append({
+                                    "status": "skipped",
+                                    "name": name,
+                                    "reason": f"a template named '{name}' already exists",
+                                })
+                                continue
+                            template = await self._create_template(template_data, templates_repo, rbac_repo, current_user)
+                            results.append({
+                                "status": "created",
+                                "template_id": str(template.get("template_id")),
+                                "name": template.get("name"),
+                                "version": template.get("version"),
+                                "template_type": template.get("template_type"),
+                            })
                         except (ControllerError, InvalidImageError) as e:
                             log.warning(f"Could not automatically create template using image '{image_path}': {e}")
+                            results.append({
+                                "status": "skipped",
+                                "name": appliance.name,
+                                "reason": str(e),
+                            })
+        return results
 
     async def install_appliance(
             self,
