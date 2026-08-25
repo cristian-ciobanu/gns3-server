@@ -204,9 +204,9 @@ class ApplianceManager:
                                 else:
                                     raise ControllerError(f"Could not find '{appliance_file}'")
 
-    async def _create_template(self, template_data, templates_repo, rbac_repo, current_user):
+    async def _create_template(self, template_data, templates_repo, rbac_repo, current_user) -> dict:
         """
-        Create a new template
+        Create a new template and return it as a dict.
         """
 
         try:
@@ -217,6 +217,7 @@ class ApplianceManager:
         #template_id = template.get("template_id")
         #await rbac_repo.add_permission_to_user_with_path(current_user.user_id, f"/templates/{template_id}/*")
         log.info(f"Template '{template.get('name')}' has been created")
+        return template
 
     async def _appliance_to_template(self, appliance: Appliance, version: str = None) -> dict:
         """

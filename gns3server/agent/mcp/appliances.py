@@ -85,5 +85,13 @@ def install_appliance_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) 
     version = params.get("version")
     if version:
         request_params["version"] = version
-    result = conn.http_call("post", url, params=request_params).json()
-    return {"message": f"Appliance {appliance_id} installation requested", "result": result}
+    response = conn.http_call("post", url, params=request_params)
+    result = {"message": f"Appliance {appliance_id} installed"}
+    if response.content:
+        # the install endpoint returns the created template (201); tolerate an
+        # empty body in case an older server still replies with 204
+        template = response.json()
+        result["template"] = {
+            k: template[k] for k in ("template_id", "name", "version", "template_type") if k in template
+        }
+    return result

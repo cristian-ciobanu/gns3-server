@@ -3,6 +3,8 @@ MCP handler unit tests with mocked Gns3Connector.
 
 Tests that handlers correctly transform tool parameters into HTTP calls.
 """
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +14,7 @@ def _mock_conn(json_result=None):
     conn = MagicMock()
     conn.base_url = "http://192.168.1.3:3080/v3"
     conn.http_call.return_value.json.return_value = json_result or {"status": "ok"}
+    conn.http_call.return_value.content = b"{}"  # non-empty body by default
     return conn
 
 
@@ -449,7 +452,7 @@ class TestAppliance:
     def test_install_with_version(self, ctx):
         from gns3server.agent.mcp.appliances import install_appliance_handler
         with patch(f"{BASE}.{self.mod}._get_connector") as m:
-            conn = _mock_conn({"status": "installed"})
+            conn = _mock_conn({"template_id": "t1", "name": "FRR", "version": "8.2.2", "template_type": "docker"})
             m.return_value = conn
             result = install_appliance_handler({
                 "appliance_id": "a1", "version": "2.7.0.356",
@@ -458,6 +461,22 @@ class TestAppliance:
                 "post", "http://192.168.1.3:3080/v3/appliances/a1/install",
                 params={"version": "2.7.0.356"},
             )
+            assert result["template"] == {
+                "template_id": "t1", "name": "FRR", "version": "8.2.2", "template_type": "docker",
+            }
+
+    def test_install_empty_body(self, ctx):
+        # a 204-style empty response must not blow up with a JSON decode error
+        # (the template is still created server-side)
+        from gns3server.agent.mcp.appliances import install_appliance_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn()
+            conn.http_call.return_value.content = b""
+            conn.http_call.return_value.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+            m.return_value = conn
+            result = install_appliance_handler({"appliance_id": "a1"}, ctx)
+            assert "template" not in result
+            assert result["message"] == "Appliance a1 installed"
 
     def test_install_missing_id(self, ctx):
         from gns3server.agent.mcp.appliances import install_appliance_handler
