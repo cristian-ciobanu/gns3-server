@@ -87,7 +87,8 @@ async def test_import_project_override(projects_dir, controller):
     override the previous keeping the same project id & location
     """
 
-    tmpdir = Path(projects_dir)
+    tmpdir = Path(projects_dir) / "override-location"
+    tmpdir.mkdir(parents=True, exist_ok=True)
     project_id = str(uuid.uuid4())
     topology = {
         "project_id": project_id,

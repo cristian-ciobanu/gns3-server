@@ -55,6 +55,11 @@ class TestControllerProjectRoutes:
     
         params = {"name": "test", "path": str(config.settings.Server.projects_path), "project_id": "00010203-0405-0607-0809-0a0b0c0d0e0f"}
         response = await client.post(app.url_path_for("create_project"), json=params)
+        # The projects directory itself must never become a project directory
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+        params = {"name": "test", "path": os.path.join(str(config.settings.Server.projects_path), "custom"), "project_id": "00010203-0405-0607-0809-0a0b0c0d0e0f"}
+        response = await client.post(app.url_path_for("create_project"), json=params)
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["name"] == "test"
         assert response.json()["project_id"] == "00010203-0405-0607-0809-0a0b0c0d0e0f"

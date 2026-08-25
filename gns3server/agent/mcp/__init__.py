@@ -61,7 +61,7 @@ from .projects import (
     get_project_stats_handler, update_project_handler, duplicate_project_handler,
     get_project_readme_handler, update_project_readme_handler,
     lock_project_handler, unlock_project_handler,
-    load_project_handler, get_locked_project_handler,
+    get_locked_project_handler,
 )
 from .server import (
     get_version_handler, get_statistics_handler,
@@ -1261,16 +1261,6 @@ async def project_locked(
     """Check whether a project is locked (preventing edits to drawings and nodes)."""
     return await asyncio.to_thread(_run_handler_sync, get_locked_project_handler, {
         "project_id": project_id,
-    })
-
-
-@mcp.tool()
-async def project_load(
-    path: Annotated[str, Field(description="Filesystem path to the .gns3 project file")],
-) -> list[dict[str, Any]]:
-    """Load a project from a file path on the server's filesystem."""
-    return await asyncio.to_thread(_run_handler_sync, load_project_handler, {
-        "path": path,
     })
 
 

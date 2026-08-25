@@ -471,6 +471,18 @@ class Project:
     @path.setter
     def path(self, path):
         check_path_allowed(path)
+
+        # The projects directory itself (or one of its ancestors) must
+        # never become a project directory: deleting such a "project"
+        # would wipe every project on the controller.
+        real_path = os.path.realpath(path)
+        real_projects_path = os.path.realpath(get_default_project_directory())
+        if os.path.commonpath([real_path, real_projects_path]) == real_path:
+            raise ControllerForbiddenError(
+                f"The project directory cannot be '{path}': it must be a subdirectory "
+                f"of '{real_projects_path}', not the projects directory itself or one of its parents"
+            )
+
         try:
             os.makedirs(path, exist_ok=True)
         except OSError as e:
@@ -1608,10 +1620,18 @@ class Project:
         await self._cleanup_web_wireshark_container()
 
         try:
-            project_directory = get_default_project_directory()
-            if not os.path.commonprefix([project_directory, self.path]) == project_directory:
+            project_directory = os.path.realpath(get_default_project_directory())
+            path = os.path.realpath(self.path)
+            if os.path.commonpath([path, project_directory]) != project_directory:
                 raise ControllerError(
                     f"Project '{self._name}' cannot be deleted because it is not in the default project directory: '{project_directory}'"
+                )
+            if path == project_directory:
+                # A poisoned or hand-crafted entry whose path is the
+                # projects root itself must never be deletable: rmtree
+                # would wipe every project on the controller.
+                raise ControllerError(
+                    f"Project '{self._name}' cannot be deleted because its directory is the projects directory itself: '{path}'"
                 )
             shutil.rmtree(self.path)
         except OSError as e:

@@ -96,7 +96,7 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 
 **82 tools** across 12 categories:
 
-### Project (15)
+### Project (14)
 
 | Tool | Description |
 |------|-------------|
@@ -113,7 +113,6 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `project_readme_update` | Update project README |
 | `project_lock` | Lock project (prevent edits) |
 | `project_unlock` | Unlock project |
-| `project_load` | Load project from path |
 | `project_locked` | Check if project is locked |
 
 ### Node (22)

@@ -36,7 +36,6 @@ HANDLER_FILES = {
     "lock_project_handler": "projects.py",
     "unlock_project_handler": "projects.py",
     "get_locked_project_handler": "projects.py",
-    "load_project_handler": "projects.py",
     "get_nodes_handler": API_HANDLERS_FILE,
     "get_node_handler": API_HANDLERS_FILE,
     "start_node_handler": API_HANDLERS_FILE,
