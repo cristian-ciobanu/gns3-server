@@ -31,7 +31,6 @@ import json
 import asyncio
 import logging
 import socket
-import uuid
 from uuid import UUID
 import bcrypt
 from typing import Any, Annotated
@@ -772,12 +771,12 @@ async def compute_list() -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def compute_get(
-    compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
+    compute_id: Annotated[str, Field(description="Compute ID: 'local' (default) for the built-in local compute, or a compute UUID from compute_list")] = "local",
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a registered remote compute node.
+    """Get detailed information about a compute node.
 
-    NOTE: Only works for computes registered in the database (returned by compute_list).
-    For the built-in local compute info, use server_statistics instead.
+    Accepts 'local' for the built-in local compute or a UUID from compute_list
+    for a registered remote compute.
     """
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
@@ -785,12 +784,12 @@ async def compute_get(
 @mcp.tool()
 async def compute_images(
     emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
-    compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
+    compute_id: Annotated[str, Field(description="Compute ID: 'local' (default) for the built-in local compute, or a compute UUID from compute_list")] = "local",
 ) -> list[dict[str, Any]]:
-    """List available images for an emulator on a registered compute node.
+    """List available images for an emulator on a compute node.
 
-    NOTE: Only works for computes registered in the database.
-    For the local compute, the default compute_id is typically found via server_statistics.
+    Accepts 'local' for the built-in local compute or a UUID from compute_list
+    for a registered remote compute.
     """
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,

@@ -79,6 +79,16 @@ class TestComputeRoutes:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["compute_id"] == str(test_compute.compute_id)
 
+    async def test_compute_get_local(self, app: FastAPI, client: AsyncClient, controller) -> None:
+
+        await controller.add_compute(
+            compute_id="local", name="local", host="127.0.0.1", port=3080, force=True, connect=False)
+
+        response = await client.get(app.url_path_for("get_compute", compute_id="local"))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["compute_id"] == "local"
+        assert response.json()["name"] == "local"
+
     async def test_compute_update(self, app: FastAPI, client: AsyncClient, test_compute: Compute) -> None:
 
         params = {

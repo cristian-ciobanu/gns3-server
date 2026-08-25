@@ -553,6 +553,44 @@ class TestImage:
             assert result == {"message": "Image installation completed"}
 
 
+class TestCompute:
+
+    mod = "computes"
+
+    def test_get_local_by_default(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"compute_id": "local", "name": "local"})
+            m.return_value = conn
+            result = get_compute_handler({}, ctx)
+            assert result["compute_id"] == "local"
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/local")
+
+    def test_get_explicit_compute_id(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"compute_id": "4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6"})
+            m.return_value = conn
+            get_compute_handler({"compute_id": "4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6"}, ctx)
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6")
+
+    def test_images_local_by_default(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn(["img1.qcow2"])
+            m.return_value = conn
+            result = get_compute_images_handler({"emulator": "qemu"}, ctx)
+            assert result["count"] == 1
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/local/qemu/images")
+
+    def test_images_requires_emulator(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_images_handler
+        assert "error" in get_compute_images_handler({}, ctx)
+
+
 # ── Marker (traffic-insight) ────────────────────────────────────────────
 
 
