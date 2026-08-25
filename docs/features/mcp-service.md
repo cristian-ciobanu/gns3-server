@@ -440,7 +440,7 @@ sequenceDiagram
 - **FastMCP** (Anthropic MCP SDK) is used for tool registration and SSE transport
 - The SSE app is mounted as a Starlette sub-application under `/v3/mcp/transport`
 - **Auth:** JWT validation via `auth_service`. API key (`gns3_<uuid>_<secret>`) extracts UUID for O(1) DB lookup, runs bcrypt in thread pool, returns a fresh JWT — subsequent calls use the JWT with zero extra bcrypt.
-- Tool handlers use `Gns3Connector` (from `custom_gns3fy`) to call GNS3's own REST API, keeping the MCP layer decoupled
+- Tool handlers use `Gns3Connector` (from `gns3_copilot.gns3_client.connector`) via the shared handler layer (`gns3_copilot.gns3_client.api_handlers`), keeping the MCP layer decoupled
 - The JWT token is stored in a `contextvars.ContextVar` so it is available within tool handler threads (Python ≥ 3.9 propagates contextvars through `asyncio.to_thread`)
 
 ### Console WebSocket

@@ -43,8 +43,12 @@ from typing import Any
 
 from langchain.tools import BaseTool
 
-from gns3server.agent.gns3_copilot.gns3_client import Project
-from gns3server.agent.gns3_copilot.gns3_client import get_gns3_connector
+from gns3server.agent.gns3_copilot.gns3_client.api_handlers import (
+    build_gns3_ctx,
+)
+from gns3server.agent.gns3_copilot.gns3_client.project_inventory import (
+    fetch_project_inventory,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -109,13 +113,13 @@ class GNS3TopologyTool(BaseTool):
                     "Please provide a valid project UUID."
                 }
 
-            # Initialize Gns3Connector using factory function
+            # Build handler context (JWT + server URL)
             # jwt_token/url can be passed explicitly (e.g. from MCP handlers)
             # or auto-detected (e.g. from gns3-copilot agent)
             logger.debug("Connecting to GNS3 server...")
-            server = get_gns3_connector(jwt_token=jwt_token, url=url)
+            gns3_ctx = build_gns3_ctx(jwt_token=jwt_token, url=url)
 
-            if server is None:
+            if gns3_ctx is None:
                 logger.error("Failed to create GNS3 connector")
                 return {
                     "error": "Failed to connect to GNS3 server. Please check "
@@ -124,18 +128,17 @@ class GNS3TopologyTool(BaseTool):
 
             # Use the provided project_id directly
             logger.info(f"Retrieving topology for project_id: {project_id}")
-            project = Project(project_id=project_id, connector=server)
-            project.get()  # Load project details
+            inventory = fetch_project_inventory(gns3_ctx, project_id)
 
             # Get topology JSON: includes nodes (devices), links, etc.
             topology = {
-                "project_id": project.project_id,
-                "name": project.name,
-                "status": project.status,
+                "project_id": inventory["project_id"],
+                "name": inventory["name"],
+                "status": inventory["status"],
                 "nodes": self._clean_nodes_ports(
-                    copy.deepcopy(project.nodes_inventory())
+                    copy.deepcopy(inventory["nodes_inventory"])
                 ),
-                "links": project.links_summary(is_print=False),
+                "links": inventory["links_summary"],
             }
 
             # Log topology result

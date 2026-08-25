@@ -16,79 +16,113 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-The vendored gns3fy copy keeps its node/console type lists as literals
-(it is shared with the standalone MCP service and cannot import server
-enums). These tests fail when the server enums grow a value the vendored
-lists have not picked up — exactly what happened with "docker_exec": one
-vendor node failing validation made the copilot's topology reader drop
-the whole project.
+Tests for the shared GNS3 REST client layer (gns3_copilot.gns3_client):
+
+- project_inventory: the nodes/links aggregation feeding the topology
+  context and the Nornir inventory — its output shape is consumer-visible
+  and must stay field-for-field stable
+- get_gns3_device_port: netmiko device_type resolution and per-node
+  credentials over the topology inventory
 """
 
 import pytest
 
 
-def test_console_types_cover_server_enum():
-    """
-    Every server ConsoleType value must be accepted by the vendored Node model.
-    """
-    pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import CONSOLE_TYPES
-    from gns3server.schemas.common import ConsoleType
-
-    missing = {e.value for e in ConsoleType} - set(CONSOLE_TYPES)
-    assert not missing, f"CONSOLE_TYPES drifted from ConsoleType, missing: {missing}"
+# ── project_inventory ────────────────────────────────────────────────────
 
 
-def test_node_types_cover_server_enum():
+def test_nodes_inventory_emits_default_credentials():
     """
-    Every server NodeType value must be accepted by the vendored Node model.
+    The inventory dict consumed by get_device_ports_from_topology must
+    carry the per-node default credentials.
     """
     pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import NODE_TYPES
-    from gns3server.schemas.controller.nodes import NodeType
-
-    missing = {e.value for e in NodeType} - set(NODE_TYPES)
-    assert not missing, f"NODE_TYPES drifted from NodeType, missing: {missing}"
-
-
-def test_node_accepts_docker_exec_console():
-    """
-    Vendor NOS nodes use console_type "docker_exec"; the topology reader
-    validates the whole node list in one pass, so rejecting it poisoned
-    every copilot device tool for the project.
-    """
-    pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node
-
-    node = Node(
-        name="R1",
-        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
-        node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
-        node_type="docker",
-        console_type="docker_exec",
-        status="started",
+    from gns3server.agent.gns3_copilot.gns3_client.project_inventory import (
+        build_nodes_inventory,
     )
-    assert node.console_type == "docker_exec"
+
+    nodes = [
+        {
+            "name": "R1",
+            "node_id": "0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
+            "node_type": "dynamips",
+            "console": 5000,
+            "console_type": "telnet",
+            "status": "started",
+            "x": 0,
+            "y": 0,
+            "default_username": "admin",
+            "default_password": "admin123",
+        },
+    ]
+
+    inventory = build_nodes_inventory(nodes, "127.0.0.1")
+    assert inventory["R1"]["default_username"] == "admin"
+    assert inventory["R1"]["default_password"] == "admin123"
+    assert inventory["R1"]["console_port"] == 5000
+    assert inventory["R1"]["type"] == "dynamips"
+    assert inventory["R1"]["server"] == "127.0.0.1"
+    assert inventory["R1"]["tags"] == []
 
 
-def test_node_accepts_netmiko_device_type():
+def test_links_summary_resolves_names_and_ports():
     """
-    The vendored Node model must keep the netmiko_device_type field so the
-    device-port tools can prefer it over the device_type:<type> tag.
+    links_summary maps raw link endpoint lists to
+    {link_id, node_a, port_a, node_b, port_b} using port/adapter numbers.
     """
     pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node
-
-    node = Node(
-        name="SR1",
-        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
-        node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
-        node_type="docker",
-        console_type="docker_exec",
-        status="started",
-        netmiko_device_type="nokia_srl",
+    from gns3server.agent.gns3_copilot.gns3_client.project_inventory import (
+        build_links_summary,
     )
-    assert node.netmiko_device_type == "nokia_srl"
+
+    nodes = [
+        {
+            "name": "R1",
+            "node_id": "n1",
+            "ports": [
+                {"name": "GigabitEthernet0/0", "port_number": 0, "adapter_number": 0},
+                {"name": "GigabitEthernet0/1", "port_number": 1, "adapter_number": 0},
+            ],
+        },
+        {
+            "name": "R2",
+            "node_id": "n2",
+            "ports": [
+                {"name": "Ethernet0", "port_number": 0, "adapter_number": 0},
+            ],
+        },
+    ]
+    links = [
+        {
+            "link_id": "l1",
+            "nodes": [
+                {"node_id": "n1", "port_number": 0, "adapter_number": 0},
+                {"node_id": "n2", "port_number": 0, "adapter_number": 0},
+            ],
+        },
+        # endpoint not resolvable → skipped, not an error
+        {
+            "link_id": "l2",
+            "nodes": [
+                {"node_id": "missing", "port_number": 0, "adapter_number": 0},
+                {"node_id": "n2", "port_number": 0, "adapter_number": 0},
+            ],
+        },
+    ]
+
+    summary = build_links_summary(nodes, links)
+    assert summary == [
+        {
+            "link_id": "l1",
+            "node_a": "R1",
+            "port_a": "GigabitEthernet0/0",
+            "node_b": "R2",
+            "port_b": "Ethernet0",
+        }
+    ]
+
+
+# ── get_gns3_device_port (over the topology inventory) ──────────────────
 
 
 def test_device_ports_prefer_netmiko_field_over_tag(monkeypatch):
@@ -150,58 +184,6 @@ def test_device_ports_error_without_any_device_type(monkeypatch):
 
     assert "error" in hosts["R2"]
     assert "netmiko_device_type" in hosts["R2"]["error"]
-
-
-def test_node_accepts_default_credentials():
-    """
-    The vendored Node model must keep the default credentials so the
-    device-port tools can log into devices that require authentication.
-    """
-    pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node
-
-    node = Node(
-        name="R1",
-        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
-        node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
-        node_type="docker",
-        console_type="telnet",
-        status="started",
-        default_username="admin",
-        default_password="admin123",
-    )
-    assert node.default_username == "admin"
-    assert node.default_password == "admin123"
-
-
-def test_nodes_inventory_emits_default_credentials():
-    """
-    The inventory dict consumed by get_device_ports_from_topology must
-    carry the per-node default credentials.
-    """
-    pytest.importorskip("jwt", reason="ai-features extras not installed")
-    from types import SimpleNamespace
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Node, Project
-
-    project = Project(
-        project_id="5f517ce3-1bc6-4245-b866-1a2fbd0ee5a7",
-        connector=SimpleNamespace(base_url="http://127.0.0.1:3080"),
-    )
-    project.nodes = [
-        Node(
-            name="R1",
-            project_id=project.project_id,
-            node_id="0d15c2e6-8f83-4b79-8875-9dbc3e5f2f1e",
-            node_type="dynamips",
-            console=5000,
-            default_username="admin",
-            default_password="admin123",
-        ),
-    ]
-
-    inventory = project.nodes_inventory()
-    assert inventory["R1"]["default_username"] == "admin"
-    assert inventory["R1"]["default_password"] == "admin123"
 
 
 def test_device_ports_inject_default_credentials(monkeypatch):

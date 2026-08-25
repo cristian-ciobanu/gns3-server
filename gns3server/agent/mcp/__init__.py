@@ -84,7 +84,7 @@ from .device_config import (
     device_config_send_handler, device_show_run_handler,
     vpcs_config_set_handler,
 )
-from .nodes import (
+from gns3server.agent.gns3_copilot.gns3_client.api_handlers import (
     get_nodes_handler, get_node_handler, start_node_handler,
     stop_node_handler, suspend_node_handler,
     create_node_handler, delete_node_handler, update_node_handler,
@@ -95,9 +95,8 @@ from .nodes import (
     suspend_all_nodes_handler,
     duplicate_node_handler, isolate_node_handler,
     unisolate_node_handler, get_node_links_handler,
-)
-from .links import (
-    get_links_handler, get_link_handler, create_link_handler,
+    get_links_handler, get_link_handler, available_filters_handler,
+    create_link_handler,
     delete_link_handler, update_link_handler,
     reset_link_handler, start_capture_handler, stop_capture_handler,
     download_capture_file_handler,
@@ -676,7 +675,19 @@ async def link_update(
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
 
-# ── Template tools ────────────────────────────────────────────────────
+@mcp.tool()
+async def link_available_filters(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """List the packet filter types available for a link (frequency_drop, packet_loss, delay, corrupt, bpf)
+    with their parameters. Use before setting filters with link_update."""
+    return await asyncio.to_thread(_run_handler_sync, available_filters_handler, {
+        "project_id": project_id, "link_id": link_id,
+    })
+
+
+# ── Template tools ────────────────────────────────────────────
 
 @mcp.tool()
 async def template_list(
