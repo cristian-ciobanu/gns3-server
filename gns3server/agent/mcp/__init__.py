@@ -1035,6 +1035,7 @@ async def link_marker(
     capture_node_id: Annotated[str | None, Field(description="UUID of the endpoint whose uBridge hosts the marker (the observer; tx/rx are from its perspective). Must be a link endpoint and marker-capable. Omit to auto-pick.")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+    data_link_type: Annotated[str | None, Field(description="pcap link-layer type for serial links (create-only): DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / DLT_ATM_RFC1483, matching the encapsulation on the serial link. Omit = DLT_EN10MB (Ethernet). Ignored on update — changing it would invalidate the capture file.")] = None,
 ) -> list[dict[str, Any]]:
     """Manage traffic-insight markers on a link.
 
@@ -1051,7 +1052,7 @@ async def link_marker(
     and cannot be modified or deleted via this tool.
     """
     params = {"project_id": project_id, "link_id": link_id, "action": action}
-    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration"):
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration", "data_link_type"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val

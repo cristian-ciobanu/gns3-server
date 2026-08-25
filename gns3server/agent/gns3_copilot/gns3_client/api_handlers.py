@@ -900,7 +900,7 @@ def link_marker_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         if not bpf:
             return {"error": "bpf is required for create action"}
         body: dict[str, Any] = {"bpf": bpf}
-        for opt in ("name", "tag", "capture_node_id", "color", "highlight_duration"):
+        for opt in ("name", "tag", "capture_node_id", "color", "highlight_duration", "data_link_type"):
             if params.get(opt) is not None:
                 body[opt] = params[opt]
         # direction: "tx"/"rx" set a one-way filter; "both"/omitted = no filter.

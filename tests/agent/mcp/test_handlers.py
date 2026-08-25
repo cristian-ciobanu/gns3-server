@@ -437,6 +437,33 @@ class TestLinkMarker:
                 json_data={"bpf": "icmp"},
             )
 
+    def test_create_data_link_type_passthrough(self, ctx):
+        """create passes a serial WAN encapsulation through; update ignores it."""
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "create",
+                 "bpf": "icmp", "data_link_type": "DLT_C_HDLC"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/links/l/markers",
+                json_data={"bpf": "icmp", "data_link_type": "DLT_C_HDLC"},
+            )
+
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "update",
+                 "marker_name": "icmp", "tag": 1, "data_link_type": "DLT_PPP_SERIAL"}, ctx,
+            )
+            # create-only: dropped from the update body
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/links/l/markers/icmp",
+                json_data={"tag": 1},
+            )
+
     def test_create_direction_tx(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
         with patch(f"{AH}._get_connector") as m:
