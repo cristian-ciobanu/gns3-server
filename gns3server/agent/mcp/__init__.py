@@ -1471,6 +1471,10 @@ async def device_config_send(
     Devices must be started first (use node_start or node_start_all).
     Device type is auto-detected from the 'device_type:<type>' tag on each node.
     Common device types: cisco_ios_telnet, cisco_xr_telnet, huawei_telnet, gns3_huawei_telnet_ce
+
+    Error contract: every failure is reported in-band as an entry with
+    status "failed" and an "error" message (per-device entries also carry
+    device_name and commands).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
@@ -1501,6 +1505,10 @@ async def device_show_run(
       (e.g. device_type:cisco_ios_telnet, device_type:gns3_huawei_telnet_ce).
       Nodes without this tag will fail with "device_type tag not found".
       Docker/Linux nodes are not supported (use node_console instead).
+
+    Error contract: every failure is reported in-band as an entry with
+    status "failed" and an "error" message (per-device entries also carry
+    device_name and commands).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
@@ -1519,6 +1527,8 @@ async def vpcs_config_set(
 
     Only VPCS nodes are accepted: any other node type in device_configs fails
     with a per-device error instead of typing VPCS syntax into its CLI.
+    Every failure is reported in-band as an entry with status "failed"
+    and an "error" message.
 
     VPCS-specific configuration commands:
       - ip <address>/<mask> <gateway>   Set IP and gateway

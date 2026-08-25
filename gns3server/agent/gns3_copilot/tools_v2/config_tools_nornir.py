@@ -227,7 +227,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
             )
         except ValueError as e:
             logger.error("Failed to prepare device hosts data: %s", e)
-            return [{"error": str(e)}]
+            return [{"status": "failed", "error": str(e)}]
 
         # Check if any devices have errors (e.g., missing device_type tag)
         error_devices = {
@@ -254,7 +254,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
             dynamic_nr = self._initialize_nornir(hosts_data)
         except ValueError as e:
             logger.error("Failed to initialize Nornir: %s", e)
-            return [{"error": str(e)}]
+            return [{"status": "failed", "error": str(e)}]
 
         results = []
 
@@ -278,7 +278,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
             logger.error(
                 "Error executing configurations on all devices: %s", e
             )
-            return [{"error": f"Execution error: {str(e)}"}]
+            return [{"status": "failed", "error": f"Execution error: {str(e)}"}]
 
         logger.info(
             "Multiple device configuration execution completed. Results: %s",
@@ -368,7 +368,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
                     "Invalid JSON string received as tool input: %s", e
                 )
                 return (
-                    [{"error": f"Invalid JSON string input from model: {e}"}],
+                    [{"status": "failed", "error": f"Invalid JSON string input from model: {e}"}],
                     None,
                 )
         else:
@@ -389,7 +389,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
             if not project_id:
                 error_msg = "Missing required 'project_id' field in input"
                 logger.error(error_msg)
-                return ([{"error": error_msg}], None)
+                return ([{"status": "failed", "error": error_msg}], None)
 
             if not self._validate_project_id(project_id):
                 error_msg = (
@@ -397,13 +397,13 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
                     "Expected UUID format."
                 )
                 logger.error(error_msg)
-                return ([{"error": error_msg}], None)
+                return ([{"status": "failed", "error": error_msg}], None)
 
             # Validate device_configs
             if not isinstance(device_configs, list):
                 error_msg = "'device_configs' must be an array"
                 logger.error(error_msg)
-                return ([{"error": error_msg}], None)
+                return ([{"status": "failed", "error": error_msg}], None)
 
             if not device_configs:
                 logger.warning("Device configs list is empty.")
@@ -426,7 +426,7 @@ class ExecuteMultipleDeviceConfigCommands(BaseTool):
                 f"{type(parsed_input).__name__}"
             )
             logger.error(error_msg)
-            return ([{"error": error_msg}], None)
+            return ([{"status": "failed", "error": error_msg}], None)
 
     def _validate_project_id(self, project_id: str) -> bool:
         """

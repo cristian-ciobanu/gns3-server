@@ -51,7 +51,13 @@ def _render_template(template: str, device_configs: list[dict], commands_field: 
     Args:
         commands_field: field name for the rendered commands, e.g. "config_commands", "commands"
     """
-    jinja = JinjaTemplate(template)
+    try:
+        jinja = JinjaTemplate(template)
+    except JinjaError as e:
+        # a syntactically invalid template must not escape as a raw exception
+        error_msg = f"Template rendering failed: {e}"
+        log.error(error_msg)
+        return [{"status": "failed", "error": error_msg}]
     merged: dict[str, dict] = {}
     for dev in device_configs:
         name = dev.get("device_name")
@@ -69,7 +75,7 @@ def _render_template(template: str, device_configs: list[dict], commands_field: 
             except JinjaError as e:
                 error_msg = f"Template rendering failed for '{name}': {e}"
                 log.error(error_msg)
-                return [{"error": error_msg}]
+                return [{"status": "failed", "error": error_msg}]
     return list(merged.values())
 
 
@@ -81,7 +87,7 @@ def device_config_send_handler(params: dict[str, Any], gns3_ctx: dict[str, Any])
     device_configs = params.get("device_configs")
     template = params.get("template")
     if not project_id or not device_configs:
-        return [{"error": "project_id and device_configs are required"}]
+        return [{"status": "failed", "error": "project_id and device_configs are required"}]
 
     if template:
         device_configs = _render_template(template, device_configs, commands_field="config_commands")
@@ -108,7 +114,7 @@ def device_show_run_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
     device_configs = params.get("device_configs")
     template = params.get("template")
     if not project_id or not device_configs:
-        return [{"error": "project_id and device_configs (list of {device_name, commands}) are required"}]
+        return [{"status": "failed", "error": "project_id and device_configs (list of {device_name, commands}) are required"}]
 
     if template:
         device_configs = _render_template(template, device_configs, commands_field="commands")
@@ -134,7 +140,7 @@ def vpcs_config_set_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) ->
     project_id = params.get("project_id")
     device_configs = params.get("device_configs")
     if not project_id or not device_configs:
-        return [{"error": "project_id and device_configs are required"}]
+        return [{"status": "failed", "error": "project_id and device_configs are required"}]
 
     from gns3server.agent.gns3_copilot.tools_v2.vpcs_tools_netmiko import VPCSCommands
 
