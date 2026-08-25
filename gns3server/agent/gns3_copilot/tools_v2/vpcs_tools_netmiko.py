@@ -461,6 +461,25 @@ class VPCSCommands(BaseTool):
 
             port = device_ports[device_name]["port"]
 
+            node_type = device_ports[device_name].get("node_type")
+            if node_type != "vpcs":
+                # VPCS syntax typed into another node's CLI is silently
+                # discarded (e.g. IOS answers "% Invalid input"), so reject
+                # mismatched devices before a console session is opened
+                logger.error(
+                    "Device '%s' is a %s node, not a VPCS node",
+                    device_name,
+                    node_type or "unknown-type",
+                )
+                hosts_data[device_name] = {
+                    "error": (
+                        f"Device '{device_name}' is a {node_type or 'unknown-type'} node, "
+                        "not a VPCS node; use device_config_send / device_show_run "
+                        "for network devices"
+                    )
+                }
+                continue
+
             # VPCS devices use gns3_vpcs_telnet device type
             hosts_data[device_name] = {
                 "port": port,

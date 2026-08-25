@@ -1517,6 +1517,9 @@ async def vpcs_config_set(
 ) -> list[dict[str, Any]]:
     """Configure VPCS devices (set IP addresses, gateway, etc.).
 
+    Only VPCS nodes are accepted: any other node type in device_configs fails
+    with a per-device error instead of typing VPCS syntax into its CLI.
+
     VPCS-specific configuration commands:
       - ip <address>/<mask> <gateway>   Set IP and gateway
       - save                            Save config to startup.vpc
