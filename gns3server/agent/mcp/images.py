@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # ── Helper ─────────────────────────────────────────────────────────────────
 
 def _get_connector(gns3_ctx: dict[str, Any]):
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Gns3Connector
+    from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
     return Gns3Connector(
         url=gns3_ctx["server_url"],
         jwt_token=gns3_ctx["jwt_token"],
@@ -72,6 +72,9 @@ def prune_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> di
 
 def install_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     conn = _get_connector(gns3_ctx)
-    # Returns 204 No Content on success (empty body, no .json())
-    conn.http_call("post", f"{conn.base_url}/images/install")
+    response = conn.http_call("post", f"{conn.base_url}/images/install")
+    if response.content:
+        # the install endpoint reports which templates were created or skipped
+        return response.json()
+    # tolerate an empty body in case an older server still replies with 204
     return {"message": "Image installation completed"}

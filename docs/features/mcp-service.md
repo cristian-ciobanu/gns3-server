@@ -94,9 +94,9 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 
 ## Available Tools
 
-**82 tools** across 12 categories:
+**76 tools** across 11 categories:
 
-### Project (15)
+### Project (14)
 
 | Tool | Description |
 |------|-------------|
@@ -113,7 +113,6 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `project_readme_update` | Update project README |
 | `project_lock` | Lock project (prevent edits) |
 | `project_unlock` | Unlock project |
-| `project_load` | Load project from path |
 | `project_locked` | Check if project is locked |
 
 ### Node (22)
@@ -192,16 +191,11 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `drawing_update` | Update drawing (position, rotation, SVG) |
 | `drawing_delete` | Delete a drawing |
 
-### Symbol (6)
-
-| Tool | Description |
-|------|-------------|
-| `symbol_list` | List all symbols |
-| `symbol_get` | Get symbol download URL |
-| `symbol_dimensions` | Get symbol dimensions |
-| `symbol_defaults` | Get default symbol mapping |
-| `symbol_upload` | Upload a custom symbol (SVG content) |
-| `symbol_delete` | Delete a custom symbol (built-in: 403) |
+<!--
+Symbol tools (symbol_list / symbol_get / symbol_dimensions /
+symbol_defaults / symbol_upload / symbol_delete) are disabled for now:
+they require a vision-capable model to be genuinely useful. Revisit later.
+-->
 
 ### Appliance (3)
 
@@ -440,7 +434,7 @@ sequenceDiagram
 - **FastMCP** (Anthropic MCP SDK) is used for tool registration and SSE transport
 - The SSE app is mounted as a Starlette sub-application under `/v3/mcp/transport`
 - **Auth:** JWT validation via `auth_service`. API key (`gns3_<uuid>_<secret>`) extracts UUID for O(1) DB lookup, runs bcrypt in thread pool, returns a fresh JWT — subsequent calls use the JWT with zero extra bcrypt.
-- Tool handlers use `Gns3Connector` (from `custom_gns3fy`) to call GNS3's own REST API, keeping the MCP layer decoupled
+- Tool handlers use `Gns3Connector` (from `gns3_copilot.gns3_client.connector`) via the shared handler layer (`gns3_copilot.gns3_client.api_handlers`), keeping the MCP layer decoupled
 - The JWT token is stored in a `contextvars.ContextVar` so it is available within tool handler threads (Python ≥ 3.9 propagates contextvars through `asyncio.to_thread`)
 
 ### Console WebSocket

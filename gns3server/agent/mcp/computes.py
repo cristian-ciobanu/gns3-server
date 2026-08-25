@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 
 def _get_connector(gns3_ctx: dict[str, Any]):
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Gns3Connector
+    from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
     return Gns3Connector(
         url=gns3_ctx["server_url"],
         jwt_token=gns3_ctx["jwt_token"],
@@ -42,20 +42,16 @@ def list_computes_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> d
 
 
 def get_compute_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
-    compute_id = params.get("compute_id")
-    if not compute_id:
-        return {"error": "compute_id is required (use compute_list to get the UUID)"}
+    compute_id = params.get("compute_id") or "local"
     conn = _get_connector(gns3_ctx)
     return conn.http_call("get", f"{conn.base_url}/computes/{compute_id}").json()
 
 
 def get_compute_images_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict[str, Any]:
     emulator = params.get("emulator")
-    compute_id = params.get("compute_id")
+    compute_id = params.get("compute_id") or "local"
     if not emulator:
         return {"error": "emulator is required (e.g. qemu, iou, docker)"}
-    if not compute_id:
-        return {"error": "compute_id is required (use compute_list to get the UUID)"}
     conn = _get_connector(gns3_ctx)
     images = conn.http_call("get", f"{conn.base_url}/computes/{compute_id}/{emulator}/images").json()
     return {"images": images, "count": len(images)}

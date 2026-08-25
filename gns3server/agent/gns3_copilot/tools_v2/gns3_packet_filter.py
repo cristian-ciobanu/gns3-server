@@ -40,8 +40,12 @@ from typing import Any
 from langchain.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun
 
-from gns3server.agent.gns3_copilot.gns3_client import Link
-from gns3server.agent.gns3_copilot.gns3_client import get_gns3_connector
+from gns3server.agent.gns3_copilot.gns3_client.api_handlers import (
+    available_filters_handler,
+    build_gns3_ctx,
+    get_link_handler,
+    update_link_handler,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -207,35 +211,34 @@ class GNS3PacketFilterTool(BaseTool):
                         "error": "'set' action requires 'filters' dict with filter configuration."
                     }
 
-            # Initialize Gns3Connector using factory function
+            # Build handler context (JWT + server URL from request context)
             logger.info("Connecting to GNS3 server...")
-            gns3_server = get_gns3_connector()
+            gns3_ctx = build_gns3_ctx()
 
-            if gns3_server is None:
+            if gns3_ctx is None:
                 logger.error("Failed to create GNS3 connector")
                 return {
                     "error": "Failed to connect to GNS3 server. "
                     "Please check your configuration."
                 }
 
-            # Create Link object
+            # Execute action
             logger.info(
                 "Processing packet filter action '%s' for link %s...", action, link_id
             )
-            link = Link(
-                project_id=project_id, link_id=link_id, connector=gns3_server
-            )
-
-            # Execute action
             if action == "get_available":
-                result = self._get_available_filters(link)
+                result = self._get_available_filters(gns3_ctx, project_id, link_id)
             elif action == "set":
                 filters = input_data.get("filters", {})
-                result = self._set_filters(link, filters, show_filters_icon)
+                result = self._set_filters(
+                    gns3_ctx, project_id, link_id, filters, show_filters_icon
+                )
             elif action == "get":
-                result = self._get_filters(link)
+                result = self._get_filters(gns3_ctx, project_id, link_id)
             elif action == "clear":
-                result = self._clear_filters(link, show_filters_icon)
+                result = self._clear_filters(
+                    gns3_ctx, project_id, link_id, show_filters_icon
+                )
             else:
                 result = {"error": f"Unknown action: {action}"}
 
@@ -253,14 +256,20 @@ class GNS3PacketFilterTool(BaseTool):
                 "error": f"Failed to process packet filter request: {str(e)}"
             }
 
-    def _get_available_filters(self, link: Link) -> dict[str, Any]:
+    def _get_available_filters(
+        self, gns3_ctx: dict, project_id: str, link_id: str
+    ) -> dict[str, Any]:
         """Get available filter types for the link."""
         try:
-            filters = link.available_filters()
+            filters = available_filters_handler(
+                {"project_id": project_id, "link_id": link_id}, gns3_ctx
+            )
+            if "error" in filters:
+                raise RuntimeError(filters["error"])
             logger.info("Retrieved %d available filter types.", len(filters))
             return {
                 "action": "get_available",
-                "link_id": link.link_id,
+                "link_id": link_id,
                 "available_filters": filters,
                 "count": len(filters),
                 "status": "success",
@@ -269,7 +278,7 @@ class GNS3PacketFilterTool(BaseTool):
             logger.error("Failed to get available filters: %s", e)
             return {
                 "action": "get_available",
-                "link_id": link.link_id,
+                "link_id": link_id,
                 "error": f"Failed to get available filters: {str(e)}",
                 "status": "failed",
             }
@@ -338,7 +347,12 @@ class GNS3PacketFilterTool(BaseTool):
             return {"valid": False, "error": f"BPF validation error: {str(e)}"}
 
     def _set_filters(
-        self, link: Link, filters: dict[str, Any], show_filters_icon: bool = False
+        self,
+        gns3_ctx: dict,
+        project_id: str,
+        link_id: str,
+        filters: dict[str, Any],
+        show_filters_icon: bool = False,
     ) -> dict[str, Any]:
         """Set packet filters on the link."""
         try:
@@ -353,7 +367,7 @@ class GNS3PacketFilterTool(BaseTool):
                             if not validation["valid"]:
                                 return {
                                     "action": "set",
-                                    "link_id": link.link_id,
+                                    "link_id": link_id,
                                     "error": f"BPF syntax error at index {idx}: {validation['error']}",
                                     "status": "failed",
                                 }
@@ -363,22 +377,31 @@ class GNS3PacketFilterTool(BaseTool):
                     if not validation["valid"]:
                         return {
                             "action": "set",
-                            "link_id": link.link_id,
+                            "link_id": link_id,
                             "error": f"BPF syntax error: {validation['error']}",
                             "status": "failed",
                         }
 
-            # Update filters
-            link.update(filters=filters, show_filters_icon=show_filters_icon)
+            # Update filters — the PUT response is the updated link
+            updated = update_link_handler(
+                {
+                    "project_id": project_id,
+                    "link_id": link_id,
+                    "kwargs": {
+                        "filters": filters,
+                        "show_filters_icon": show_filters_icon,
+                    },
+                },
+                gns3_ctx,
+            )
+            if "error" in updated:
+                raise RuntimeError(updated["error"])
 
-            # Get updated link info
-            link.get()
-
-            logger.info("Successfully set filters on link %s", link.link_id)
+            logger.info("Successfully set filters on link %s", link_id)
             return {
                 "action": "set",
-                "link_id": link.link_id,
-                "filters": link.filters,
+                "link_id": link_id,
+                "filters": updated.get("filters"),
                 "status": "success",
                 "message": "Filters applied successfully",
             }
@@ -386,49 +409,68 @@ class GNS3PacketFilterTool(BaseTool):
             logger.error("Failed to set filters: %s", e)
             return {
                 "action": "set",
-                "link_id": link.link_id,
+                "link_id": link_id,
                 "error": f"Failed to set filters: {str(e)}",
                 "status": "failed",
             }
 
-    def _get_filters(self, link: Link) -> dict[str, Any]:
+    def _get_filters(
+        self, gns3_ctx: dict, project_id: str, link_id: str
+    ) -> dict[str, Any]:
         """Get current filters configured on the link."""
         try:
-            # Get link information
-            link.get()
+            link = get_link_handler(
+                {"project_id": project_id, "link_id": link_id}, gns3_ctx
+            )
+            if "error" in link:
+                raise RuntimeError(link["error"])
 
-            logger.info("Retrieved current filters for link %s", link.link_id)
+            logger.info("Retrieved current filters for link %s", link_id)
             return {
                 "action": "get",
-                "link_id": link.link_id,
-                "filters": link.filters,
+                "link_id": link_id,
+                "filters": link.get("filters"),
                 "status": "success",
             }
         except Exception as e:
             logger.error("Failed to get filters: %s", e)
             return {
                 "action": "get",
-                "link_id": link.link_id,
+                "link_id": link_id,
                 "error": f"Failed to get filters: {str(e)}",
                 "status": "failed",
             }
 
     def _clear_filters(
-        self, link: Link, show_filters_icon: bool = False
+        self,
+        gns3_ctx: dict,
+        project_id: str,
+        link_id: str,
+        show_filters_icon: bool = False,
     ) -> dict[str, Any]:
         """Clear all filters from the link."""
         try:
-            # Clear filters by setting empty dict
-            link.update(filters={}, show_filters_icon=show_filters_icon)
+            # Clear filters by setting an empty dict — the PUT response
+            # is the updated link
+            updated = update_link_handler(
+                {
+                    "project_id": project_id,
+                    "link_id": link_id,
+                    "kwargs": {
+                        "filters": {},
+                        "show_filters_icon": show_filters_icon,
+                    },
+                },
+                gns3_ctx,
+            )
+            if "error" in updated:
+                raise RuntimeError(updated["error"])
 
-            # Get updated link info to confirm
-            link.get()
-
-            logger.info("Successfully cleared filters on link %s", link.link_id)
+            logger.info("Successfully cleared filters on link %s", link_id)
             return {
                 "action": "clear",
-                "link_id": link.link_id,
-                "filters": link.filters,
+                "link_id": link_id,
+                "filters": updated.get("filters"),
                 "status": "success",
                 "message": "Filters cleared successfully",
             }
@@ -436,7 +478,7 @@ class GNS3PacketFilterTool(BaseTool):
             logger.error("Failed to clear filters: %s", e)
             return {
                 "action": "clear",
-                "link_id": link.link_id,
+                "link_id": link_id,
                 "error": f"Failed to clear filters: {str(e)}",
                 "status": "failed",
             }

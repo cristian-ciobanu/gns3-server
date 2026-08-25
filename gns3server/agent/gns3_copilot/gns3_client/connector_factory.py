@@ -54,7 +54,7 @@ from gns3server.agent.gns3_copilot.gns3_client.context_helpers import (
 )
 
 # Local imports
-from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import (
+from gns3server.agent.gns3_copilot.gns3_client.connector import (
     Gns3Connector,
 )
 

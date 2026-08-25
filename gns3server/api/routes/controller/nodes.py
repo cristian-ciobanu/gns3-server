@@ -372,14 +372,13 @@ async def suspend_node(node: Node = Depends(dep_node)) -> None:
     """
     Suspend a node.
 
+    Node types without suspend support return a 405 error instead of a
+    silent no-op, so the caller cannot mistake it for a suspended node.
+
     Required privilege: Node.PowerMgmt
     """
 
-    try:
-        await node.suspend()
-    except HTTPException as e:
-        if not e.status_code == status.HTTP_405_METHOD_NOT_ALLOWED:
-            raise
+    await node.suspend()
 
 
 @router.post(

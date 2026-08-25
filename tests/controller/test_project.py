@@ -742,6 +742,37 @@ async def test_delete(project):
 
 
 @pytest.mark.asyncio
+async def test_delete_refuses_to_delete_projects_directory(project, projects_dir):
+    """
+    A poisoned entry whose path is the projects directory itself (a .gns3
+    loaded directly from the projects root before the guard existed) must
+    not be deletable: rmtree would wipe every project on the controller.
+    """
+
+    other_project = os.path.join(projects_dir, "another-project")
+    os.makedirs(other_project, exist_ok=True)
+
+    # Simulate the poisoned in-memory state directly: the path setter now
+    # rejects such an assignment, but a long-running server can still hold
+    # an entry created before the fix.
+    project._path = projects_dir
+
+    with pytest.raises(ControllerError):
+        await project.delete()
+    assert os.path.exists(other_project)
+
+
+def test_path_setter_rejects_projects_directory(project, projects_dir):
+    """
+    The projects directory itself must never become a project directory.
+    """
+
+    with pytest.raises(ControllerForbiddenError):
+        project.path = projects_dir
+    assert project.path == os.path.join(projects_dir, project.id)
+
+
+@pytest.mark.asyncio
 async def test_delete_does_not_start_nodes(project):
     """
     Deleting a project must not start its nodes, even when auto_start is enabled.

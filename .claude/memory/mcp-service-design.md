@@ -49,7 +49,7 @@ Tools are separated by domain into individual files under `gns3server/api/routes
 - Synchronous functions receiving `(params: dict, gns3_ctx: dict)`
 - Run via `asyncio.to_thread()` to avoid blocking the event loop
 - `gns3_ctx` contains `server_url` and `jwt_token`
-- `Gns3Connector` is created per-handler from `custom_gns3fy`
+- `Gns3Connector` is created per-handler from `gns3_client.connector` (per-handler instantiation keeps each tool call isolated)
 
 ### Token Lifetime
 - Default: 1440 minutes (24 hours)
@@ -61,14 +61,11 @@ Tools are separated by domain into individual files under `gns3server/api/routes
 - **Why not stdio**: stdio is local-only; SSE supports both local and remote deployments
 
 ## Related Files
-- `gns3server/api/routes/mcp/__init__.py` — FastMCP server, tool decorators, auth wrapper
-- `gns3server/api/routes/mcp/projects.py` — Project tool handlers
-- `gns3server/api/routes/mcp/nodes.py` — Node tool handlers
-- `gns3server/api/routes/mcp/links.py` — Link tool handlers
-- `gns3server/api/routes/mcp/templates.py` — Template tool handlers
-- `gns3server/api/routes/mcp/computes.py` — Compute tool handlers
-- `gns3server/agent/gns3_copilot/gns3_client/custom_gns3fy.py` — Gns3Connector client
-- `gns3server/api/server.py:87` — MCP route registration
+- `gns3server/agent/mcp/__init__.py` — FastMCP server, `@mcp.tool()` decorators, auth wrapper (`_resolve_token` exchanges API keys for JWTs)
+- `gns3server/agent/mcp/*.py` — tool handlers for projects/templates/computes/snapshots/drawings/symbols/appliances/images
+- `gns3server/agent/gns3_copilot/gns3_client/api_handlers.py` — shared node/link handler layer (single implementation, consumed by both MCP tools and copilot `tools_v2`; tests must patch `_get_connector` HERE, not in mcp modules)
+- `gns3server/agent/gns3_copilot/gns3_client/connector.py` — Gns3Connector (JWT auth + http_call only; the old `custom_gns3fy.py` Node/Link/Project wrappers were removed)
+- `gns3server/agent/gns3_copilot/gns3_client/project_inventory.py` — nodes/links aggregation feeding the topology context and Nornir inventory
 
 ## Configuration
 

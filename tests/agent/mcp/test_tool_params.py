@@ -15,7 +15,10 @@ from pathlib import Path
 
 import pytest
 
-MCP_DIR = Path(__file__).resolve().parents[3] / "gns3server" / "agent" / "mcp"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MCP_DIR = REPO_ROOT / "gns3server" / "agent" / "mcp"
+# Node/link handlers live in the shared REST client layer, not MCP_DIR.
+API_HANDLERS_FILE = "gns3server/agent/gns3_copilot/gns3_client/api_handlers.py"
 TOOL_FILE = MCP_DIR / "__init__.py"
 
 HANDLER_FILES = {
@@ -33,38 +36,38 @@ HANDLER_FILES = {
     "lock_project_handler": "projects.py",
     "unlock_project_handler": "projects.py",
     "get_locked_project_handler": "projects.py",
-    "load_project_handler": "projects.py",
-    "get_nodes_handler": "nodes.py",
-    "get_node_handler": "nodes.py",
-    "start_node_handler": "nodes.py",
-    "stop_node_handler": "nodes.py",
-    "suspend_node_handler": "nodes.py",
-    "create_node_handler": "nodes.py",
-    "delete_node_handler": "nodes.py",
-    "update_node_handler": "nodes.py",
-    "get_node_console_info_handler": "nodes.py",
-    "list_node_files_handler": "nodes.py",
-    "get_node_file_handler": "nodes.py",
-    "write_node_file_handler": "nodes.py",
-    "delete_node_file_handler": "nodes.py",
-    "start_all_nodes_handler": "nodes.py",
-    "stop_all_nodes_handler": "nodes.py",
-    "suspend_all_nodes_handler": "nodes.py",
-    "duplicate_node_handler": "nodes.py",
-    "isolate_node_handler": "nodes.py",
-    "unisolate_node_handler": "nodes.py",
-    "get_node_links_handler": "nodes.py",
-    "get_links_handler": "links.py",
-    "get_link_handler": "links.py",
-    "create_link_handler": "links.py",
-    "delete_link_handler": "links.py",
-    "update_link_handler": "links.py",
-    "reset_link_handler": "links.py",
-    "start_capture_handler": "links.py",
-    "stop_capture_handler": "links.py",
-    "download_capture_file_handler": "links.py",
-    "link_marker_handler": "links.py",
-    "marker_definition_handler": "links.py",
+    "get_nodes_handler": API_HANDLERS_FILE,
+    "get_node_handler": API_HANDLERS_FILE,
+    "start_node_handler": API_HANDLERS_FILE,
+    "stop_node_handler": API_HANDLERS_FILE,
+    "suspend_node_handler": API_HANDLERS_FILE,
+    "create_node_handler": API_HANDLERS_FILE,
+    "delete_node_handler": API_HANDLERS_FILE,
+    "update_node_handler": API_HANDLERS_FILE,
+    "get_node_console_info_handler": API_HANDLERS_FILE,
+    "list_node_files_handler": API_HANDLERS_FILE,
+    "get_node_file_handler": API_HANDLERS_FILE,
+    "write_node_file_handler": API_HANDLERS_FILE,
+    "delete_node_file_handler": API_HANDLERS_FILE,
+    "start_all_nodes_handler": API_HANDLERS_FILE,
+    "stop_all_nodes_handler": API_HANDLERS_FILE,
+    "suspend_all_nodes_handler": API_HANDLERS_FILE,
+    "duplicate_node_handler": API_HANDLERS_FILE,
+    "isolate_node_handler": API_HANDLERS_FILE,
+    "unisolate_node_handler": API_HANDLERS_FILE,
+    "get_node_links_handler": API_HANDLERS_FILE,
+    "available_filters_handler": API_HANDLERS_FILE,
+    "get_links_handler": API_HANDLERS_FILE,
+    "get_link_handler": API_HANDLERS_FILE,
+    "create_link_handler": API_HANDLERS_FILE,
+    "delete_link_handler": API_HANDLERS_FILE,
+    "update_link_handler": API_HANDLERS_FILE,
+    "reset_link_handler": API_HANDLERS_FILE,
+    "start_capture_handler": API_HANDLERS_FILE,
+    "stop_capture_handler": API_HANDLERS_FILE,
+    "download_capture_file_handler": API_HANDLERS_FILE,
+    "link_marker_handler": API_HANDLERS_FILE,
+    "marker_definition_handler": API_HANDLERS_FILE,
     "list_templates_handler": "templates.py",
     "get_template_handler": "templates.py",
     "create_template_handler": "templates.py",
@@ -109,7 +112,7 @@ def _get_handler_params(handler_name):
     filename = HANDLER_FILES.get(handler_name)
     if not filename:
         return None
-    filepath = MCP_DIR / filename
+    filepath = (MCP_DIR if not filename.startswith('gns3server/') else REPO_ROOT) / filename
     if not filepath.exists():
         return None
 

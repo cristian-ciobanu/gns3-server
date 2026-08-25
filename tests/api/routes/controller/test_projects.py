@@ -55,6 +55,11 @@ class TestControllerProjectRoutes:
     
         params = {"name": "test", "path": str(config.settings.Server.projects_path), "project_id": "00010203-0405-0607-0809-0a0b0c0d0e0f"}
         response = await client.post(app.url_path_for("create_project"), json=params)
+        # The projects directory itself must never become a project directory
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+        params = {"name": "test", "path": os.path.join(str(config.settings.Server.projects_path), "custom"), "project_id": "00010203-0405-0607-0809-0a0b0c0d0e0f"}
+        response = await client.post(app.url_path_for("create_project"), json=params)
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["name"] == "test"
         assert response.json()["project_id"] == "00010203-0405-0607-0809-0a0b0c0d0e0f"
@@ -608,3 +613,29 @@ class TestControllerProjectRoutes:
             assert drawing.locked is False
         for node in project.nodes.values():
             assert node.locked is False
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+    async def test_lock_unlock_empty_project(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
+
+        # a project without drawings or nodes has nothing to lock and must
+        # never report as locked, otherwise it could not be unlocked
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+        response = await client.post(app.url_path_for("lock_project", project_id=project.id))
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+        response = await client.post(app.url_path_for("unlock_project", project_id=project.id))
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False

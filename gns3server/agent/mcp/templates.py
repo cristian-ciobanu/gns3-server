@@ -19,7 +19,7 @@
 MCP tool handlers for GNS3 template management.
 
 Handlers receive (params, gns3_ctx) and call GNS3's REST API
-via Gns3Connector (from custom_gns3fy).
+via Gns3Connector (from gns3_copilot.gns3_client.connector).
 """
 
 from typing import Any
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # ── Helper ─────────────────────────────────────────────────────────────────
 
 def _get_connector(gns3_ctx: dict[str, Any]):
-    from gns3server.agent.gns3_copilot.gns3_client.custom_gns3fy import Gns3Connector
+    from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
     return Gns3Connector(
         url=gns3_ctx["server_url"],
         jwt_token=gns3_ctx["jwt_token"],

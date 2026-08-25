@@ -745,6 +745,17 @@ class Controller:
         if not os.path.exists(path):
             raise ControllerError(f"'{path}' does not exist on the controller")
 
+        # A .gns3 file must live in its own directory: the project path is
+        # the file's parent directory. A file placed directly in the
+        # projects directory would register the shared projects root as the
+        # project directory, and deleting that project would wipe every
+        # project on the controller.
+        projects_path = os.path.realpath(self.projects_directory())
+        if os.path.realpath(os.path.dirname(path)) == projects_path:
+            raise ControllerError(
+                f"'{path}' cannot be loaded: the .gns3 file must be in its own subdirectory of '{projects_path}'"
+            )
+
         topo_data = load_topology(path)
         topo_data.pop("topology")
         topo_data.pop("version")

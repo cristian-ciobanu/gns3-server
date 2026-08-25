@@ -59,6 +59,7 @@ def get_device_ports_from_topology(
             "device_name": {
                 "port": console_port,
                 "platform": "huawei",  # Extracted from tags
+                "node_type": "vpcs",  # GNS3 node type from the topology
                 "groups": ["network_devices"],  # For inheriting shared settings
                 "connection_options": {
                     "netmiko": {
@@ -160,9 +161,14 @@ def get_device_ports_from_topology(
             # This is the Nornir best practice - each host has its own
             # connection configuration (device_type), while sharing common
             # settings (hostname, timeout) via group inheritance.
+            # node_type (the GNS3 node type, e.g. vpcs/iou/docker) lets callers
+            # reject mismatched devices before opening a console connection;
+            # DictInventory ignores keys it does not know, so carrying it here
+            # is safe for entries fed straight into Nornir.
             host_entry = {
                 "port": node_info["console_port"],
                 "platform": platform,
+                "node_type": node_info.get("type"),
                 "groups": ["network_devices"],  # For inheriting hostname, timeout, etc.
                 "connection_options": {
                     "netmiko": {

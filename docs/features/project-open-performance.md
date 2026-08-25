@@ -114,8 +114,8 @@ if await asyncio.to_thread(bcrypt.checkpw, secret.encode(), db_key.key_hash.enco
 | Node creation Pool | 5 | 100 | `controller/project.py` |
 | Link creation Pool | 5 | 100 | `controller/project.py` |
 | MCP BATCH_MAX_WORKERS | 10 | 100 | `agent/mcp/nodes.py` |
-| MCP HTTP timeout | 10s | 30s | `agent/gns3_copilot/gns3_client/custom_gns3fy.py` |
-| HTTP connection pool | 10 (default) | 500/1000 | `agent/gns3_copilot/gns3_client/custom_gns3fy.py` |
+| MCP HTTP timeout | 10s | 30s | `agent/gns3_copilot/gns3_client/connector.py` |
+| HTTP connection pool | 10 (default) | 500/1000 | `agent/gns3_copilot/gns3_client/connector.py` |
 | Start nodes Pool | 3 | 3 (unchanged) | `controller/project.py` |
 
 ### 8. MCP Auth Returns JWT
@@ -144,5 +144,5 @@ if user:
 | `gns3server/agent/mcp/__init__.py` | Auth returns JWT, tool enhancements |
 | `gns3server/agent/mcp/nodes.py` | fields filter, inherited template_id, name passthrough |
 | `gns3server/agent/mcp/links.py` | fields filter, compact array format |
-| `gns3server/agent/gns3_copilot/gns3_client/custom_gns3fy.py` | Timeout 30s, connection pool 500/1000 |
+| `gns3server/agent/gns3_copilot/gns3_client/connector.py` | Timeout 30s, connection pool 500/1000 |
 | `gns3server/utils/images.py` | md5sum cache error → warning |

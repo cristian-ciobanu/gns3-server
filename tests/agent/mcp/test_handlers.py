@@ -3,6 +3,8 @@ MCP handler unit tests with mocked Gns3Connector.
 
 Tests that handlers correctly transform tool parameters into HTTP calls.
 """
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -12,10 +14,12 @@ def _mock_conn(json_result=None):
     conn = MagicMock()
     conn.base_url = "http://192.168.1.3:3080/v3"
     conn.http_call.return_value.json.return_value = json_result or {"status": "ok"}
+    conn.http_call.return_value.content = b"{}"  # non-empty body by default
     return conn
 
 
 BASE = "gns3server.agent.mcp"
+AH = "gns3server.agent.gns3_copilot.gns3_client.api_handlers"  # node/link handlers sunk here
 
 
 @pytest.fixture
@@ -110,11 +114,10 @@ class TestProject:
 
 class TestNode:
 
-    mod = "nodes"
 
     def test_list_fields(self, ctx):
-        from gns3server.agent.mcp.nodes import get_nodes_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_nodes_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn([
                 {"node_id": "n1", "name": "R1", "status": "started", "node_type": "qemu", "console": 5000},
             ])
@@ -122,22 +125,22 @@ class TestNode:
             assert result == {"nodes": [{"name": "R1", "status": "started"}], "count": 1}
 
     def test_list_invalid_fields(self, ctx):
-        from gns3server.agent.mcp.nodes import get_nodes_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_nodes_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn([])
             result = get_nodes_handler({"project_id": "p1", "fields": "not-a-list"}, ctx)
             assert "error" in result
 
     def test_get(self, ctx):
-        from gns3server.agent.mcp.nodes import get_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"node_id": "n1", "name": "R1"})
             result = get_node_handler({"project_id": "p1", "node_id": "n1"}, ctx)
             assert result["name"] == "R1"
 
     def test_create_single_passes_name(self, ctx):
-        from gns3server.agent.mcp.nodes import create_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"node_id": "n1", "name": "MyRouter"})
             m.return_value = conn
             result = create_node_handler({
@@ -151,8 +154,8 @@ class TestNode:
             assert result == {"node_id": "n1", "name": "MyRouter"}
 
     def test_create_fields_filter(self, ctx):
-        from gns3server.agent.mcp.nodes import create_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"node_id": "n1", "name": "R1", "status": "started"})
             result = create_node_handler({
                 "project_id": "p1", "template_id": "t1",
@@ -161,8 +164,8 @@ class TestNode:
             assert result == {"node_id": "n1", "name": "R1"}
 
     def test_create_fields_validation(self, ctx):
-        from gns3server.agent.mcp.nodes import create_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn()
             m.return_value = conn
             result = create_node_handler({
@@ -173,8 +176,8 @@ class TestNode:
             conn.http_call.assert_not_called()
 
     def test_create_batch_inherits_template_id(self, ctx):
-        from gns3server.agent.mcp.nodes import create_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"node_id": "n1", "name": "R1"})
             result = create_node_handler({
                 "project_id": "p1", "template_id": "default-tpl",
@@ -182,44 +185,148 @@ class TestNode:
             }, ctx)
             assert result[0]["status"] == "success"
 
+    def test_create_batch_preserves_submission_order(self, ctx):
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn()
+            def _http_call(method, url, json_data=None, **kwargs):
+                # first submissions sleep longest so completion order is reversed
+                time.sleep({"slow": 0.25, "mid": 0.1}.get(json_data.get("name"), 0.0))
+                resp = MagicMock()
+                resp.json.return_value = {"node_id": "n1", "name": json_data["name"]}
+                return resp
+            conn.http_call.side_effect = _http_call
+            m.return_value = conn
+            result = create_node_handler({
+                "project_id": "p1", "template_id": "t1",
+                "nodes": [{"name": "slow"}, {"name": "mid"}, {"name": "fast"}],
+            }, ctx)
+            assert [r["node"]["name"] for r in result] == ["slow", "mid", "fast"]
+
+    def test_create_batch_default_names_created_sequentially(self, ctx):
+        import threading
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+
+        def _run(nodes_param):
+            with patch(f"{AH}._get_connector") as m:
+                conn = _mock_conn()
+                lock = threading.Lock()
+                active = [0, 0]  # in-flight requests, high-water mark
+                counter = [0]
+
+                def _http_call(method, url, json_data=None, **kwargs):
+                    with lock:
+                        active[0] += 1
+                        active[1] = max(active[1], active[0])
+                        counter[0] += 1
+                        seq = counter[0]
+                    time.sleep(0.05)  # wide enough that parallel calls would overlap
+                    with lock:
+                        active[0] -= 1
+                    resp = MagicMock()
+                    resp.json.return_value = {"node_id": f"n{seq}", "name": json_data.get("name", f"R-{seq}")}
+                    return resp
+
+                conn.http_call.side_effect = _http_call
+                m.return_value = conn
+                result = create_node_handler({"project_id": "p1", "template_id": "t1", "nodes": nodes_param}, ctx)
+                return result, active[1]
+
+        # nodes relying on default naming are created one at a time so the
+        # server assigns default names/console ports in submission order
+        result, max_active = _run([{}, {}, {}])
+        assert [r["node"]["name"] for r in result] == ["R-1", "R-2", "R-3"]
+        assert max_active == 1
+        # one nameless node is enough to serialize the whole batch
+        result, max_active = _run([{"name": "explicit"}, {}])
+        assert [r["node"]["name"] for r in result] == ["explicit", "R-2"]
+        assert max_active == 1
+
     def test_create_missing_project_id(self, ctx):
-        from gns3server.agent.mcp.nodes import create_node_handler
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
         assert create_node_handler({}, ctx) == {"error": "project_id is required"}
 
     def test_delete_batch(self, ctx):
-        from gns3server.agent.mcp.nodes import delete_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import delete_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({})
             result = delete_node_handler({"project_id": "p1", "node_ids": ["n1", "n2"]}, ctx)
             assert len(result) == 2
+            # same status vocabulary as create/start/stop batches
+            assert all(r["status"] == "success" for r in result)
 
     def test_start_batch(self, ctx):
-        from gns3server.agent.mcp.nodes import start_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import start_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"status": "started"})
             result = start_node_handler({"project_id": "p1", "node_ids": ["n1"]}, ctx)
             assert result[0]["status"] == "success"
 
     def test_stop_batch(self, ctx):
-        from gns3server.agent.mcp.nodes import stop_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import stop_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"status": "stopped"})
             result = stop_node_handler({"project_id": "p1", "node_ids": ["n1"]}, ctx)
             assert result[0]["status"] == "success"
 
     def test_suspend_batch(self, ctx):
-        from gns3server.agent.mcp.nodes import suspend_node_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import suspend_node_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"status": "suspended"})
             result = suspend_node_handler({"project_id": "p1", "node_ids": ["n1"]}, ctx)
             assert result[0]["status"] == "success"
 
     def test_console(self, ctx):
-        from gns3server.agent.mcp.nodes import get_node_console_info_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_console_info_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"console_url": "ws://host/console"})
             result = get_node_console_info_handler({"project_id": "p1", "node_id": "n1"}, ctx)
             assert "command" in result
+
+    @staticmethod
+    def _file_conn(text):
+        conn = _mock_conn()
+        conn.http_call.return_value.text = text
+        return conn
+
+    def test_file_get_keeps_trailing_newline(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2\n")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\nline2\n"
+            assert result["metadata"]["total_bytes"] == 12
+            assert result["metadata"]["returned_bytes"] == 12
+            assert result["metadata"]["has_more"] is False
+
+    def test_file_get_keeps_crlf_endings(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\r\nline2\r\n")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\r\nline2\r\n"
+            assert result["metadata"]["returned_bytes"] == 14
+
+    def test_file_get_without_trailing_newline(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\nline2"
+
+    def test_file_get_pagination(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2\nline3\n")
+            result = get_node_file_handler(
+                {"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg", "offset": 1, "limit": 1}, ctx
+            )
+            assert result["content"] == "line2\n"
+            assert result["metadata"]["total_lines"] == 3
+            assert result["metadata"]["returned_lines"] == 1
+            assert result["metadata"]["has_more"] is True
 
 
 # ── Link ────────────────────────────────────────────────────────────────
@@ -227,25 +334,24 @@ class TestNode:
 
 class TestLink:
 
-    mod = "links"
 
     def test_list(self, ctx):
-        from gns3server.agent.mcp.links import get_links_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_links_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn([{"link_id": "l1", "link_type": "ethernet"}])
             result = get_links_handler({"project_id": "p1", "fields": ["link_id"]}, ctx)
             assert result["links"] == [{"link_id": "l1"}]
 
     def test_get(self, ctx):
-        from gns3server.agent.mcp.links import get_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_link_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"link_id": "l1", "link_type": "ethernet"})
             result = get_link_handler({"project_id": "p1", "link_id": "l1"}, ctx)
             assert result["link_id"] == "l1"
 
     def test_create_compact_format(self, ctx):
-        from gns3server.agent.mcp.links import create_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_link_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"link_id": "l1", "link_type": "ethernet", "nodes": []})
             m.return_value = conn
             result = create_link_handler({
@@ -261,8 +367,8 @@ class TestLink:
             )
 
     def test_create_standard_format(self, ctx):
-        from gns3server.agent.mcp.links import create_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_link_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"link_id": "l1"})
             result = create_link_handler({
                 "project_id": "p1",
@@ -274,8 +380,8 @@ class TestLink:
             assert result["link_id"] == "l1"
 
     def test_create_fields_validation(self, ctx):
-        from gns3server.agent.mcp.links import create_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_link_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn()
             m.return_value = conn
             result = create_link_handler({
@@ -287,15 +393,41 @@ class TestLink:
             conn.http_call.assert_not_called()
 
     def test_delete_batch(self, ctx):
-        from gns3server.agent.mcp.links import delete_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import delete_link_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({})
             result = delete_link_handler({"project_id": "p1", "link_ids": ["l1", "l2"]}, ctx)
             assert len(result) == 2
+            # same status vocabulary as create batches
+            assert all(r["status"] == "success" for r in result)
+
+    def test_create_batch_preserves_submission_order(self, ctx):
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_link_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn()
+            def _http_call(method, url, json_data=None, **kwargs):
+                # first submission sleeps longest so completion order is reversed
+                first_node = json_data["nodes"][0]["node_id"]
+                time.sleep(0.25 if first_node == "n1" else 0.0)
+                resp = MagicMock()
+                resp.json.return_value = {"link_id": f"link-{first_node}"}
+                return resp
+            conn.http_call.side_effect = _http_call
+            m.return_value = conn
+            result = create_link_handler({
+                "project_id": "p1",
+                "links": [
+                    {"nodes": ["n1", 0, 0, "n2", 0, 0]},
+                    {"nodes": ["n3", 0, 0, "n4", 0, 0]},
+                ],
+                "fields": ["link_id"],
+            }, ctx)
+            assert [r["link"]["link_id"] for r in result] == ["link-n1", "link-n3"]
 
     def test_update(self, ctx):
-        from gns3server.agent.mcp.links import update_link_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import update_link_handler
+        with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"link_id": "l1", "suspend": True})
             result = update_link_handler({
                 "project_id": "p1", "link_id": "l1", "suspend": True,
@@ -320,7 +452,7 @@ class TestAppliance:
     def test_install_with_version(self, ctx):
         from gns3server.agent.mcp.appliances import install_appliance_handler
         with patch(f"{BASE}.{self.mod}._get_connector") as m:
-            conn = _mock_conn({"status": "installed"})
+            conn = _mock_conn({"template_id": "t1", "name": "FRR", "version": "8.2.2", "template_type": "docker"})
             m.return_value = conn
             result = install_appliance_handler({
                 "appliance_id": "a1", "version": "2.7.0.356",
@@ -329,6 +461,22 @@ class TestAppliance:
                 "post", "http://192.168.1.3:3080/v3/appliances/a1/install",
                 params={"version": "2.7.0.356"},
             )
+            assert result["template"] == {
+                "template_id": "t1", "name": "FRR", "version": "8.2.2", "template_type": "docker",
+            }
+
+    def test_install_empty_body(self, ctx):
+        # a 204-style empty response must not blow up with a JSON decode error
+        # (the template is still created server-side)
+        from gns3server.agent.mcp.appliances import install_appliance_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn()
+            conn.http_call.return_value.content = b""
+            conn.http_call.return_value.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+            m.return_value = conn
+            result = install_appliance_handler({"appliance_id": "a1"}, ctx)
+            assert "template" not in result
+            assert result["message"] == "Appliance a1 installed"
 
     def test_install_missing_id(self, ctx):
         from gns3server.agent.mcp.appliances import install_appliance_handler
@@ -375,17 +523,84 @@ class TestTemplate:
             assert "deleted" in str(result).lower()
 
 
+# ── Image ───────────────────────────────────────────────────────────────
+
+
+class TestImage:
+
+    mod = "images"
+
+    def test_install_manifest(self, ctx):
+        from gns3server.agent.mcp.images import install_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({
+                "created": [{"template_id": "t1", "name": "Empty VM", "version": "100G", "template_type": "qemu"}],
+                "skipped": [{"name": "csr1000v.qcow2", "reason": "image is already used by one or more templates"}],
+            })
+            m.return_value = conn
+            result = install_images_handler({}, ctx)
+            assert result["created"][0]["name"] == "Empty VM"
+            assert result["skipped"][0]["name"] == "csr1000v.qcow2"
+
+    def test_install_empty_body(self, ctx):
+        from gns3server.agent.mcp.images import install_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn()
+            conn.http_call.return_value.content = b""
+            conn.http_call.return_value.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+            m.return_value = conn
+            result = install_images_handler({}, ctx)
+            assert result == {"message": "Image installation completed"}
+
+
+class TestCompute:
+
+    mod = "computes"
+
+    def test_get_local_by_default(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"compute_id": "local", "name": "local"})
+            m.return_value = conn
+            result = get_compute_handler({}, ctx)
+            assert result["compute_id"] == "local"
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/local")
+
+    def test_get_explicit_compute_id(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn({"compute_id": "4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6"})
+            m.return_value = conn
+            get_compute_handler({"compute_id": "4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6"}, ctx)
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/4fcfb6b5-5b0b-4f43-bd5e-e8ae2a69c8e6")
+
+    def test_images_local_by_default(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_images_handler
+        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+            conn = _mock_conn(["img1.qcow2"])
+            m.return_value = conn
+            result = get_compute_images_handler({"emulator": "qemu"}, ctx)
+            assert result["count"] == 1
+            url = conn.http_call.call_args[0][1]
+            assert url.endswith("/computes/local/qemu/images")
+
+    def test_images_requires_emulator(self, ctx):
+        from gns3server.agent.mcp.computes import get_compute_images_handler
+        assert "error" in get_compute_images_handler({}, ctx)
+
+
 # ── Marker (traffic-insight) ────────────────────────────────────────────
 
 
 class TestLinkMarker:
     """link_marker_handler direction tri-state: omit=preserve, tx/rx=set, both=clear (→ null)."""
 
-    mod = "links"
 
     def test_update_direction_both_clears(self, ctx):
-        from gns3server.agent.mcp.links import link_marker_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "icmp"})
             m.return_value = conn
             link_marker_handler(
@@ -398,8 +613,8 @@ class TestLinkMarker:
             )
 
     def test_update_direction_tx_sets(self, ctx):
-        from gns3server.agent.mcp.links import link_marker_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "icmp"})
             m.return_value = conn
             link_marker_handler(
@@ -412,8 +627,8 @@ class TestLinkMarker:
             )
 
     def test_update_direction_omitted_preserved(self, ctx):
-        from gns3server.agent.mcp.links import link_marker_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "icmp"})
             m.return_value = conn
             link_marker_handler(
@@ -426,8 +641,8 @@ class TestLinkMarker:
             )
 
     def test_create_direction_both_omitted(self, ctx):
-        from gns3server.agent.mcp.links import link_marker_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "icmp"})
             m.return_value = conn
             link_marker_handler(
@@ -439,9 +654,36 @@ class TestLinkMarker:
                 json_data={"bpf": "icmp"},
             )
 
+    def test_create_data_link_type_passthrough(self, ctx):
+        """create passes a serial WAN encapsulation through; update ignores it."""
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "create",
+                 "bpf": "icmp", "data_link_type": "DLT_C_HDLC"}, ctx,
+            )
+            conn.http_call.assert_called_with(
+                "post", "http://192.168.1.3:3080/v3/projects/p/links/l/markers",
+                json_data={"bpf": "icmp", "data_link_type": "DLT_C_HDLC"},
+            )
+
+            conn = _mock_conn({"name": "icmp"})
+            m.return_value = conn
+            link_marker_handler(
+                {"project_id": "p", "link_id": "l", "action": "update",
+                 "marker_name": "icmp", "tag": 1, "data_link_type": "DLT_PPP_SERIAL"}, ctx,
+            )
+            # create-only: dropped from the update body
+            conn.http_call.assert_called_with(
+                "put", "http://192.168.1.3:3080/v3/projects/p/links/l/markers/icmp",
+                json_data={"tag": 1},
+            )
+
     def test_create_direction_tx(self, ctx):
-        from gns3server.agent.mcp.links import link_marker_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import link_marker_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "icmp"})
             m.return_value = conn
             link_marker_handler(
@@ -462,11 +704,10 @@ class TestMarkerDefinition:
     meaning — any direction passed is ignored, never reaching the request body.
     """
 
-    mod = "links"
 
     def test_create_builds_body(self, ctx):
-        from gns3server.agent.mcp.links import marker_definition_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import marker_definition_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "arp"})
             m.return_value = conn
             marker_definition_handler(
@@ -479,8 +720,8 @@ class TestMarkerDefinition:
             )
 
     def test_create_ignores_direction(self, ctx):
-        from gns3server.agent.mcp.links import marker_definition_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import marker_definition_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "arp"})
             m.return_value = conn
             marker_definition_handler(
@@ -493,8 +734,8 @@ class TestMarkerDefinition:
             )
 
     def test_update_builds_body(self, ctx):
-        from gns3server.agent.mcp.links import marker_definition_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import marker_definition_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "arp"})
             m.return_value = conn
             marker_definition_handler(
@@ -507,8 +748,8 @@ class TestMarkerDefinition:
             )
 
     def test_update_ignores_direction(self, ctx):
-        from gns3server.agent.mcp.links import marker_definition_handler
-        with patch(f"{BASE}.{self.mod}._get_connector") as m:
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import marker_definition_handler
+        with patch(f"{AH}._get_connector") as m:
             conn = _mock_conn({"name": "arp"})
             m.return_value = conn
             marker_definition_handler(
@@ -521,8 +762,8 @@ class TestMarkerDefinition:
             )
 
     def test_update_requires_a_field(self, ctx):
-        from gns3server.agent.mcp.links import marker_definition_handler
-        with patch(f"{BASE}.{self.mod}._get_connector"):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import marker_definition_handler
+        with patch(f"{AH}._get_connector"):
             result = marker_definition_handler(
                 {"project_id": "p", "action": "update", "def_name": "arp"}, ctx,
             )

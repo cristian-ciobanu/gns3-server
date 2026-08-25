@@ -31,7 +31,6 @@ import json
 import asyncio
 import logging
 import socket
-import uuid
 from uuid import UUID
 import bcrypt
 from typing import Any, Annotated
@@ -61,16 +60,19 @@ from .projects import (
     get_project_stats_handler, update_project_handler, duplicate_project_handler,
     get_project_readme_handler, update_project_readme_handler,
     lock_project_handler, unlock_project_handler,
-    load_project_handler, get_locked_project_handler,
+    get_locked_project_handler,
 )
 from .server import (
     get_version_handler, get_statistics_handler,
 )
-from .symbols import (
-    get_symbols_handler, get_symbol_handler,
-    get_symbol_dimensions_handler, get_default_symbols_handler,
-    upload_symbol_handler, delete_symbol_handler,
-)
+# Symbol tools are disabled for now: they require a vision-capable model to
+# be genuinely useful (the tools shuttle SVG content, which a text-only LLM
+# cannot inspect or produce). Revisit later.
+# from .symbols import (
+#     get_symbols_handler, get_symbol_handler,
+#     get_symbol_dimensions_handler, get_default_symbols_handler,
+#     upload_symbol_handler, delete_symbol_handler,
+# )
 from .appliances import (
     get_appliances_handler, get_appliance_handler,
     install_appliance_handler,
@@ -84,7 +86,7 @@ from .device_config import (
     device_config_send_handler, device_show_run_handler,
     vpcs_config_set_handler,
 )
-from .nodes import (
+from gns3server.agent.gns3_copilot.gns3_client.api_handlers import (
     get_nodes_handler, get_node_handler, start_node_handler,
     stop_node_handler, suspend_node_handler,
     create_node_handler, delete_node_handler, update_node_handler,
@@ -95,9 +97,8 @@ from .nodes import (
     suspend_all_nodes_handler,
     duplicate_node_handler, isolate_node_handler,
     unisolate_node_handler, get_node_links_handler,
-)
-from .links import (
-    get_links_handler, get_link_handler, create_link_handler,
+    get_links_handler, get_link_handler, available_filters_handler,
+    create_link_handler,
     delete_link_handler, update_link_handler,
     reset_link_handler, start_capture_handler, stop_capture_handler,
     download_capture_file_handler,
@@ -508,6 +509,9 @@ async def node_create(
     Single mode: provide template_id, x, y (optional compute_id)
     Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 100 in parallel.
                  Top-level template_id applies to all nodes; individual nodes can override.
+                 Results are always returned in submission order; correlate nodes by node_id, not name.
+                 When a node omits `name`, the server assigns a default name (R-1, R-2, ...) and console
+                 port — such batches are created sequentially so those assignments follow submission order.
     """
     if nodes is not None:
         return await asyncio.to_thread(_run_handler_sync, create_node_handler, {
@@ -676,7 +680,19 @@ async def link_update(
     return await asyncio.to_thread(_run_handler_sync, update_link_handler, params)
 
 
-# ── Template tools ────────────────────────────────────────────────────
+@mcp.tool()
+async def link_available_filters(
+    project_id: Annotated[str, Field(description="UUID of the project")],
+    link_id: Annotated[str, Field(description="UUID of the link")],
+) -> list[dict[str, Any]]:
+    """List the packet filter types available for a link (frequency_drop, packet_loss, delay, corrupt, bpf)
+    with their parameters. Use before setting filters with link_update."""
+    return await asyncio.to_thread(_run_handler_sync, available_filters_handler, {
+        "project_id": project_id, "link_id": link_id,
+    })
+
+
+# ── Template tools ────────────────────────────────────────────
 
 @mcp.tool()
 async def template_list(
@@ -755,12 +771,12 @@ async def compute_list() -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def compute_get(
-    compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
+    compute_id: Annotated[str, Field(description="Compute ID: 'local' (default) for the built-in local compute, or a compute UUID from compute_list")] = "local",
 ) -> list[dict[str, Any]]:
-    """Get detailed information about a registered remote compute node.
+    """Get detailed information about a compute node.
 
-    NOTE: Only works for computes registered in the database (returned by compute_list).
-    For the built-in local compute info, use server_statistics instead.
+    Accepts 'local' for the built-in local compute or a UUID from compute_list
+    for a registered remote compute.
     """
     return await asyncio.to_thread(_run_handler_sync, get_compute_handler, {"compute_id": compute_id})
 
@@ -768,12 +784,12 @@ async def compute_get(
 @mcp.tool()
 async def compute_images(
     emulator: Annotated[str, Field(description="Emulator type (e.g. qemu, iou, docker)")],
-    compute_id: Annotated[uuid.UUID, Field(description="Compute UUID from compute_list output")],
+    compute_id: Annotated[str, Field(description="Compute ID: 'local' (default) for the built-in local compute, or a compute UUID from compute_list")] = "local",
 ) -> list[dict[str, Any]]:
-    """List available images for an emulator on a registered compute node.
+    """List available images for an emulator on a compute node.
 
-    NOTE: Only works for computes registered in the database.
-    For the local compute, the default compute_id is typically found via server_statistics.
+    Accepts 'local' for the built-in local compute or a UUID from compute_list
+    for a registered remote compute.
     """
     return await asyncio.to_thread(_run_handler_sync, get_compute_images_handler, {
         "emulator": emulator, "compute_id": compute_id,
@@ -1021,6 +1037,7 @@ async def link_marker(
     capture_node_id: Annotated[str | None, Field(description="UUID of the endpoint whose uBridge hosts the marker (the observer; tx/rx are from its perspective). Must be a link endpoint and marker-capable. Omit to auto-pick.")] = None,
     color: Annotated[str | None, Field(description="Hex color for UI highlight, e.g. '#ff5722'")] = None,
     highlight_duration: Annotated[int | None, Field(description="UI highlight duration in milliseconds")] = None,
+    data_link_type: Annotated[str | None, Field(description="pcap link-layer type for serial links (create-only): DLT_C_HDLC / DLT_PPP_SERIAL / DLT_FRELAY / DLT_ATM_RFC1483, matching the encapsulation on the serial link. Omit = DLT_EN10MB (Ethernet). Ignored on update — changing it would invalidate the capture file.")] = None,
 ) -> list[dict[str, Any]]:
     """Manage traffic-insight markers on a link.
 
@@ -1037,7 +1054,7 @@ async def link_marker(
     and cannot be modified or deleted via this tool.
     """
     params = {"project_id": project_id, "link_id": link_id, "action": action}
-    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration"):
+    for opt in ("bpf", "marker_name", "name", "tag", "enabled", "direction", "capture_node_id", "color", "highlight_duration", "data_link_type"):
         val = locals().get(opt)
         if val is not None:
             params[opt] = val
@@ -1253,16 +1270,6 @@ async def project_locked(
     })
 
 
-@mcp.tool()
-async def project_load(
-    path: Annotated[str, Field(description="Filesystem path to the .gns3 project file")],
-) -> list[dict[str, Any]]:
-    """Load a project from a file path on the server's filesystem."""
-    return await asyncio.to_thread(_run_handler_sync, load_project_handler, {
-        "path": path,
-    })
-
-
 # ── Server info tools ─────────────────────────────────────────────────
 
 
@@ -1279,64 +1286,67 @@ async def server_statistics() -> list[dict[str, Any]]:
 
 
 # ── Symbol tools ──────────────────────────────────────────────────────
-
-
-@mcp.tool()
-async def symbol_list() -> list[dict[str, Any]]:
-    """List all available symbols on the server."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
-
-
-@mcp.tool()
-async def symbol_get(
-    symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
-) -> list[dict[str, Any]]:
-    """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
-        "symbol_id": symbol_id,
-    })
-
-
-@mcp.tool()
-async def symbol_dimensions(
-    symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
-) -> list[dict[str, Any]]:
-    """Get the dimensions (width, height) of a symbol."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbol_dimensions_handler, {
-        "symbol_id": symbol_id,
-    })
-
-
-@mcp.tool()
-async def symbol_defaults() -> list[dict[str, Any]]:
-    """Get the default symbol mapping for each node type."""
-    return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
-
-
-@mcp.tool()
-async def symbol_upload(
-    symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
-    content: Annotated[str, Field(description="SVG content of the symbol")],
-) -> list[dict[str, Any]]:
-    """Upload or update a custom symbol on the server. Provide the SVG content as a string."""
-    return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
-        "symbol_id": symbol_id, "content": content,
-    })
-
-
-@mcp.tool()
-async def symbol_delete(
-    symbol_id: Annotated[str, Field(description="Symbol ID to delete (e.g. ':/symbols/my_custom_symbol.svg'). Use symbol_list to get existing IDs.")],
-) -> list[dict[str, Any]]:
-    """Delete a custom symbol from the server.
-
-    NOTE: Only custom (user-uploaded) symbols can be deleted.
-    Built-in symbols (starting with ':/symbols/') will be rejected with 403.
-    Use symbol_list to see which symbols are available and their IDs.
-    """
-    return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
-        "symbol_id": symbol_id,
-    })
+#
+# Disabled for now: symbol handling requires a vision-capable model (the
+# tools shuttle SVG content, which a text-only LLM cannot inspect or
+# produce). Revisit later.
+#
+# @mcp.tool()
+# async def symbol_list() -> list[dict[str, Any]]:
+#     """List all available symbols on the server."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
+#
+#
+# @mcp.tool()
+# async def symbol_get(
+#     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
+# ) -> list[dict[str, Any]]:
+#     """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
+#         "symbol_id": symbol_id,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_dimensions(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
+# ) -> list[dict[str, Any]]:
+#     """Get the dimensions (width, height) of a symbol."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbol_dimensions_handler, {
+#         "symbol_id": symbol_id,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_defaults() -> list[dict[str, Any]]:
+#     """Get the default symbol mapping for each node type."""
+#     return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
+#
+#
+# @mcp.tool()
+# async def symbol_upload(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
+#     content: Annotated[str, Field(description="SVG content of the symbol")],
+# ) -> list[dict[str, Any]]:
+#     """Upload or update a custom symbol on the server. Provide the SVG content as a string."""
+#     return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
+#         "symbol_id": symbol_id, "content": content,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_delete(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to delete (e.g. ':/symbols/my_custom_symbol.svg'). Use symbol_list to get existing IDs.")],
+# ) -> list[dict[str, Any]]:
+#     """Delete a custom symbol from the server.
+#
+#     NOTE: Only custom (user-uploaded) symbols can be deleted.
+#     Built-in symbols (starting with ':/symbols/') will be rejected with 403.
+#     Use symbol_list to see which symbols are available and their IDs.
+#     """
+#     return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
+#         "symbol_id": symbol_id,
+#     })
 
 
 # ── Appliance tools ───────────────────────────────────────────────────
@@ -1365,7 +1375,7 @@ async def appliance_install(
     appliance_id: Annotated[str, Field(description="UUID of the appliance to install")],
     version: Annotated[str | None, Field(description="Version to install (e.g. '2.7.0.356'). Required if the appliance has multiple versions. Use appliance_get to see available versions.")] = None,
 ) -> list[dict[str, Any]]:
-    """Create a template from a GNS3 appliance definition.
+    """Create a template from a GNS3 appliance definition and return the created template.
 
     NOTE: This does NOT download images. Images must be placed in the
     GNS3 images directory (e.g. ~/GNS3/images/) beforehand.
@@ -1424,7 +1434,9 @@ async def image_install() -> list[dict[str, Any]]:
 
     This is NOT for downloading images. Images must be uploaded first (via the GNS3 Web UI).
     If an uploaded image matches a known appliance, a template is automatically created.
-    Images already referenced by existing templates are skipped.
+    Returns {"created": [...], "skipped": [...]}: images already referenced by existing
+    templates are skipped, and no template is auto-created when one with the same name
+    already exists (regardless of version).
     """
     return await asyncio.to_thread(_run_handler_sync, install_images_handler, {})
 
@@ -1458,6 +1470,10 @@ async def device_config_send(
     Devices must be started first (use node_start or node_start_all).
     Device type is auto-detected from the 'device_type:<type>' tag on each node.
     Common device types: cisco_ios_telnet, cisco_xr_telnet, huawei_telnet, gns3_huawei_telnet_ce
+
+    Error contract: every failure is reported in-band as an entry with
+    status "failed" and an "error" message (per-device entries also carry
+    device_name and commands).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
@@ -1488,6 +1504,10 @@ async def device_show_run(
       (e.g. device_type:cisco_ios_telnet, device_type:gns3_huawei_telnet_ce).
       Nodes without this tag will fail with "device_type tag not found".
       Docker/Linux nodes are not supported (use node_console instead).
+
+    Error contract: every failure is reported in-band as an entry with
+    status "failed" and an "error" message (per-device entries also carry
+    device_name and commands).
     """
     params = {"project_id": project_id, "device_configs": device_configs}
     if template is not None:
@@ -1503,6 +1523,11 @@ async def vpcs_config_set(
     )],
 ) -> list[dict[str, Any]]:
     """Configure VPCS devices (set IP addresses, gateway, etc.).
+
+    Only VPCS nodes are accepted: any other node type in device_configs fails
+    with a per-device error instead of typing VPCS syntax into its CLI.
+    Every failure is reported in-band as an entry with status "failed"
+    and an "error" message.
 
     VPCS-specific configuration commands:
       - ip <address>/<mask> <gateway>   Set IP and gateway
