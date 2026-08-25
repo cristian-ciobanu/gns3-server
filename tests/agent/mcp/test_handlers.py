@@ -201,6 +201,46 @@ class TestNode:
             }, ctx)
             assert [r["node"]["name"] for r in result] == ["slow", "mid", "fast"]
 
+    def test_create_batch_default_names_created_sequentially(self, ctx):
+        import threading
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+
+        def _run(nodes_param):
+            with patch(f"{AH}._get_connector") as m:
+                conn = _mock_conn()
+                lock = threading.Lock()
+                active = [0, 0]  # in-flight requests, high-water mark
+                counter = [0]
+
+                def _http_call(method, url, json_data=None, **kwargs):
+                    with lock:
+                        active[0] += 1
+                        active[1] = max(active[1], active[0])
+                        counter[0] += 1
+                        seq = counter[0]
+                    time.sleep(0.05)  # wide enough that parallel calls would overlap
+                    with lock:
+                        active[0] -= 1
+                    resp = MagicMock()
+                    resp.json.return_value = {"node_id": f"n{seq}", "name": json_data.get("name", f"R-{seq}")}
+                    return resp
+
+                conn.http_call.side_effect = _http_call
+                m.return_value = conn
+                result = create_node_handler({"project_id": "p1", "template_id": "t1", "nodes": nodes_param}, ctx)
+                return result, active[1]
+
+        # nodes relying on default naming are created one at a time so the
+        # server assigns default names/console ports in submission order
+        result, max_active = _run([{}, {}, {}])
+        assert [r["node"]["name"] for r in result] == ["R-1", "R-2", "R-3"]
+        assert max_active == 1
+        # one nameless node is enough to serialize the whole batch
+        result, max_active = _run([{"name": "explicit"}, {}])
+        assert [r["node"]["name"] for r in result] == ["explicit", "R-2"]
+        assert max_active == 1
+
     def test_create_missing_project_id(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
         assert create_node_handler({}, ctx) == {"error": "project_id is required"}

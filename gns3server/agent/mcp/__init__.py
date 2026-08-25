@@ -510,6 +510,9 @@ async def node_create(
     Single mode: provide template_id, x, y (optional compute_id)
     Batch mode:  provide nodes=[{name, template_id?, x?, y?, compute_id?}] — creates up to 100 in parallel.
                  Top-level template_id applies to all nodes; individual nodes can override.
+                 Results are always returned in submission order; correlate nodes by node_id, not name.
+                 When a node omits `name`, the server assigns a default name (R-1, R-2, ...) and console
+                 port — such batches are created sequentially so those assignments follow submission order.
     """
     if nodes is not None:
         return await asyncio.to_thread(_run_handler_sync, create_node_handler, {

@@ -334,6 +334,14 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
                 return {"template_id": tid, "status": "success", "node": _filter_node_response(resp, fields)}
             except Exception as e:
                 return {"template_id": tid, "status": "error", "error": str(e)}
+        if any(not node.get("name") for node in nodes):
+            # The controller assigns default names (R-1, R-2, ...) and console
+            # ports in request arrival order, and a parallel fan-out makes the
+            # arrival order depend on thread scheduling. Batches that rely on
+            # default naming are therefore created sequentially so those
+            # server-side assignments follow the submission order; batches
+            # where every node has an explicit name stay parallel.
+            return [_create_one(node) for node in nodes]
         with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
             # pool.map keeps the submission order, so callers can correlate
             # results with the nodes they sent regardless of completion order
