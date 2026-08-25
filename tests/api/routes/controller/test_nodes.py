@@ -18,7 +18,7 @@
 
 import pytest
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, HTTPException, status
 from httpx import AsyncClient
 
 from unittest.mock import MagicMock
@@ -295,9 +295,43 @@ class TestNodeRoutes:
             compute: Compute,
             node: Node
     ) -> None:
-    
+
         compute.post = AsyncioMagicMock()
         response = await client.post(app.url_path_for("suspend_node", project_id=project.id, node_id=node.id))
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+    async def test_suspend_node_unsupported(
+            self,
+            app: FastAPI,
+            client: AsyncClient,
+            project: Project,
+            compute: Compute,
+            node: Node
+    ) -> None:
+
+        # node types without suspend support (e.g. VPCS, IOU) must surface the
+        # compute 405 instead of reporting a fake success
+        compute.post = AsyncioMagicMock(
+            side_effect=HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Suspend is not supported")
+        )
+        response = await client.post(app.url_path_for("suspend_node", project_id=project.id, node_id=node.id))
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+    async def test_suspend_all_nodes_tolerates_unsupported(
+            self,
+            app: FastAPI,
+            client: AsyncClient,
+            project: Project,
+            compute: Compute,
+            node: Node
+    ) -> None:
+
+        # suspending all nodes of a mixed project stays best-effort: nodes
+        # without suspend support are skipped without failing the request
+        compute.post = AsyncioMagicMock(
+            side_effect=HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Suspend is not supported")
+        )
+        response = await client.post(app.url_path_for("suspend_all_nodes", project_id=project.id))
         assert response.status_code == status.HTTP_204_NO_CONTENT
     
     
