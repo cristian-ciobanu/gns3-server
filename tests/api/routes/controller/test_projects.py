@@ -613,3 +613,29 @@ class TestControllerProjectRoutes:
             assert drawing.locked is False
         for node in project.nodes.values():
             assert node.locked is False
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+    async def test_lock_unlock_empty_project(self, app: FastAPI, client: AsyncClient, project: Project) -> None:
+
+        # a project without drawings or nodes has nothing to lock and must
+        # never report as locked, otherwise it could not be unlocked
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+        response = await client.post(app.url_path_for("lock_project", project_id=project.id))
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False
+
+        response = await client.post(app.url_path_for("unlock_project", project_id=project.id))
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        response = await client.get(app.url_path_for("locked_project", project_id=project.id))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() is False

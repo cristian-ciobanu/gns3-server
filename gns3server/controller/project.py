@@ -2141,6 +2141,10 @@ class Project:
         Check if all items in a project are locked and not
         """
 
+        if not self._drawings and not self._nodes:
+            # a project without drawings or nodes has nothing to lock and would
+            # otherwise always report as locked, even after unlocking it
+            return False
         for drawing in self._drawings.values():
             if not drawing.locked:
                 return False
