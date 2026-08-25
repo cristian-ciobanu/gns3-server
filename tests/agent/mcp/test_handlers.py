@@ -242,6 +242,49 @@ class TestNode:
             result = get_node_console_info_handler({"project_id": "p1", "node_id": "n1"}, ctx)
             assert "command" in result
 
+    @staticmethod
+    def _file_conn(text):
+        conn = _mock_conn()
+        conn.http_call.return_value.text = text
+        return conn
+
+    def test_file_get_keeps_trailing_newline(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2\n")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\nline2\n"
+            assert result["metadata"]["total_bytes"] == 12
+            assert result["metadata"]["returned_bytes"] == 12
+            assert result["metadata"]["has_more"] is False
+
+    def test_file_get_keeps_crlf_endings(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\r\nline2\r\n")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\r\nline2\r\n"
+            assert result["metadata"]["returned_bytes"] == 14
+
+    def test_file_get_without_trailing_newline(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2")
+            result = get_node_file_handler({"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg"}, ctx)
+            assert result["content"] == "line1\nline2"
+
+    def test_file_get_pagination(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_file_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = self._file_conn("line1\nline2\nline3\n")
+            result = get_node_file_handler(
+                {"project_id": "p1", "node_id": "n1", "file_path": "startup.cfg", "offset": 1, "limit": 1}, ctx
+            )
+            assert result["content"] == "line2\n"
+            assert result["metadata"]["total_lines"] == 3
+            assert result["metadata"]["returned_lines"] == 1
+            assert result["metadata"]["has_more"] is True
+
 
 # ── Link ────────────────────────────────────────────────────────────────
 

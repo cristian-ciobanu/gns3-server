@@ -474,23 +474,26 @@ def get_node_file_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> d
         raw = raw[:MAX_NODE_FILE_BYTES]
         truncated = True
 
-    lines = raw.splitlines(keepends=False)
+    # keepends keeps the content byte-faithful: the trailing newline of the
+    # last line and any \r\n endings survive the round trip
+    lines = raw.splitlines(keepends=True)
     total_lines = len(lines)
 
     # Apply offset/limit
     selected = lines[offset: offset + limit] if offset < total_lines else []
     has_more = (offset + limit) < total_lines or truncated
+    content = "".join(selected)
 
     return {
         "file_path": file_path,
-        "content": "\n".join(selected),
+        "content": content,
         "metadata": {
             "total_lines": total_lines,
             "total_bytes": total_bytes,
             "offset": offset,
             "limit": limit,
             "returned_lines": len(selected),
-            "returned_bytes": len("\n".join(selected).encode("utf-8")),
+            "returned_bytes": len(content.encode("utf-8")),
             "truncated": truncated or has_more,
             "has_more": has_more,
         },
