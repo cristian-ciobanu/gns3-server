@@ -66,11 +66,14 @@ from .projects import (
 from .server import (
     get_version_handler, get_statistics_handler,
 )
-from .symbols import (
-    get_symbols_handler, get_symbol_handler,
-    get_symbol_dimensions_handler, get_default_symbols_handler,
-    upload_symbol_handler, delete_symbol_handler,
-)
+# Symbol tools are disabled for now: they require a vision-capable model to
+# be genuinely useful (the tools shuttle SVG content, which a text-only LLM
+# cannot inspect or produce). Revisit later.
+# from .symbols import (
+#     get_symbols_handler, get_symbol_handler,
+#     get_symbol_dimensions_handler, get_default_symbols_handler,
+#     upload_symbol_handler, delete_symbol_handler,
+# )
 from .appliances import (
     get_appliances_handler, get_appliance_handler,
     install_appliance_handler,
@@ -1280,64 +1283,67 @@ async def server_statistics() -> list[dict[str, Any]]:
 
 
 # ── Symbol tools ──────────────────────────────────────────────────────
-
-
-@mcp.tool()
-async def symbol_list() -> list[dict[str, Any]]:
-    """List all available symbols on the server."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
-
-
-@mcp.tool()
-async def symbol_get(
-    symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
-) -> list[dict[str, Any]]:
-    """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
-        "symbol_id": symbol_id,
-    })
-
-
-@mcp.tool()
-async def symbol_dimensions(
-    symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
-) -> list[dict[str, Any]]:
-    """Get the dimensions (width, height) of a symbol."""
-    return await asyncio.to_thread(_run_handler_sync, get_symbol_dimensions_handler, {
-        "symbol_id": symbol_id,
-    })
-
-
-@mcp.tool()
-async def symbol_defaults() -> list[dict[str, Any]]:
-    """Get the default symbol mapping for each node type."""
-    return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
-
-
-@mcp.tool()
-async def symbol_upload(
-    symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
-    content: Annotated[str, Field(description="SVG content of the symbol")],
-) -> list[dict[str, Any]]:
-    """Upload or update a custom symbol on the server. Provide the SVG content as a string."""
-    return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
-        "symbol_id": symbol_id, "content": content,
-    })
-
-
-@mcp.tool()
-async def symbol_delete(
-    symbol_id: Annotated[str, Field(description="Symbol ID to delete (e.g. ':/symbols/my_custom_symbol.svg'). Use symbol_list to get existing IDs.")],
-) -> list[dict[str, Any]]:
-    """Delete a custom symbol from the server.
-
-    NOTE: Only custom (user-uploaded) symbols can be deleted.
-    Built-in symbols (starting with ':/symbols/') will be rejected with 403.
-    Use symbol_list to see which symbols are available and their IDs.
-    """
-    return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
-        "symbol_id": symbol_id,
-    })
+#
+# Disabled for now: symbol handling requires a vision-capable model (the
+# tools shuttle SVG content, which a text-only LLM cannot inspect or
+# produce). Revisit later.
+#
+# @mcp.tool()
+# async def symbol_list() -> list[dict[str, Any]]:
+#     """List all available symbols on the server."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbols_handler, {})
+#
+#
+# @mcp.tool()
+# async def symbol_get(
+#     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
+# ) -> list[dict[str, Any]]:
+#     """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
+#         "symbol_id": symbol_id,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_dimensions(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to get dimensions for")],
+# ) -> list[dict[str, Any]]:
+#     """Get the dimensions (width, height) of a symbol."""
+#     return await asyncio.to_thread(_run_handler_sync, get_symbol_dimensions_handler, {
+#         "symbol_id": symbol_id,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_defaults() -> list[dict[str, Any]]:
+#     """Get the default symbol mapping for each node type."""
+#     return await asyncio.to_thread(_run_handler_sync, get_default_symbols_handler, {})
+#
+#
+# @mcp.tool()
+# async def symbol_upload(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to upload (e.g. ':/symbols/my_symbol.svg')")],
+#     content: Annotated[str, Field(description="SVG content of the symbol")],
+# ) -> list[dict[str, Any]]:
+#     """Upload or update a custom symbol on the server. Provide the SVG content as a string."""
+#     return await asyncio.to_thread(_run_handler_sync, upload_symbol_handler, {
+#         "symbol_id": symbol_id, "content": content,
+#     })
+#
+#
+# @mcp.tool()
+# async def symbol_delete(
+#     symbol_id: Annotated[str, Field(description="Symbol ID to delete (e.g. ':/symbols/my_custom_symbol.svg'). Use symbol_list to get existing IDs.")],
+# ) -> list[dict[str, Any]]:
+#     """Delete a custom symbol from the server.
+#
+#     NOTE: Only custom (user-uploaded) symbols can be deleted.
+#     Built-in symbols (starting with ':/symbols/') will be rejected with 403.
+#     Use symbol_list to see which symbols are available and their IDs.
+#     """
+#     return await asyncio.to_thread(_run_handler_sync, delete_symbol_handler, {
+#         "symbol_id": symbol_id,
+#     })
 
 
 # ── Appliance tools ───────────────────────────────────────────────────

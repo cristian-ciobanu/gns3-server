@@ -94,7 +94,7 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 
 ## Available Tools
 
-**82 tools** across 12 categories:
+**76 tools** across 11 categories:
 
 ### Project (14)
 
@@ -191,16 +191,11 @@ All subsequent tool handler REST API calls use this JWT → zero extra bcrypt
 | `drawing_update` | Update drawing (position, rotation, SVG) |
 | `drawing_delete` | Delete a drawing |
 
-### Symbol (6)
-
-| Tool | Description |
-|------|-------------|
-| `symbol_list` | List all symbols |
-| `symbol_get` | Get symbol download URL |
-| `symbol_dimensions` | Get symbol dimensions |
-| `symbol_defaults` | Get default symbol mapping |
-| `symbol_upload` | Upload a custom symbol (SVG content) |
-| `symbol_delete` | Delete a custom symbol (built-in: 403) |
+<!--
+Symbol tools (symbol_list / symbol_get / symbol_dimensions /
+symbol_defaults / symbol_upload / symbol_delete) are disabled for now:
+they require a vision-capable model to be genuinely useful. Revisit later.
+-->
 
 ### Appliance (3)
 
