@@ -182,6 +182,25 @@ class TestNode:
             }, ctx)
             assert result[0]["status"] == "success"
 
+    def test_create_batch_preserves_submission_order(self, ctx):
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn()
+            def _http_call(method, url, json_data=None, **kwargs):
+                # first submissions sleep longest so completion order is reversed
+                time.sleep({"slow": 0.25, "mid": 0.1}.get(json_data.get("name"), 0.0))
+                resp = MagicMock()
+                resp.json.return_value = {"node_id": "n1", "name": json_data["name"]}
+                return resp
+            conn.http_call.side_effect = _http_call
+            m.return_value = conn
+            result = create_node_handler({
+                "project_id": "p1", "template_id": "t1",
+                "nodes": [{"name": "slow"}, {"name": "mid"}, {"name": "fast"}],
+            }, ctx)
+            assert [r["node"]["name"] for r in result] == ["slow", "mid", "fast"]
+
     def test_create_missing_project_id(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_node_handler
         assert create_node_handler({}, ctx) == {"error": "project_id is required"}
@@ -192,6 +211,8 @@ class TestNode:
             m.return_value = _mock_conn({})
             result = delete_node_handler({"project_id": "p1", "node_ids": ["n1", "n2"]}, ctx)
             assert len(result) == 2
+            # same status vocabulary as create/start/stop batches
+            assert all(r["status"] == "success" for r in result)
 
     def test_start_batch(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import start_node_handler
@@ -291,6 +312,32 @@ class TestLink:
             m.return_value = _mock_conn({})
             result = delete_link_handler({"project_id": "p1", "link_ids": ["l1", "l2"]}, ctx)
             assert len(result) == 2
+            # same status vocabulary as create batches
+            assert all(r["status"] == "success" for r in result)
+
+    def test_create_batch_preserves_submission_order(self, ctx):
+        import time
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import create_link_handler
+        with patch(f"{AH}._get_connector") as m:
+            conn = _mock_conn()
+            def _http_call(method, url, json_data=None, **kwargs):
+                # first submission sleeps longest so completion order is reversed
+                first_node = json_data["nodes"][0]["node_id"]
+                time.sleep(0.25 if first_node == "n1" else 0.0)
+                resp = MagicMock()
+                resp.json.return_value = {"link_id": f"link-{first_node}"}
+                return resp
+            conn.http_call.side_effect = _http_call
+            m.return_value = conn
+            result = create_link_handler({
+                "project_id": "p1",
+                "links": [
+                    {"nodes": ["n1", 0, 0, "n2", 0, 0]},
+                    {"nodes": ["n3", 0, 0, "n4", 0, 0]},
+                ],
+                "fields": ["link_id"],
+            }, ctx)
+            assert [r["link"]["link_id"] for r in result] == ["link-n1", "link-n3"]
 
     def test_update(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import update_link_handler

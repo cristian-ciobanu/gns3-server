@@ -48,7 +48,7 @@ pulls the request-scoped user JWT from the context variables.
 """
 
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 import hashlib
 import logging
@@ -315,7 +315,6 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         if not isinstance(nodes, list) or not nodes:
             return {"error": "nodes must be a non-empty array"}
         default_tid = params.get("template_id")
-        results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(node_data):
             tid = node_data.get("template_id", default_tid)
@@ -336,10 +335,9 @@ def create_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
             except Exception as e:
                 return {"template_id": tid, "status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(nodes), BATCH_MAX_WORKERS)) as pool:
-            futures = {pool.submit(_create_one, n): n for n in nodes}
-            for future in as_completed(futures):
-                results.append(future.result())
-        return results
+            # pool.map keeps the submission order, so callers can correlate
+            # results with the nodes they sent regardless of completion order
+            return list(pool.map(_create_one, nodes))
 
     # Single mode
     template_id = params.get("template_id")
@@ -371,7 +369,7 @@ def delete_node_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         def _del(nid):
             try:
                 conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/nodes/{nid}")
-                return {"node_id": nid, "status": "deleted"}
+                return {"node_id": nid, "status": "success", "message": f"Node {nid} deleted"}
             except Exception as e:
                 return {"node_id": nid, "status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(node_ids), BATCH_MAX_WORKERS)) as pool:
@@ -656,7 +654,6 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
     if links is not None:
         if not isinstance(links, list) or not links:
             return {"error": "links must be a non-empty array"}
-        results = []
         conn = _get_connector(gns3_ctx)
         def _create_one(link_data):
             raw_nodes = link_data.get("nodes")
@@ -676,10 +673,9 @@ def create_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
             except Exception as e:
                 return {"status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(links), BATCH_MAX_WORKERS)) as pool:
-            futures = {pool.submit(_create_one, link): link for link in links}
-            for future in as_completed(futures):
-                results.append(future.result())
-        return results
+            # pool.map keeps the submission order, so callers can correlate
+            # results with the links they sent regardless of completion order
+            return list(pool.map(_create_one, links))
 
     # Single mode
     nodes = params.get("nodes")
@@ -710,7 +706,7 @@ def delete_link_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dic
         def _del(lid):
             try:
                 conn.http_call("delete", f"{conn.base_url}/projects/{project_id}/links/{lid}")
-                return {"link_id": lid, "status": "deleted"}
+                return {"link_id": lid, "status": "success", "message": f"Link {lid} deleted"}
             except Exception as e:
                 return {"link_id": lid, "status": "error", "error": str(e)}
         with ThreadPoolExecutor(max_workers=min(len(link_ids), BATCH_MAX_WORKERS)) as pool:
