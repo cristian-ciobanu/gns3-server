@@ -1009,7 +1009,18 @@ async def link_capture_download(
     link_id: Annotated[str | None, Field(description="Link UUID (single mode)")] = None,
     link_ids: Annotated[list[str] | None, Field(description="Batch mode: [\"uuid1\",\"uuid2\"] — get download URLs for multiple captures")] = None,
 ) -> list[dict[str, Any]]:
-    """Get download URL(s) for PCAP capture file(s). The URL includes a short-lived JWT (10 min). Use curl to download."""
+    """Get download command(s) for PCAP capture file(s).
+
+    Returns a ready-to-run curl command per link with a short-lived access
+    ticket (10 min) already embedded in the URL.
+
+    IMPORTANT — copy the returned values EXACTLY:
+      - Run each returned "curl_command" verbatim; it already contains the
+        full URL with ticket. NEVER construct or edit the URL yourself, and
+        NEVER copy the ticket by hand — a mistyped ticket is rejected.
+      - The ticket expires after 10 minutes: call this tool again to get a
+        fresh one; do not reuse an old URL.
+    """
     params = {"project_id": project_id}
     if link_ids:
         params["link_ids"] = link_ids
@@ -1299,7 +1310,13 @@ async def server_statistics() -> list[dict[str, Any]]:
 # async def symbol_get(
 #     symbol_id: Annotated[str, Field(description="Symbol ID (e.g. ':/symbols/router.svg')")],
 # ) -> list[dict[str, Any]]:
-#     """Get a download URL for a symbol file (SVG). The URL includes a short-lived JWT (10 min). Use curl to download."""
+#     """Get a download URL for a symbol file (SVG).
+#
+#     Returns a ready-to-run curl command with a short-lived access ticket
+#     (10 min) embedded in the URL. Run the returned "curl_command" verbatim —
+#     never reconstruct the URL or copy the ticket by hand. Re-call this tool
+#     once the ticket has expired.
+#     """
 #     return await asyncio.to_thread(_run_handler_sync, get_symbol_handler, {
 #         "symbol_id": symbol_id,
 #     })
