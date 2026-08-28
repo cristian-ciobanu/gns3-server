@@ -53,8 +53,8 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import logging
 
-from gns3server.services import auth_service, console_ticket_service
-from gns3server.services.console_tickets import DEFAULT_TICKET_TTL
+from gns3server.services import access_ticket_service
+from gns3server.services.access_tickets import DEFAULT_TICKET_TTL
 
 from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
 
@@ -423,7 +423,7 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     # the ~200-char JWT previously embedded here (dropped header segment →
     # "Missing 'alg' value in header" on the server).
     username = gns3_ctx.get("jwt_username")
-    ticket = console_ticket_service.mint(
+    ticket = access_ticket_service.mint(
         username,
         token_version=gns3_ctx.get("jwt_token_version", 0),
         project_id=project_id,
@@ -859,34 +859,36 @@ def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if not project_id:
         return {"error": "project_id is required"}
     username = gns3_ctx.get("jwt_username")
-    download_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
+    token_version = gns3_ctx.get("jwt_token_version", 0)
+
+    def _download(link_id: str) -> dict[str, Any]:
+        # short-lived ticket bound to this exact download path — LLM clients
+        # retyping curl commands corrupted the long Bearer JWT this used to embed
+        path = f"/v3/projects/{project_id}/links/{link_id}/capture/file"
+        url = f"{gns3_ctx['server_url']}{path}"
+        ticket = access_ticket_service.mint(username, token_version=token_version, path=path) if username else None
+        if ticket:
+            url += f"?token={ticket}"
+        entry = {"link_id": link_id, "download_url": url}
+        if ticket:
+            entry["curl_command"] = f"curl -L -o capture_{link_id}.pcap '{url}'"
+        return entry
 
     link_ids = params.get("link_ids")
     if link_ids:
         if not isinstance(link_ids, list):
             return {"error": "link_ids must be a list"}
-        results = []
-        for lid in link_ids:
-            url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{lid}/capture/file"
-            entry = {"link_id": lid, "download_url": url}
-            if download_token:
-                cmd = f"curl -L -o capture_{lid}.pcap -H 'Authorization: Bearer {download_token}' '{url}'"
-                entry["curl_command"] = cmd
-            results.append(entry)
-        return {"downloads": results, "count": len(results), "note": "Files are in pcap format. Links include a 10-minute token."}
+        results = [_download(lid) for lid in link_ids]
+        return {"downloads": results, "count": len(results), "note": "Files are in pcap format. URLs include a 10-minute ticket."}
 
     link_id = params.get("link_id")
     if not link_id:
         return {"error": "link_id or link_ids is required"}
-    download_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{link_id}/capture/file"
-    result = {
-        "link_id": link_id,
-        "download_url": download_url,
-        "note": "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
-    }
-    if download_token:
-        result["curl_command"] = f"curl -L -o capture.pcap -H 'Authorization: Bearer {download_token}' '{download_url}'"
-        result["note"] += " The download link includes a 10-minute token."
+    result = _download(link_id)
+    result["note"] = "The file is in pcap format and can be analyzed with Wireshark or tcpdump."
+    if "curl_command" in result:
+        result["curl_command"] = f"curl -L -o capture.pcap '{result['download_url']}'"
+        result["note"] += " The download URL includes a 10-minute ticket."
     return result
 
 
