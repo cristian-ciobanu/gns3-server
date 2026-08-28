@@ -736,6 +736,12 @@ async def ws_console(
                     await websocket.send_bytes(msg.data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
+    except WebSocketDisconnect:
+        # the client disconnected while the compute was still streaming console output
+        log.info(
+            f"Client {websocket.client.host}:{websocket.client.port} has disconnected from controller"
+            f" console WebSocket"
+        )
     except aiohttp.ClientError as e:
         log.error(f"Client error received when forwarding to compute console WebSocket: {e}")
 
@@ -811,6 +817,12 @@ async def vnc_console(
                     await websocket.send_bytes(msg.data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
+    except WebSocketDisconnect:
+        # the client disconnected while the compute was still streaming VNC console output
+        log.info(
+            f"Client {websocket.client.host}:{websocket.client.port} has disconnected from controller"
+            f" VNC console WebSocket"
+        )
     except aiohttp.ClientError as e:
         log.error(f"Client error received when forwarding to compute VNC console WebSocket: {e}")
 
