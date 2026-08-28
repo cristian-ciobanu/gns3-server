@@ -15,5 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from .authentication import AuthService
+from .console_tickets import ConsoleTicketService
 
 auth_service = AuthService()
+console_ticket_service = ConsoleTicketService()

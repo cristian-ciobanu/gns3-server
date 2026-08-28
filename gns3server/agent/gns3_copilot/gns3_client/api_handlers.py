@@ -53,7 +53,8 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import logging
 
-from gns3server.services import auth_service
+from gns3server.services import auth_service, console_ticket_service
+from gns3server.services.console_tickets import DEFAULT_TICKET_TTL
 
 from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
 
@@ -416,12 +417,21 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
     console_type = node.get("console_type", "unknown")
-    # Short-lived JWT for the WebSocket URL (10 min)
+    # Short-lived console ticket (10 min, multi-use, bound to this node's
+    # console endpoints). Deliberately a short random string instead of a JWT:
+    # LLM clients retype this URL into shell commands and reliably corrupted
+    # the ~200-char JWT previously embedded here (dropped header segment →
+    # "Missing 'alg' value in header" on the server).
     username = gns3_ctx.get("jwt_username")
-    ws_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
+    ticket = console_ticket_service.mint(
+        username,
+        token_version=gns3_ctx.get("jwt_token_version", 0),
+        project_id=project_id,
+        node_id=node_id,
+    ) if username else None
     raw_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
-    if ws_token:
-        raw_url += f"?token={ws_token}"
+    if ticket:
+        raw_url += f"?token={ticket}"
     # Convert http scheme to ws for direct websocat usage
     ws_url = raw_url.replace("https://", "wss://").replace("http://", "ws://")
 
@@ -432,14 +442,15 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "ws_url": ws_url,
         "command": f"websocat -t --no-close {ws_url}",
     }
-    if ws_token:
+    if ticket:
         # Fingerprint of the minted token: compare it against what actually reached the
         # server (logged on WebSocket auth rejection) to detect copy corruption, and
         # re-request the URL once token_ttl_seconds has elapsed.
-        result["token_sha256_prefix"] = hashlib.sha256(ws_token.encode()).hexdigest()[:8]
-        result["token_ttl_seconds"] = 600
-    if console_type in ("vnc",):
-        result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
+        result["token_sha256_prefix"] = hashlib.sha256(ticket.encode()).hexdigest()[:8]
+        result["token_ttl_seconds"] = DEFAULT_TICKET_TTL
+    if console_type in ("vnc",) and ticket:
+        # Same node binding covers the vnc endpoint (identical path params)
+        result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={ticket}"
     return result
 
 

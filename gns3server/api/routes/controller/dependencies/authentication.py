@@ -29,7 +29,9 @@ import gns3server.db.models as models
 from gns3server.db.repositories.api_keys import ApiKeysRepository
 from gns3server.db.repositories.users import UsersRepository
 from gns3server.db.repositories.rbac import RbacRepository
-from gns3server.services import auth_service
+from gns3server.schemas.controller.tokens import TokenData
+from gns3server.services import auth_service, console_ticket_service
+from gns3server.services.console_tickets import TICKET_PREFIX
 from .database import get_repository
 
 log = logging.getLogger(__name__)
@@ -149,7 +151,25 @@ async def get_current_active_user_from_websocket(
     await websocket.accept(subprotocol=subprotocol)
 
     try:
-        token_data = auth_service.get_token_data(token)
+        if token.startswith(TICKET_PREFIX):
+            # Console tickets ("gns3t_…"): short-lived credentials bound to one
+            # node's console endpoints, minted by the node_console MCP tool.
+            # redeem() confines them to the route matching their binding, so
+            # they cannot authenticate the notification/wireshark sockets that
+            # share this dependency.
+            ticket = console_ticket_service.redeem(token, websocket.path_params)
+            if ticket is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired console ticket",
+                )
+            token_data = TokenData(
+                username=ticket.username,
+                token_version=ticket.token_version,
+                token_use="access",
+            )
+        else:
+            token_data = auth_service.get_token_data(token)
         _reject_refresh_token(token_data)
         user = await user_repo.get_user_by_username(token_data.username)
 
