@@ -511,6 +511,11 @@ class DockerVM(BaseNode):
                 f.write("""#
 # This is a sample network config, please uncomment lines to configure the network
 #
+# NOTE: at boot /gns3/init.sh applies this file with BusyBox ifup ("ifup -a -f").
+# BusyBox ifupdown only brings up "auto" stanzas and requires separate
+# "address <ip>" and "netmask <mask>" lines: CIDR notation such as
+# "address 10.0.0.1/24" is rejected and the interface stays unconfigured.
+#
 
 # Uncomment this line to load custom interface files
 # source /etc/network/interfaces.d/*
