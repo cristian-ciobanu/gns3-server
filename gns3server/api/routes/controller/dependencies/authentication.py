@@ -29,7 +29,9 @@ import gns3server.db.models as models
 from gns3server.db.repositories.api_keys import ApiKeysRepository
 from gns3server.db.repositories.users import UsersRepository
 from gns3server.db.repositories.rbac import RbacRepository
-from gns3server.services import auth_service
+from gns3server.schemas.controller.tokens import TokenData
+from gns3server.services import auth_service, access_ticket_service
+from gns3server.services.access_tickets import TICKET_PREFIX
 from .database import get_repository
 
 log = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ def _reject_refresh_token(token_data) -> None:
 
 
 async def get_user_from_token(
+        request: Request,
         bearer_token: str = Depends(oauth2_scheme),
         user_repo: UsersRepository = Depends(get_repository(UsersRepository)),
         api_keys_repo: ApiKeysRepository = Depends(get_repository(ApiKeysRepository)),
@@ -65,6 +68,38 @@ async def get_user_from_token(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if token.startswith(TICKET_PREFIX):
+        # Access tickets ("gns3t_…"): short-lived credentials bound to one
+        # exact resource path, minted by the MCP download tools (capture
+        # files, symbols). redeem_for_path() confines the ticket to that
+        # path, so it cannot be replayed against any other resource.
+        ticket = access_ticket_service.redeem_for_path(token, request.url.path)
+        if ticket is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired access ticket",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token_data = TokenData(
+            username=ticket.username,
+            token_version=ticket.token_version,
+            token_use="access",
+        )
+        user = await user_repo.get_user_by_username(token_data.username)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if token_data.token_version != user.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Token has been revoked for '{token_data.username}'",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
 
     # API Key authentication — format: gns3_<api_key_id>_<random_secret>
     # Direct lookup by UUID avoids O(n) scan of all keys.
@@ -149,7 +184,25 @@ async def get_current_active_user_from_websocket(
     await websocket.accept(subprotocol=subprotocol)
 
     try:
-        token_data = auth_service.get_token_data(token)
+        if token.startswith(TICKET_PREFIX):
+            # Node-bound access tickets ("gns3t_…"): short-lived credentials
+            # for one node's console endpoints, minted by the node_console
+            # MCP tool. redeem() confines them to the route matching their
+            # binding, so they cannot authenticate the notification/wireshark
+            # sockets that share this dependency.
+            ticket = access_ticket_service.redeem(token, websocket.path_params)
+            if ticket is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired console ticket",
+                )
+            token_data = TokenData(
+                username=ticket.username,
+                token_version=ticket.token_version,
+                token_use="access",
+            )
+        else:
+            token_data = auth_service.get_token_data(token)
         _reject_refresh_token(token_data)
         user = await user_repo.get_user_by_username(token_data.username)
 

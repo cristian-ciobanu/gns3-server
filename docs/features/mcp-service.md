@@ -439,7 +439,7 @@ sequenceDiagram
 
 ### Console WebSocket
 
-The `node_console` tool returns a WebSocket URL for connecting to a node's console. The URL includes a short-lived JWT (10 min) — reconnect if it expires. This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
+The `node_console` tool returns a WebSocket URL for connecting to a node's console. The URL includes a short-lived **access ticket** (10 min) — a short random string (`gns3t_…`, 22 chars) minted server-side and bound to that node's console endpoints. `link_capture_download` uses the same kind of ticket bound to one exact resource path instead of embedding a Bearer JWT in the returned curl command. Tickets replaced the long JWTs previously embedded in these URLs/commands: LLM clients retyping them into shell commands reliably corrupted a ~200-char JWT, while a short ticket survives copying. Re-request the URL when the ticket expires (logging out also invalidates outstanding tickets). This endpoint is protocol-agnostic — it works for **telnet**, **ssh**, and **vnc** console types alike. The WebSocket simply proxies raw byte streams between the client and the compute node; protocol negotiation (e.g. SSH key exchange) happens on the compute side.
 
 The WebSocket URL is constructed using the server's `_server_url()`, which resolves the host as follows:
 
@@ -454,11 +454,11 @@ When `Server.host` is `0.0.0.0` (listen on all interfaces), the MCP server disco
 
 If the configured host is already a specific IP or hostname (not `0.0.0.0`), it is used directly in the URL without modification.
 
-Use `websocat` to connect from the command line:
+Use `websocat` to connect from the command line (use the `command` returned by `node_console` verbatim — never reconstruct the URL by hand):
 
 ```bash
 # The host in the URL is automatically resolved to a reachable address
-websocat ws://192.168.1.3:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<jwt>
+websocat ws://192.168.1.3:3080/v3/projects/{project_id}/nodes/{node_id}/console/ws?token=<console_ticket>
 ```
 
 ### Source Files

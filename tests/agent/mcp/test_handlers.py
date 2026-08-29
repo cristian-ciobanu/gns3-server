@@ -280,10 +280,38 @@ class TestNode:
 
     def test_console(self, ctx):
         from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_console_info_handler
+        from gns3server.services import access_ticket_service
         with patch(f"{AH}._get_connector") as m:
             m.return_value = _mock_conn({"console_url": "ws://host/console"})
             result = get_node_console_info_handler({"project_id": "p1", "node_id": "n1"}, ctx)
             assert "command" in result
+            # the URL embeds a short console ticket (not a JWT) redeemable for this node
+            assert "?token=gns3t_" in result["ws_url"]
+            ticket = result["ws_url"].split("token=")[1]
+            assert ticket in result["command"]
+            assert result["token_ttl_seconds"] == 600
+            assert len(result["token_sha256_prefix"]) == 8
+            redeemed = access_ticket_service.redeem(ticket, {"project_id": "p1", "node_id": "n1"})
+            assert redeemed is not None and redeemed.username == "admin"
+            assert "vnc_url" not in result  # console_type is not vnc
+
+    def test_console_vnc_uses_same_ticket(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_console_info_handler
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = _mock_conn({"console_type": "vnc"})
+            result = get_node_console_info_handler({"project_id": "p1", "node_id": "n1"}, ctx)
+            ticket = result["ws_url"].split("token=")[1]
+            # one node-bound ticket covers both console endpoints (identical path params)
+            assert result["vnc_url"] == f"/v3/projects/p1/nodes/n1/console/vnc?token={ticket}"
+
+    def test_console_without_username_omits_token(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import get_node_console_info_handler
+        unauthenticated_ctx = {k: v for k, v in ctx.items() if k != "jwt_username"}
+        with patch(f"{AH}._get_connector") as m:
+            m.return_value = _mock_conn({"console_url": "ws://host/console"})
+            result = get_node_console_info_handler({"project_id": "p1", "node_id": "n1"}, unauthenticated_ctx)
+            assert "token=" not in result["ws_url"]
+            assert "token_sha256_prefix" not in result
 
     @staticmethod
     def _file_conn(text):
@@ -433,6 +461,56 @@ class TestLink:
                 "project_id": "p1", "link_id": "l1", "suspend": True,
             }, ctx)
             assert result["suspend"] is True
+
+    def test_download_capture_file(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import download_capture_file_handler
+        from gns3server.services import access_ticket_service
+        result = download_capture_file_handler({"project_id": "p1", "link_id": "l1"}, ctx)
+        # a short path-bound ticket replaces the long Bearer JWT in the URL
+        assert "?token=gns3t_" in result["download_url"]
+        assert "Bearer" not in result["curl_command"]
+        path = f"/v3/projects/p1/links/l1/capture/file"
+        ticket = result["download_url"].split("token=")[1]
+        assert result["curl_command"] == f"curl -L -o capture.pcap '{result['download_url']}'"
+        redeemed = access_ticket_service.redeem_for_path(ticket, path)
+        assert redeemed is not None and redeemed.username == "admin"
+
+    def test_download_capture_file_batch(self, ctx):
+        from gns3server.agent.gns3_copilot.gns3_client.api_handlers import download_capture_file_handler
+        from gns3server.services import access_ticket_service
+        result = download_capture_file_handler({"project_id": "p1", "link_ids": ["l1", "l2"]}, ctx)
+        assert result["count"] == 2
+        # each link gets its own ticket bound to its own download path
+        tickets = [entry["download_url"].split("token=")[1] for entry in result["downloads"]]
+        assert tickets[0] != tickets[1]
+        for lid, ticket in zip(["l1", "l2"], tickets):
+            redeemed = access_ticket_service.redeem_for_path(ticket, f"/v3/projects/p1/links/{lid}/capture/file")
+            assert redeemed is not None
+
+
+# ── Symbol ──────────────────────────────────────────────────────────────
+
+
+class TestSymbol:
+
+    mod = "symbols"
+
+    def test_get_symbol_download(self, ctx):
+        from gns3server.agent.mcp.symbols import get_symbol_handler
+        from gns3server.services import access_ticket_service
+        result = get_symbol_handler({"symbol_id": "router.svg"}, ctx)
+        assert "?token=gns3t_" in result["download_url"]
+        assert "Bearer" not in result["curl_command"]
+        ticket = result["download_url"].split("token=")[1]
+        redeemed = access_ticket_service.redeem_for_path(ticket, "/v3/symbols/router.svg/raw")
+        assert redeemed is not None and redeemed.username == "admin"
+
+    def test_get_symbol_without_username_omits_token(self, ctx):
+        from gns3server.agent.mcp.symbols import get_symbol_handler
+        unauthenticated_ctx = {k: v for k, v in ctx.items() if k != "jwt_username"}
+        result = get_symbol_handler({"symbol_id": "router.svg"}, unauthenticated_ctx)
+        assert "token=" not in result["download_url"]
+        assert "curl_command" not in result
 
 
 # ── Appliance ───────────────────────────────────────────────────────────

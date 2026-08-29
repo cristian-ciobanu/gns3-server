@@ -53,7 +53,8 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import logging
 
-from gns3server.services import auth_service
+from gns3server.services import access_ticket_service
+from gns3server.services.access_tickets import DEFAULT_TICKET_TTL
 
 from gns3server.agent.gns3_copilot.gns3_client.connector import Gns3Connector
 
@@ -416,12 +417,21 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     node = conn.http_call("get", f"{conn.base_url}/projects/{project_id}/nodes/{node_id}").json()
 
     console_type = node.get("console_type", "unknown")
-    # Short-lived JWT for the WebSocket URL (10 min)
+    # Short-lived console ticket (10 min, multi-use, bound to this node's
+    # console endpoints). Deliberately a short random string instead of a JWT:
+    # LLM clients retype this URL into shell commands and reliably corrupted
+    # the ~200-char JWT previously embedded here (dropped header segment →
+    # "Missing 'alg' value in header" on the server).
     username = gns3_ctx.get("jwt_username")
-    ws_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
+    ticket = access_ticket_service.mint(
+        username,
+        token_version=gns3_ctx.get("jwt_token_version", 0),
+        project_id=project_id,
+        node_id=node_id,
+    ) if username else None
     raw_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/nodes/{node_id}/console/ws"
-    if ws_token:
-        raw_url += f"?token={ws_token}"
+    if ticket:
+        raw_url += f"?token={ticket}"
     # Convert http scheme to ws for direct websocat usage
     ws_url = raw_url.replace("https://", "wss://").replace("http://", "ws://")
 
@@ -432,14 +442,15 @@ def get_node_console_info_handler(params: dict[str, Any], gns3_ctx: dict[str, An
         "ws_url": ws_url,
         "command": f"websocat -t --no-close {ws_url}",
     }
-    if ws_token:
+    if ticket:
         # Fingerprint of the minted token: compare it against what actually reached the
         # server (logged on WebSocket auth rejection) to detect copy corruption, and
         # re-request the URL once token_ttl_seconds has elapsed.
-        result["token_sha256_prefix"] = hashlib.sha256(ws_token.encode()).hexdigest()[:8]
-        result["token_ttl_seconds"] = 600
-    if console_type in ("vnc",):
-        result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={gns3_ctx['jwt_token']}"
+        result["token_sha256_prefix"] = hashlib.sha256(ticket.encode()).hexdigest()[:8]
+        result["token_ttl_seconds"] = DEFAULT_TICKET_TTL
+    if console_type in ("vnc",) and ticket:
+        # Same node binding covers the vnc endpoint (identical path params)
+        result["vnc_url"] = f"/v3/projects/{project_id}/nodes/{node_id}/console/vnc?token={ticket}"
     return result
 
 
@@ -848,34 +859,36 @@ def download_capture_file_handler(params: dict[str, Any], gns3_ctx: dict[str, An
     if not project_id:
         return {"error": "project_id is required"}
     username = gns3_ctx.get("jwt_username")
-    download_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
+    token_version = gns3_ctx.get("jwt_token_version", 0)
+
+    def _download(link_id: str) -> dict[str, Any]:
+        # short-lived ticket bound to this exact download path — LLM clients
+        # retyping curl commands corrupted the long Bearer JWT this used to embed
+        path = f"/v3/projects/{project_id}/links/{link_id}/capture/file"
+        url = f"{gns3_ctx['server_url']}{path}"
+        ticket = access_ticket_service.mint(username, token_version=token_version, path=path) if username else None
+        if ticket:
+            url += f"?token={ticket}"
+        entry = {"link_id": link_id, "download_url": url}
+        if ticket:
+            entry["curl_command"] = f"curl -L -o capture_{link_id}.pcap '{url}'"
+        return entry
 
     link_ids = params.get("link_ids")
     if link_ids:
         if not isinstance(link_ids, list):
             return {"error": "link_ids must be a list"}
-        results = []
-        for lid in link_ids:
-            url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{lid}/capture/file"
-            entry = {"link_id": lid, "download_url": url}
-            if download_token:
-                cmd = f"curl -L -o capture_{lid}.pcap -H 'Authorization: Bearer {download_token}' '{url}'"
-                entry["curl_command"] = cmd
-            results.append(entry)
-        return {"downloads": results, "count": len(results), "note": "Files are in pcap format. Links include a 10-minute token."}
+        results = [_download(lid) for lid in link_ids]
+        return {"downloads": results, "count": len(results), "note": "Files are in pcap format. URLs include a 10-minute ticket."}
 
     link_id = params.get("link_id")
     if not link_id:
         return {"error": "link_id or link_ids is required"}
-    download_url = f"{gns3_ctx['server_url']}/v3/projects/{project_id}/links/{link_id}/capture/file"
-    result = {
-        "link_id": link_id,
-        "download_url": download_url,
-        "note": "The file is in pcap format and can be analyzed with Wireshark or tcpdump.",
-    }
-    if download_token:
-        result["curl_command"] = f"curl -L -o capture.pcap -H 'Authorization: Bearer {download_token}' '{download_url}'"
-        result["note"] += " The download link includes a 10-minute token."
+    result = _download(link_id)
+    result["note"] = "The file is in pcap format and can be analyzed with Wireshark or tcpdump."
+    if "curl_command" in result:
+        result["curl_command"] = f"curl -L -o capture.pcap '{result['download_url']}'"
+        result["note"] += " The download URL includes a 10-minute ticket."
     return result
 
 

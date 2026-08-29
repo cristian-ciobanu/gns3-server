@@ -23,7 +23,7 @@ from typing import Any
 
 import logging
 
-from gns3server.services import auth_service
+from gns3server.services import access_ticket_service
 
 log = logging.getLogger(__name__)
 
@@ -52,18 +52,25 @@ def get_symbol_handler(params: dict[str, Any], gns3_ctx: dict[str, Any]) -> dict
     symbol_id = params.get("symbol_id")
     if not symbol_id:
         return {"error": "symbol_id is required"}
-    download_url = f"{gns3_ctx['server_url']}/v3/symbols/{symbol_id}/raw"
+    path = f"/v3/symbols/{symbol_id}/raw"
+    download_url = f"{gns3_ctx['server_url']}{path}"
     username = gns3_ctx.get("jwt_username")
-    download_token = auth_service.create_access_token(username, token_version=gns3_ctx.get("jwt_token_version", 0), expires_in=10) if username else None
+    # short-lived ticket bound to this exact path — LLM clients retyping curl
+    # commands corrupted the long Bearer JWT this used to embed
+    ticket = access_ticket_service.mint(
+        username, token_version=gns3_ctx.get("jwt_token_version", 0), path=path
+    ) if username else None
+    if ticket:
+        download_url += f"?token={ticket}"
     result = {
         "symbol_id": symbol_id,
         "download_url": download_url,
         "note": "Symbol files are SVG images.",
     }
-    if download_token:
+    if ticket:
         safe_name = symbol_id.replace(':', '').replace('/', '_')
-        result["curl_command"] = f"curl -L -o '{safe_name}.svg' -H 'Authorization: Bearer {download_token}' '{download_url}'"
-        result["note"] += " Download link includes a 10-minute token."
+        result["curl_command"] = f"curl -L -o '{safe_name}.svg' '{download_url}'"
+        result["note"] += " The download URL includes a 10-minute ticket."
     return result
 
 
