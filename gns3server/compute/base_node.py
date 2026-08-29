@@ -640,10 +640,20 @@ class BaseNode:
 
         async def telnet_forward(telnet_reader):
 
-            while not telnet_reader.at_eof():
-                data = await telnet_reader.read(1024)
-                if data:
-                    await websocket.send_bytes(data)
+            try:
+                while not telnet_reader.at_eof():
+                    data = await telnet_reader.read(1024)
+                    if data:
+                        await websocket.send_bytes(data)
+            except WebSocketDisconnect:
+                # the client disconnected while node output was still streaming:
+                # normal end of the session, not an error. Starlette raises
+                # WebSocketDisconnect (whose str() is empty) from send once the
+                # peer is gone, which used to surface as a message-less warning.
+                log.info(
+                    f"Client {websocket.client.host}:{websocket.client.port} has disconnected from compute"
+                    f" console WebSocket while node output was being forwarded"
+                )
 
         # keep forwarding websocket data in both direction
         if sys.version_info >= (3, 11, 0):
@@ -657,7 +667,7 @@ class BaseNode:
             if task.exception():
                 log.warning(
                     f"Exception while forwarding WebSocket data to "
-                    f"{self._console_type.upper()} server: {task.exception()}"
+                    f"{self._console_type.upper()} server: {task.exception()!r}"
                 )
         for task in pending:
             task.cancel()
@@ -728,8 +738,16 @@ class BaseNode:
                     data = await vnc_reader.read(65536)  # Larger buffer for VNC frames
                     if data:
                         await websocket.send_bytes(data)
+            except WebSocketDisconnect:
+                # the browser disconnected while VNC frames were still streaming
+                # (starlette raises WebSocketDisconnect with an empty str() from
+                # send once the peer is gone — not an error)
+                log.info(
+                    f"Client {websocket.client.host}:{websocket.client.port} has disconnected from compute "
+                    f"VNC console WebSocket while frames were being forwarded"
+                )
             except Exception as e:
-                log.warning(f"Exception while forwarding VNC data to WebSocket: {e}")
+                log.warning(f"Exception while forwarding VNC data to WebSocket: {e!r}")
 
         # Keep forwarding WebSocket data in both directions
         if sys.version_info >= (3, 11, 0):
@@ -741,7 +759,7 @@ class BaseNode:
         done, pending = await asyncio.wait(aws, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             if task.exception():
-                log.warning(f"Exception while forwarding WebSocket data to VNC server: {task.exception()}")
+                log.warning(f"Exception while forwarding WebSocket data to VNC server: {task.exception()!r}")
         for task in pending:
             task.cancel()
 

@@ -453,3 +453,57 @@ async def test_stop_ubridge_clears_marker_bridges(compute_project, manager):
     node._marker_filter_bridges["m", "L1"] = "VPCS-10"
     await node._stop_ubridge()
     assert node._marker_filter_bridges == {}
+
+
+class _GoneConsoleWebsocket:
+    """
+    Stand-in for the compute-side WebSocket when the peer (the controller, or a
+    browser) is already gone: receive() yields the disconnect message and
+    send_bytes raises WebSocketDisconnect — what starlette raises from send
+    after the transport reports OSError.
+    """
+
+    def __init__(self):
+        from types import SimpleNamespace
+        self.client = SimpleNamespace(host="127.0.0.1", port=5000)
+
+    async def receive(self):
+        return {"type": "websocket.disconnect"}
+
+    async def send_bytes(self, data):
+        from starlette.websockets import WebSocketDisconnect
+        raise WebSocketDisconnect(code=1006)
+
+
+@pytest.mark.asyncio
+async def test_console_websocket_client_disconnect_while_node_output_streams(
+        compute_project, manager, port_manager, monkeypatch, caplog):
+    # regression test: the client disconnects while the node is still streaming
+    # console output. telnet_forward used to let the (empty-str) WebSocketDisconnect
+    # from send_bytes escape, logging a message-less WARNING.
+    import asyncio
+    import logging
+
+    node = VPCSVM("test", "00010203-0405-0607-0809-0a0b0c0d0e0f", compute_project, manager)
+    node.status = "started"
+
+    telnet_reader = MagicMock()
+    telnet_reader.at_eof.return_value = False
+    telnet_reader.read = AsyncioMagicMock(return_value=b"device output")
+    telnet_writer = MagicMock()
+    telnet_writer.wait_closed = AsyncioMagicMock()
+
+    async def fake_open_connection(*args, **kwargs):
+        return telnet_reader, telnet_writer
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+
+    with caplog.at_level(logging.INFO):
+        await node.start_websocket_console(_GoneConsoleWebsocket())
+
+    assert telnet_writer.close.called
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(
+        "has disconnected from compute console WebSocket while node output" in r.message
+        for r in caplog.records
+    )
