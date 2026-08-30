@@ -355,16 +355,17 @@ async def test_add_ubridge_connection_unix_wiring(compute_project, manager):
 
     sent = [c for c in vm._ubridge_hypervisor.method_calls if "send" in str(c)]
     flat = "\n".join(str(c) for c in sent)
+    wiring_dir = vm._unix_socket_wiring_dir()  # may alias host_dir when long
     assert call.send("bridge create bridge0") in sent
-    assert call.send(f'bridge add_nio_unix bridge0 "{os.path.join(host_dir, "c00.sock")}" '
-                    f'"{os.path.join(host_dir, "s00.sock")}"') in sent
+    assert call.send(f'bridge add_nio_unix bridge0 "{os.path.join(wiring_dir, "c00.sock")}" '
+                    f'"{os.path.join(wiring_dir, "s00.sock")}"') in sent
     assert "add_nio_udp bridge0 4242 127.0.0.1 4343" in flat
     assert "bridge start bridge0" in flat
     # the TAP/namespace path must not be used at all
     assert "add_nio_tap" not in flat
     assert "move_to_ns" not in flat
     assert "set_mac_addr" not in flat
-    assert vm._ethernet_adapters[0].host_ifc == os.path.join(host_dir, "c00.sock")
+    assert vm._ethernet_adapters[0].host_ifc == os.path.join(wiring_dir, "c00.sock")
 
 
 @pytest.mark.asyncio
@@ -483,5 +484,37 @@ async def test_generic_unix_socket_dir_honored_in_wiring(compute_project, manage
 
     await vm._add_ubridge_connection(None, 0)
     flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
-    assert f'"{os.path.join(host_dir, "s00.sock")}"' in flat
+    assert f'"{os.path.join(vm._unix_socket_wiring_dir(), "s00.sock")}"' in flat
     assert "add_nio_tap" not in flat
+
+
+@pytest.mark.asyncio
+async def test_long_socket_path_aliased_through_runtime_dir(compute_project, manager, monkeypatch, tmp_path):
+    """
+    Node volume paths exceed sun_path's 107 bytes; the wiring must alias them
+    through a short symlink so uBridge accepts the NIO (and remove the alias
+    when uBridge stops).
+    """
+
+    from unittest.mock import PropertyMock
+
+    long_dir = str(tmp_path / "a-very-long-project-directory-name" / ("x" * 40) / "tmp")
+    os.makedirs(long_dir, exist_ok=True)
+    open(os.path.join(long_dir, "s00.sock"), "w").close()
+    runtime_dir = tmp_path / "run"
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+
+    vm = _make_vm(compute_project, manager)
+    vm._ubridge_hypervisor = MagicMock()
+    with patch.object(type(vm), "_unix_socket_host_dir", new_callable=PropertyMock,
+                      return_value=long_dir):
+        await vm._add_ubridge_connection(None, 0)
+        alias = os.path.join(str(runtime_dir), "gns3", f"unixio-{vm.id}")
+        assert os.path.islink(alias) and os.readlink(alias) == long_dir
+        flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
+        assert f'"{os.path.join(alias, "s00.sock")}"' in flat
+        assert long_dir not in flat  # uBridge only ever sees the short path
+
+        vm._ubridge_hypervisor.stop = AsyncioMagicMock()
+        await vm._stop_ubridge()
+        assert not os.path.lexists(alias)

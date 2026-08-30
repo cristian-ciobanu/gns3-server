@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 
 from gns3server.utils.asyncio import wait_for_file_creation
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
@@ -103,6 +104,7 @@ class VendorDockerVM(DockerVM):
         self._stop_timeout = 60
         self._unix_socket_nio = False
         self._unix_socket_dir = "/tmp"
+        self._unix_socket_aliases = set()
         if self._environment:
             for _line in self._environment.splitlines():
                 _line = _line.strip().rstrip(",")
@@ -326,6 +328,50 @@ class VendorDockerVM(DockerVM):
         """
         return os.path.join(self.working_dir, os.path.relpath(self._unix_socket_dir, "/"))
 
+    def _unix_socket_wiring_dir(self):
+        """
+        Directory to reference in the uBridge unix-NIO commands.
+
+        AF_UNIX paths are capped at 107 bytes (sun_path minus the NUL), and a
+        node volume directory (projects/<uuid>/project-files/docker/<uuid>/tmp)
+        alone is ~120 — uBridge would reject the NIO with "invalid file path
+        size". Long directories are therefore aliased through a symlink in the
+        runtime directory (same trick as the uBridge control socket). uBridge
+        resolves the symlink; the socket files themselves always live in the
+        persisted volume, and the container-side /tmp paths are unaffected.
+        """
+
+        host_dir = self._unix_socket_host_dir
+        if len(host_dir) + len("/c00.sock") <= 107:
+            return host_dir
+
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+        alias = os.path.join(runtime_dir, "gns3", f"unixio-{self.id}")
+        try:
+            os.makedirs(os.path.dirname(alias), mode=0o700, exist_ok=True)
+            if os.path.lexists(alias):
+                os.unlink(alias)
+            os.symlink(host_dir, alias)
+        except OSError as e:
+            raise DockerError(
+                f"Could not create unix-socket alias '{alias}' for container '{self._name}': {e}"
+            )
+        self._unix_socket_aliases.add(alias)
+        return alias
+
+    async def _stop_ubridge(self):
+        """
+        Override: also drop the short-path aliases created for the unix-socket
+        NIO (the sockets themselves are removed by the image's agent / the
+        next start's cleanup).
+        """
+
+        await super()._stop_ubridge()
+        for alias in self._unix_socket_aliases:
+            with contextlib.suppress(OSError):
+                os.unlink(alias)
+        self._unix_socket_aliases.clear()
+
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Override: with GNS3_UNIX_SOCKET_NIO, bridge the adapter through the
@@ -361,8 +407,9 @@ class VendorDockerVM(DockerVM):
         self._bridges.add(bridge_name)
 
         host_dir = self._unix_socket_host_dir
-        local_sock = os.path.join(host_dir, f"c{adapter_number:02d}.sock")
-        remote_sock = os.path.join(host_dir, f"s{adapter_number:02d}.sock")
+        wiring_dir = self._unix_socket_wiring_dir()
+        local_sock = os.path.join(wiring_dir, f"c{adapter_number:02d}.sock")
+        remote_sock = os.path.join(wiring_dir, f"s{adapter_number:02d}.sock")
 
         # A c-socket left over from a previous ubridge run would fail its bind.
         with contextlib.suppress(OSError):
