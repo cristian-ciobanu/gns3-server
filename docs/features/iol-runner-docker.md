@@ -103,7 +103,7 @@ API docs for the auth flow), or in the Web UI under
 | `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
 | `memory` | optional; `0` (default) = no cap | Unset works — Docker applies no limit. When you do set a cap, keep it at IOL memory + ~512 MB, or the cgroup OOM-killer shoots the router. |
 | `console_type` | `telnet` | The runner muxes the IOS console onto PID 1 stdio; `docker_exec` is not needed. |
-| `adapters` | multiple of 4 | IOL port granularity; interfaces are `Ethernet0/0`-style. |
+| `adapters` | multiple of 4 | IOL port granularity. Ports are shown as `Ethernet0/0`-style (one 4-port unit per adapter range), matching the IOS CLI. |
 
 ### Verify
 
