@@ -93,7 +93,12 @@ API docs for the auth flow), or in the Web UI under
     "console_type": "telnet",
     "environment": "GNS3_IOL_RUNNER=1",
     "extra_volumes": ["/config"],
-    "memory": 2560
+    "custom_adapters": [
+        {"adapter_number": 0, "port_name": "Ethernet0/0"},
+        {"adapter_number": 1, "port_name": "Ethernet0/1"},
+        {"adapter_number": 2, "port_name": "Ethernet0/2"},
+        {"adapter_number": 3, "port_name": "Ethernet0/3"}
+    ]
 }
 ```
 
@@ -101,17 +106,20 @@ API docs for the auth flow), or in the Web UI under
 |---|---|---|
 | `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048). |
 | `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
+| `custom_adapters` | one entry per adapter | Names each port after the IOL interface it maps to: adapter `N` → `Ethernet{N/4}/{N%4}` (same mechanism SR Linux uses for `mgmt0`/`e1-1`). Raise the list up to `Ethernet7/3` (32 ports, the IOL maximum) when raising `adapters`; adapters beyond the list fall back to `eth{N}`. |
 | `memory` | optional; `0` (default) = no cap | Unset works — Docker applies no limit. When you do set a cap, keep it at IOL memory + ~512 MB, or the cgroup OOM-killer shoots the router. |
 | `console_type` | `telnet` | The runner muxes the IOS console onto PID 1 stdio; `docker_exec` is not needed. |
-| `adapters` | multiple of 4 | IOL port granularity. Ports are shown as `Ethernet0/0`-style (one 4-port unit per adapter range), matching the IOS CLI. |
+| `adapters` | multiple of 4 | IOL port granularity (one 4-port unit per range). |
 
 ### Verify
 
-1. Drop a node into a project and start it — the console shows the
+1. The node's port list shows `Ethernet0/0`… (from the template's
+   `custom_adapters`).
+2. Drop a node into a project and start it — the console shows the
    `Linux Unix (i686)` banner within seconds.
-2. `$XDG_RUNTIME_DIR/gns3/unixio/<node-id>/` contains `s00.sock`… (one
+3. `$XDG_RUNTIME_DIR/gns3/unixio/<node-id>/` contains `s00.sock`… (one
    pair per adapter).
-3. The startup-config lives at
+4. The startup-config lives at
    `project-files/docker/<node>/tmp/run/config` (interface names
    `Ethernet0/0`, not `GigabitEthernet0/0`).
 

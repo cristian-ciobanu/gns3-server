@@ -105,15 +105,6 @@ class IOLDockerVM(VendorDockerVM):
                 volumes.append(needed)
         return volumes
 
-    def _get_container_ifname(self, adapter_number):
-        """
-        Override: name ports after the IOL interface they map to
-        (Ethernet0/0, Ethernet0/1, … — a new 4-port unit every four
-        adapters), so what the GNS3 UI shows matches the IOS CLI. Wiring is
-        unaffected: the flat adapter number remains the socket index.
-        """
-        return f"Ethernet{adapter_number // 4}/{adapter_number % 4}"
-
     async def start(self):
 
         await self._prepare_iol_runtime()

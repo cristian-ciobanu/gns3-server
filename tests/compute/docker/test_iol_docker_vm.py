@@ -178,20 +178,6 @@ def test_iol_memory_knob(compute_project, manager):
 
 
 # ---------------------------------------------------------------------------
-# Port naming
-# ---------------------------------------------------------------------------
-
-def test_ports_are_named_after_iol_interfaces(compute_project, manager):
-
-    vm = _make_vm(compute_project, manager, adapters=8)
-    assert vm._get_container_ifname(0) == "Ethernet0/0"
-    assert vm._get_container_ifname(3) == "Ethernet0/3"
-    # the second 4-port unit starts its own slot numbering
-    assert vm._get_container_ifname(4) == "Ethernet1/0"
-    assert vm._get_container_ifname(7) == "Ethernet1/3"
-
-
-# ---------------------------------------------------------------------------
 # create()
 # ---------------------------------------------------------------------------
 
