@@ -28,17 +28,22 @@ Networking does not use the container's network namespace at all: the runner's
 netiomux exposes per-interface AF_UNIX datagram sockets in the container's
 ``/tmp`` (``s%02d.sock`` receive, ``c%02d.sock`` send — raw Ethernet frames),
 wired by the generic ``GNS3_UNIX_SOCKET_NIO`` capability of VendorDockerVM
-(uBridge reaches them through the container's root in /proc). Because the
-netio bus directory is private to the container's /tmp, the application IDs
-are fixed constants with no cross-node collisions.
+(uBridge reaches them through a per-node runtime directory bound at /tmp —
+see ``VendorDockerVM._unix_socket_host_dir``). Because the netio bus
+directory is private to the node, the application IDs are fixed constants
+with no cross-node collisions.
 
 This class is selected by the ``GNS3_IOL_RUNNER=1`` environment marker.
 """
 
+import contextlib
+import glob
 import json
 import logging
 import os
+import shutil
 
+from gns3server.compute.docker.docker_error import DockerHttp404Error
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
 
 log = logging.getLogger(__name__)
@@ -124,22 +129,40 @@ class IOLDockerVM(VendorDockerVM):
           boot (the runner writes NETMAP there but does not create it).
         * ``<working_dir>/config/iol-config.json`` is rewritten on every
           start so adapter-count and memory changes take effect.
+        * Sockets and netio bus directories left in the wiring directory by a
+          previous (possibly SIGKILLed) run are removed — the runner rebinds
+          them on boot and would fail on a stale file.
 
-        The netiomux sockets and the netio bus directory need no cleanup:
-        they live in the container's own /tmp, which is fresh in every
-        container GNS3 creates (containers are recreated on each start).
+        ``tmp/run`` (startup-config, NVRAM) is never touched. Neither is
+        anything while the container is already running (idempotent start of
+        a live node: the sockets belong to the running runner).
         """
+
+        try:
+            state = await self._get_container_state()
+        except DockerHttp404Error:
+            state = "stopped"
 
         os.makedirs(os.path.join(self.working_dir, "tmp", "run"), exist_ok=True)
         self._write_iol_config()
+
+        if state == "running":
+            return
+
+        wiring_dir = self._unix_socket_wiring_dir()
+        for pattern in ("s??.sock", "c??.sock"):
+            for stale in glob.glob(os.path.join(wiring_dir, pattern)):
+                with contextlib.suppress(OSError):
+                    os.unlink(stale)
+        for netio_dir in glob.glob(os.path.join(wiring_dir, "netio*")):
+            shutil.rmtree(netio_dir, ignore_errors=True)
 
     def _write_iol_config(self):
         """
         Write the runner's config file on the host side of the /config volume.
         The runner drops to user-id/group-id after its setup, so everything it
-        creates is owned by the server user — which is also what lets an
-        unprivileged uBridge traverse /proc/<pid>/root to reach the
-        container's sockets.
+        creates is owned by the server user — which is also what lets the
+        (unprivileged) uBridge write into the node's socket directory.
         """
 
         config = {

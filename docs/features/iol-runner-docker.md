@@ -36,10 +36,11 @@ graph LR
         IOL -->|"netio bus /tmp/netio&lt;uid&gt;/"| NETIOMUX --> SOCKETS
     end
     subgraph Host
-        UBRIDGE["uBridge bridgeN<br/>add_nio_unix /proc/PID/root/tmp/cNN.sock …<br/>+ add_nio_udp (topology)"]
-        VOL["project-files/docker/&lt;node&gt;/config<br/>(+ tmp/run nested bind)"]
+        UBRIDGE["uBridge bridgeN<br/>add_nio_unix …/gns3/unixio/&lt;node&gt;/cNN.sock …<br/>+ add_nio_udp (topology)"]
+        RTDIR["/run/user/&lt;uid&gt;/gns3/unixio/&lt;node&gt;<br/>(bind-mounted at /tmp)"]
+        VOL["project-files/docker/&lt;node&gt;/config<br/>(+ tmp/run, nested bind at /tmp/run)"]
     end
-    SOCKETS <-->|"raw Ethernet frames via<br/>the container root in /proc"| UBRIDGE
+    SOCKETS <-->|"same files, two spellings<br/>(the /tmp bind)"| RTDIR <--> UBRIDGE
     UBRIDGE -.->|"iol-config.json +<br/>persistent /tmp/run"| VOL
 ```
 
@@ -51,25 +52,29 @@ graph LR
   namespace. Per interface N it creates, inside the container's `/tmp`: a
   receive socket `s%02d.sock` (frames sent there are injected into guest
   interface N) and a send-to path `c%02d.sock` (whoever binds it receives
-  the guest's frames). Frames are **raw Ethernet**, one datagram per frame.
-  uBridge reaches both through the container's root in `/proc`
-  (`/proc/<container-pid>/root/tmp/…`) — a short path (AF_UNIX names are
-  capped at 107 bytes, which a project directory path alone would exceed)
-  that requires no volume mount and leaves the sockets ephemeral in the
-  container, fresh in every container GNS3 creates.
+  the guest's frames). Frames are **raw Ethernet**, one datagram per frame —
+  the same two-mailbox convention uBridge's `add_nio_unix` natively speaks
+  (it binds the c-socket, sends to the s-socket). GNS3 bind-mounts a
+  per-node directory from the runtime directory
+  (`/run/user/<uid>/gns3/unixio/<node-id>`, next to the uBridge control
+  sockets) at the container's `/tmp`, so uBridge reaches the sockets as
+  plain host files: the path stays far under AF_UNIX's 107-byte `sun_path`
+  cap (a projects-tree node path alone exceeds it) and the directory is
+  owned by the server user, to whom the runner drops its privileges. This
+  mirrors how CML itself runs the image (`source=…/tmp,target=/tmp` in its
+  node definition). The directory is ephemeral and removed with the node.
 * **Licensing**: the image ships a self-consistent `/etc/hostid` + `.iourc`
   pair, and the runner regenerates the license from the host ID at boot —
   nothing to configure.
 * **Persistence**: `/tmp/run` (the IOL working directory) holds the NETMAP,
   the startup-config (`config`, plain IOS format) and NVRAM (`nvram_00001`).
   It is the only `/tmp` path that needs to survive: GNS3 bind-mounts the
-  node directory's `tmp/run/` at `/tmp/run`, so the router's configuration
-  survives stop/start and container recreation while everything else in
-  `/tmp` stays ephemeral. The generated config maps the runner to the
-  server's uid/gid (`user-id`/`group-id`), so all files it creates are owned
-  by the server user — which is also what lets an unprivileged uBridge
-  traverse `/proc/<pid>/root` to reach the container's sockets (no
-  permission-fix pass needed).
+  node directory's `tmp/run/` at `/tmp/run` (nested inside the runtime-dir
+  bind), so the router's configuration survives stop/start and container
+  recreation while sockets, netio buses and runner logs stay ephemeral.
+  The generated config maps the runner to the server's uid/gid
+  (`user-id`/`group-id`), so all files it creates are owned by the server
+  user (no permission-fix pass needed).
 
 ## Template
 
@@ -95,9 +100,9 @@ keeps the template self-documenting.
 
 | Mechanism | Where | What it does |
 |---|---|---|
-| `GNS3_UNIX_SOCKET_NIO=1` | `VendorDockerVM` | `_add_ubridge_connection` override: `bridge create` + `bridge add_nio_unix /proc/<pid>/root<dir>/c{N:02d}.sock /proc/<pid>/root<dir>/s{N:02d}.sock` instead of TAP + `docker move_to_ns`. No TAP allocation, no `set_mac_addr`, namespace untouched, no volume required. |
+| `GNS3_UNIX_SOCKET_NIO=1` | `VendorDockerVM` | `_add_ubridge_connection` override: `bridge create` + `bridge add_nio_unix <dir>/c{N:02d}.sock <dir>/s{N:02d}.sock` instead of TAP + `docker move_to_ns`. No TAP allocation, no `set_mac_addr`, namespace untouched. The socket directory is bound from a per-node runtime directory unless a persisted volume already covers it. |
 | `GNS3_UNIX_SOCKET_DIR=<dir>` | `VendorDockerVM` | In-container socket directory (default `/tmp`). Any image whose agent exposes the `s%02d`/`c%02d` datagram pairs can use this without the IOL specifics. |
-| `GNS3_IOL_RUNNER=1` | `IOLDockerVM` (selected in the manager) | Forces skip-init + unix-socket NIO + the `/config` and `/tmp/run` volumes; on every start writes `<node>/config/iol-config.json` (`num-eth` = adapter count, `num-serial` = 0, memory from `GNS3_IOL_MEMORY`, default 2048) and creates `<node>/tmp/run/` (the IOL process dies without it). |
+| `GNS3_IOL_RUNNER=1` | `IOLDockerVM` (selected in the manager) | Forces skip-init + unix-socket NIO + the `/config` and `/tmp/run` volumes; on every start writes `<node>/config/iol-config.json` (`num-eth` = adapter count, `num-serial` = 0, memory from `GNS3_IOL_MEMORY`, default 2048), creates `<node>/tmp/run/` (the IOL process dies without it) and removes stale sockets/netio dirs from the socket directory (`tmp/run` is never touched). |
 | `restart()` hardening | `IOLDockerVM` | The base `docker restart` would boot the runner on a stale config and leave uBridge wired to the previous run's sockets; reload becomes graceful stop (SIGTERM → NVRAM flush) + full start. |
 
 `GNS3_STOP_TIMEOUT` (default 60) controls the SIGTERM grace period on stop.
@@ -112,6 +117,9 @@ diagnosing wiring issues).
   + ~512 MB headroom or the OOM-killer will shoot the router.
 * **MAC addresses**: the `mac_address` template field and per-adapter custom
   MACs are ignored — IOL derives its own scheme (`aabb.cc00.0XY0`).
+* **Interface names are IOL-style `Ethernet0/0`**, not `GigabitEthernet0/0`
+  (4 ports per unit, matching the adapter-count granularity) — startup
+  configs addressing `GigabitEthernet…` are rejected by the parser.
 * **Adapters**: change the adapter count while the node is stopped; the
   config is regenerated on the next start and the runner creates the
   matching socket set (IOL granularity is 4 ports per unit).

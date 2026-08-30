@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 
 from gns3server.utils.asyncio import wait_for_file_creation
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
@@ -70,13 +71,16 @@ class VendorDockerVM(DockerVM):
       network namespace. For images whose network agent exposes, per adapter
       ``N``, a receive socket ``s%02d.sock`` and a send-to path ``c%02d.sock``
       (raw Ethernet frames, one datagram per frame) inside the container —
-      e.g. Cisco CML's iol-runner (see IOLDockerVM). uBridge reaches the
-      sockets through the container's root in ``/proc`` (see
-      ``_unix_socket_wiring_dir``), so no volume mount is required; it binds
+      e.g. Cisco CML's iol-runner (see IOLDockerVM). uBridge binds
       ``c{N:02d}.sock`` (its receive side) and sends to ``s{N:02d}.sock``.
-      No TAP is created, the container's network namespace is untouched and
-      the ``mac_address`` template field is ignored (the image's agent owns
-      the MAC scheme).
+      Unless the directory is already covered by a persisted volume, a
+      per-node directory from the runtime directory is bind-mounted there —
+      owned by the server user (such agents drop privileges and cannot write
+      into a root-owned directory) and short enough for an AF_UNIX path,
+      which a node directory inside the projects tree exceeds. No TAP is
+      created, the container's network namespace is untouched and the
+      ``mac_address`` template field is ignored (the image's agent owns the
+      MAC scheme).
     * ``GNS3_UNIX_SOCKET_DIR=<dir>`` — in-container directory holding the
       socket files (default ``/tmp``).
     """
@@ -165,6 +169,22 @@ class VendorDockerVM(DockerVM):
         are never shadowed by an empty mount.
         """
         binds = super()._mount_binds(image_info)
+        if self._unix_socket_nio:
+            socket_dir = self._unix_socket_dir.rstrip("/")
+            if not any(
+                v.rstrip("/") == socket_dir or socket_dir.startswith(v.rstrip("/") + "/")
+                for v in self._volumes
+            ):
+                # The image's network agent drops privileges before using the
+                # socket directory, so it must be writable by the server user:
+                # bind a per-node directory from the runtime directory (see
+                # _unix_socket_host_dir).
+                binds.append({
+                    "Type": "bind",
+                    "Source": self._unix_socket_host_dir(),
+                    "Target": socket_dir,
+                    "BindOptions": {"Propagation": "rprivate"},
+                })
         if self._gns3_init:
             return binds
         binds = [b for b in binds if b.get("Target") != "/gns3volumes/etc/network"]
@@ -307,20 +327,55 @@ class VendorDockerVM(DockerVM):
             return self._interface_names[adapter_number]
         return f"eth{adapter_number}"
 
-    async def _unix_socket_wiring_dir(self):
+    def _unix_socket_host_dir(self):
         """
-        Host-side directory to reference in the uBridge unix-NIO commands:
-        the container's socket directory reached through its root in /proc.
+        Host-side directory bind-mounted at the in-container socket directory
+        when the latter is not already covered by a persisted volume: a
+        per-node directory under the runtime directory, next to the uBridge
+        control sockets.
 
-        The sockets live in the container's own filesystem (no volume mount
-        needed); /proc/<pid>/root/<dir> resolves to the same files uBridge
-        sees, from outside any namespace. This also keeps the path well under
-        the 107-byte sun_path cap — a node directory (projects/<uuid>/…)
-        alone exceeds it.
+        AF_UNIX paths are capped at 107 bytes (sun_path minus the NUL) — a
+        node directory inside the projects tree (projects/<uuid>/
+        project-files/docker/<uuid>/tmp) alone is ~120, so uBridge would
+        reject the NIO with "invalid file path size". The runtime directory
+        path stays short no matter where the projects live, and being owned
+        by the server user, the image's privilege-dropping agent can write
+        to it.
         """
 
-        pid = await self._get_namespace()
-        return f"/proc/{pid}/root{self._unix_socket_dir}"
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+        host_dir = os.path.join(runtime_dir, "gns3", "unixio", self.id)
+        try:
+            os.makedirs(host_dir, mode=0o700, exist_ok=True)
+        except OSError as e:
+            raise DockerError(
+                f"Could not create unix-socket directory '{host_dir}' for container '{self._name}': {e}"
+            )
+        return host_dir
+
+    def _remove_unix_socket_host_dir(self):
+        """Best-effort removal of the per-node unix-socket directory."""
+
+        if self._unix_socket_nio:
+            shutil.rmtree(self._unix_socket_host_dir(), ignore_errors=True)
+
+    def _unix_socket_wiring_dir(self):
+        """
+        Directory referenced in the uBridge unix-NIO commands: the persisted
+        volume holding the socket directory, or the per-node runtime
+        directory bound there by _mount_binds.
+        """
+
+        socket_dir = self._unix_socket_dir.rstrip("/")
+        for volume in self._volumes:
+            if socket_dir == volume.rstrip("/") or socket_dir.startswith(volume.rstrip("/") + "/"):
+                return os.path.join(self.working_dir, os.path.relpath(socket_dir, "/"))
+        return self._unix_socket_host_dir()
+
+    async def delete(self):
+        # The per-node socket directory is ephemeral; the node is not.
+        await super().delete()
+        self._remove_unix_socket_host_dir()
 
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
@@ -336,9 +391,10 @@ class VendorDockerVM(DockerVM):
         * ``c{N:02d}.sock`` — the path it sends guest-egress frames to.
 
         uBridge binds the c-socket as its receive side and sends to the
-        s-socket (both reached through /proc — see _unix_socket_wiring_dir).
-        No TAP is allocated, the namespace is untouched and guest MAC
-        addresses are whatever the image's agent uses.
+        s-socket (both on the host side of the socket directory — see
+        _unix_socket_wiring_dir). No TAP is allocated, the namespace is
+        untouched and guest MAC addresses are whatever the image's agent
+        uses.
         """
 
         if not self._unix_socket_nio:
@@ -354,31 +410,37 @@ class VendorDockerVM(DockerVM):
             )
 
         bridge_name = f"bridge{adapter_number}"
-        await self._ubridge_send(f"bridge create {bridge_name}")
-        self._bridges.add(bridge_name)
-
-        wiring_dir = await self._unix_socket_wiring_dir()
-        local_sock = os.path.join(wiring_dir, f"c{adapter_number:02d}.sock")
-        remote_sock = os.path.join(wiring_dir, f"s{adapter_number:02d}.sock")
-
-        # A c-socket left over from a previous ubridge run would fail its bind.
-        with contextlib.suppress(OSError):
-            os.unlink(local_sock)
-
-        # The socket appears when the container's agent finishes its interface
-        # setup; wait instead of silently blackholing the adapter.
         try:
-            await wait_for_file_creation(remote_sock, timeout=30)
-        except asyncio.TimeoutError:
-            raise DockerError(
-                f"Socket '{remote_sock}' for adapter {adapter_number} of container "
-                f"'{self._name}' did not appear within 30 seconds. Check that the "
-                f"container's port count covers adapter {adapter_number} and that "
-                f"its network agent creates the per-adapter socket pair in "
-                f"'{self._unix_socket_dir}'."
-            )
+            await self._ubridge_send(f"bridge create {bridge_name}")
+            self._bridges.add(bridge_name)
 
-        await self._ubridge_send(f'bridge add_nio_unix {bridge_name} "{local_sock}" "{remote_sock}"')
+            wiring_dir = self._unix_socket_wiring_dir()
+            local_sock = os.path.join(wiring_dir, f"c{adapter_number:02d}.sock")
+            remote_sock = os.path.join(wiring_dir, f"s{adapter_number:02d}.sock")
+
+            # A c-socket left over from a previous ubridge run would fail its bind.
+            with contextlib.suppress(OSError):
+                os.unlink(local_sock)
+
+            # The socket appears when the container's agent finishes its interface
+            # setup; wait instead of silently blackholing the adapter.
+            try:
+                await wait_for_file_creation(remote_sock, timeout=30)
+            except asyncio.TimeoutError:
+                raise DockerError(
+                    f"Socket '{remote_sock}' for adapter {adapter_number} of container "
+                    f"'{self._name}' did not appear within 30 seconds. Check that the "
+                    f"container's port count covers adapter {adapter_number} and that "
+                    f"its network agent creates the per-adapter socket pair in "
+                    f"'{self._unix_socket_dir}'."
+                )
+
+            await self._ubridge_send(f'bridge add_nio_unix {bridge_name} "{local_sock}" "{remote_sock}"')
+        except Exception:
+            # A half-wired bridge would make the next start fail with
+            # "bridge already exist": uBridge stops with the failed start.
+            await self._stop_ubridge()
+            raise
         adapter.host_ifc = local_sock  # bookkeeping / removal logging only
         log.debug(
             "Adapter %d of container '%s' wired via unix sockets %s <-> %s",
