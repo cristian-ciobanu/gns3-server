@@ -23,7 +23,6 @@ the uBridge command stream.
 """
 
 import asyncio
-import glob
 import json
 import os
 import uuid
@@ -96,6 +95,23 @@ def _seed_proc(stdout=b"seedcid\n", returncode=0):
     proc.communicate = AsyncioMagicMock(return_value=(stdout, b""))
     proc.returncode = returncode
     return proc
+
+
+# A container PID that can never exist on a real host (Linux caps PIDs at
+# 2^22): lets the wiring tests run against /proc paths without any risk of
+# touching a live process's files.
+_FAKE_PID = 4194304
+
+
+async def _no_wait(path, timeout=None):
+    """Stand-in for wait_for_file_creation: pretend the socket is there."""
+    return None
+
+
+def _mock_wiring(vm):
+    """Mock everything _add_ubridge_connection's unix-NIO path needs."""
+    vm._ubridge_hypervisor = MagicMock()
+    vm._get_namespace = AsyncioMagicMock(return_value=_FAKE_PID)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +194,7 @@ async def test_create_keeps_image_entrypoint(compute_project, manager):
 
 
 @pytest.mark.asyncio
-async def test_create_auto_adds_config_and_tmp_volumes(compute_project, manager):
+async def test_create_auto_adds_config_and_tmp_run_volumes(compute_project, manager):
 
     with asyncio_patch("gns3server.compute.docker.Docker.list_images",
                        return_value=[{"image": "iol-xe"}]):
@@ -190,13 +206,16 @@ async def test_create_auto_adds_config_and_tmp_volumes(compute_project, manager)
                 await vm.create()
                 sent = mock.call_args.kwargs["data"]
                 targets = [m["Target"] for m in sent["HostConfig"]["Mounts"]]
-                # both volumes are forced and bound at their real in-container
-                # paths (skip-init retargeting), reachable by uBridge on the host
+                # /config (runner config) and /tmp/run (startup-config + NVRAM)
+                # are forced and bound at their real in-container paths
+                # (skip-init retargeting); the sockets stay in the container's
+                # own /tmp, reached via /proc, so /tmp itself is not a volume
                 assert "/config" in targets
-                assert "/tmp" in targets
+                assert "/tmp/run" in targets
+                assert "/tmp" not in targets
                 assert not any(t.startswith("/gns3volumes/") for t in targets)
                 vol_env = [v for v in sent["Env"] if v.startswith("GNS3_VOLUMES=")][0]
-                assert "/config" in vol_env and "/tmp" in vol_env
+                assert "/config" in vol_env and "/tmp/run" in vol_env
 
 
 @pytest.mark.asyncio
@@ -274,14 +293,16 @@ async def test_start_creates_run_dir(compute_project, manager):
 
 
 @pytest.mark.asyncio
-async def test_start_cleans_stale_sockets_but_keeps_run(compute_project, manager):
+async def test_start_does_no_host_side_socket_cleanup(compute_project, manager):
+    """
+    Sockets live in the container's own /tmp (fresh in every container GNS3
+    creates), so start() must not touch anything under the node's tmp/
+    beyond creating tmp/run.
+    """
 
     vm = _make_vm(compute_project, manager)
     tmp_dir = os.path.join(vm.working_dir, "tmp")
     os.makedirs(os.path.join(tmp_dir, "run"), exist_ok=True)
-    for name in ("s00.sock", "c00.sock", "s01.sock", "c01.sock"):
-        open(os.path.join(tmp_dir, name), "w").close()
-    os.makedirs(os.path.join(tmp_dir, "netio1000"))
     open(os.path.join(tmp_dir, "run", "nvram_00001"), "w").close()
     open(os.path.join(tmp_dir, "run", "config"), "w").close()
 
@@ -290,29 +311,9 @@ async def test_start_cleans_stale_sockets_but_keeps_run(compute_project, manager
         with asyncio_patch("gns3server.compute.docker.Docker.query"):
             await vm.start()
 
-    assert glob.glob(os.path.join(tmp_dir, "s??.sock")) == []
-    assert glob.glob(os.path.join(tmp_dir, "c??.sock")) == []
-    assert not os.path.exists(os.path.join(tmp_dir, "netio1000"))
-    # the persistent runtime survives the cleanup
+    # the persistent runtime is untouched
     assert os.path.exists(os.path.join(tmp_dir, "run", "nvram_00001"))
     assert os.path.exists(os.path.join(tmp_dir, "run", "config"))
-
-
-@pytest.mark.asyncio
-async def test_start_skips_cleanup_when_already_running(compute_project, manager):
-
-    vm = _make_vm(compute_project, manager)
-    tmp_dir = os.path.join(vm.working_dir, "tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    open(os.path.join(tmp_dir, "s00.sock"), "w").close()
-
-    _mock_start(vm, state="running")
-    with patch("gns3server.compute.docker.Docker.install_busybox"):
-        with asyncio_patch("gns3server.compute.docker.Docker.query"):
-            await vm.start()
-
-    # live runner sockets must not be deleted behind its back
-    assert os.path.exists(os.path.join(tmp_dir, "s00.sock"))
 
 
 @pytest.mark.asyncio
@@ -344,49 +345,36 @@ async def test_restart_is_graceful_stop_then_start(compute_project, manager):
 async def test_add_ubridge_connection_unix_wiring(compute_project, manager):
 
     vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
-    host_dir = os.path.join(vm.working_dir, "tmp")
-    os.makedirs(host_dir, exist_ok=True)
-    # the runner's receive socket must exist (created by the container)
-    open(os.path.join(host_dir, "s00.sock"), "w").close()
+    _mock_wiring(vm)
 
     nio = manager.create_nio({"type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"})
-    await vm._add_ubridge_connection(nio, 0)
+    with patch("gns3server.compute.docker.vendor_docker_vm.wait_for_file_creation",
+               side_effect=_no_wait):
+        await vm._add_ubridge_connection(nio, 0)
 
     sent = [c for c in vm._ubridge_hypervisor.method_calls if "send" in str(c)]
     flat = "\n".join(str(c) for c in sent)
-    wiring_dir = vm._unix_socket_wiring_dir()  # may alias host_dir when long
+    local_sock = f"/proc/{_FAKE_PID}/root/tmp/c00.sock"
+    remote_sock = f"/proc/{_FAKE_PID}/root/tmp/s00.sock"
+    # the wiring path rides the container's root in /proc — well under
+    # sun_path's 107 bytes no matter how deep the project directory is
+    assert len(local_sock) <= 107
     assert call.send("bridge create bridge0") in sent
-    assert call.send(f'bridge add_nio_unix bridge0 "{os.path.join(wiring_dir, "c00.sock")}" '
-                    f'"{os.path.join(wiring_dir, "s00.sock")}"') in sent
+    assert call.send(f'bridge add_nio_unix bridge0 "{local_sock}" "{remote_sock}"') in sent
     assert "add_nio_udp bridge0 4242 127.0.0.1 4343" in flat
     assert "bridge start bridge0" in flat
     # the TAP/namespace path must not be used at all
     assert "add_nio_tap" not in flat
     assert "move_to_ns" not in flat
     assert "set_mac_addr" not in flat
-    assert vm._ethernet_adapters[0].host_ifc == os.path.join(wiring_dir, "c00.sock")
-
-
-@pytest.mark.asyncio
-async def test_add_ubridge_connection_stale_local_socket_unlinked(compute_project, manager):
-
-    vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
-    host_dir = os.path.join(vm.working_dir, "tmp")
-    os.makedirs(host_dir, exist_ok=True)
-    open(os.path.join(host_dir, "c00.sock"), "w").close()
-    open(os.path.join(host_dir, "s00.sock"), "w").close()
-
-    await vm._add_ubridge_connection(None, 0)
-    assert not os.path.exists(os.path.join(host_dir, "c00.sock"))
+    assert vm._ethernet_adapters[0].host_ifc == local_sock
 
 
 @pytest.mark.asyncio
 async def test_add_ubridge_connection_adapter_out_of_range(compute_project, manager):
 
     vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
+    _mock_wiring(vm)
     with pytest.raises(DockerError):
         await vm._add_ubridge_connection(None, 42)
 
@@ -395,7 +383,7 @@ async def test_add_ubridge_connection_adapter_out_of_range(compute_project, mana
 async def test_add_ubridge_connection_timeout_is_actionable(compute_project, manager):
 
     vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
+    _mock_wiring(vm)
 
     async def raise_timeout(path, timeout=60):
         raise asyncio.TimeoutError()
@@ -404,21 +392,19 @@ async def test_add_ubridge_connection_timeout_is_actionable(compute_project, man
                side_effect=raise_timeout):
         with pytest.raises(DockerError) as excinfo:
             await vm._add_ubridge_connection(None, 0)
-    # the message names the adapter and the socket directory
+    # the message names the adapter and the exact wiring path
     assert "adapter 0" in str(excinfo.value)
-    assert "/tmp" in str(excinfo.value)
+    assert f"/proc/{_FAKE_PID}/root/tmp/s00.sock" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
 async def test_add_ubridge_connection_without_nio_still_wires(compute_project, manager):
 
     vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
-    host_dir = os.path.join(vm.working_dir, "tmp")
-    os.makedirs(host_dir, exist_ok=True)
-    open(os.path.join(host_dir, "s00.sock"), "w").close()
-
-    await vm._add_ubridge_connection(None, 0)
+    _mock_wiring(vm)
+    with patch("gns3server.compute.docker.vendor_docker_vm.wait_for_file_creation",
+               side_effect=_no_wait):
+        await vm._add_ubridge_connection(None, 0)
     flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
     assert "bridge create bridge0" in flat
     assert "add_nio_unix" in flat
@@ -452,23 +438,16 @@ def test_env_unix_socket_nio_parsing(compute_project, manager):
     assert vm._unix_socket_nio is False
 
 
-@pytest.mark.asyncio
-async def test_unix_socket_dir_must_be_a_volume(compute_project, manager):
+def test_unix_socket_dir_needs_no_volume(compute_project, manager):
 
     vm = VendorDockerVM("vendor-1", str(uuid.uuid4()), compute_project, manager, "vendor:latest",
                         console_type="docker_exec",
                         environment="GNS3_SKIP_INIT=1\nGNS3_UNIX_SOCKET_NIO=1",
                         extra_volumes=[])
-    with pytest.raises(DockerError) as excinfo:
-        vm._mount_binds({"Config": {"Volumes": {}}})
-    assert "extra_volumes" in str(excinfo.value)
-
-    vm = VendorDockerVM("vendor-1", str(uuid.uuid4()), compute_project, manager, "vendor:latest",
-                        console_type="docker_exec",
-                        environment="GNS3_SKIP_INIT=1\nGNS3_UNIX_SOCKET_NIO=1",
-                        extra_volumes=["/tmp"])
+    # sockets are reached through /proc, not through a volume bind — creating
+    # the container without the socket dir in extra_volumes is fine
     binds = vm._mount_binds({"Config": {"Volumes": {}}})
-    assert any(b["Target"] == "/tmp" for b in binds)
+    assert not any(b["Target"] == "/tmp" for b in binds)
 
 
 @pytest.mark.asyncio
@@ -477,44 +456,10 @@ async def test_generic_unix_socket_dir_honored_in_wiring(compute_project, manage
     vm = VendorDockerVM("vendor-1", str(uuid.uuid4()), compute_project, manager, "vendor:latest",
                         console_type="docker_exec",
                         environment="GNS3_SKIP_INIT=1\nGNS3_UNIX_SOCKET_NIO=1\nGNS3_UNIX_SOCKET_DIR=/var/run/socks")
-    vm._ubridge_hypervisor = MagicMock()
-    host_dir = os.path.join(vm.working_dir, "var", "run", "socks")
-    os.makedirs(host_dir, exist_ok=True)
-    open(os.path.join(host_dir, "s00.sock"), "w").close()
-
-    await vm._add_ubridge_connection(None, 0)
-    flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
-    assert f'"{os.path.join(vm._unix_socket_wiring_dir(), "s00.sock")}"' in flat
-    assert "add_nio_tap" not in flat
-
-
-@pytest.mark.asyncio
-async def test_long_socket_path_aliased_through_runtime_dir(compute_project, manager, monkeypatch, tmp_path):
-    """
-    Node volume paths exceed sun_path's 107 bytes; the wiring must alias them
-    through a short symlink so uBridge accepts the NIO (and remove the alias
-    when uBridge stops).
-    """
-
-    from unittest.mock import PropertyMock
-
-    long_dir = str(tmp_path / "a-very-long-project-directory-name" / ("x" * 40) / "tmp")
-    os.makedirs(long_dir, exist_ok=True)
-    open(os.path.join(long_dir, "s00.sock"), "w").close()
-    runtime_dir = tmp_path / "run"
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
-
-    vm = _make_vm(compute_project, manager)
-    vm._ubridge_hypervisor = MagicMock()
-    with patch.object(type(vm), "_unix_socket_host_dir", new_callable=PropertyMock,
-                      return_value=long_dir):
+    _mock_wiring(vm)
+    with patch("gns3server.compute.docker.vendor_docker_vm.wait_for_file_creation",
+               side_effect=_no_wait):
         await vm._add_ubridge_connection(None, 0)
-        alias = os.path.join(str(runtime_dir), "gns3", f"unixio-{vm.id}")
-        assert os.path.islink(alias) and os.readlink(alias) == long_dir
-        flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
-        assert f'"{os.path.join(alias, "s00.sock")}"' in flat
-        assert long_dir not in flat  # uBridge only ever sees the short path
-
-        vm._ubridge_hypervisor.stop = AsyncioMagicMock()
-        await vm._stop_ubridge()
-        assert not os.path.lexists(alias)
+    flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
+    assert f'"/proc/{_FAKE_PID}/root/var/run/socks/s00.sock"' in flat
+    assert "add_nio_tap" not in flat

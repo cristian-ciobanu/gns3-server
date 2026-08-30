@@ -36,10 +36,11 @@ graph LR
         IOL -->|"netio bus /tmp/netio&lt;uid&gt;/"| NETIOMUX --> SOCKETS
     end
     subgraph Host
-        UBRIDGE["uBridge bridgeN<br/>add_nio_unix c00.sock s00.sock<br/>+ add_nio_udp (topology)"]
-        VOL["project-files/docker/&lt;node&gt;/tmp"]
+        UBRIDGE["uBridge bridgeN<br/>add_nio_unix /proc/PID/root/tmp/cNN.sock …<br/>+ add_nio_udp (topology)"]
+        VOL["project-files/docker/&lt;node&gt;/config<br/>(+ tmp/run nested bind)"]
     end
-    SOCKETS <-->|"raw Ethernet frames<br/>(bind volume dir)"| VOL <--> UBRIDGE
+    SOCKETS <-->|"raw Ethernet frames via<br/>the container root in /proc"| UBRIDGE
+    UBRIDGE -.->|"iol-config.json +<br/>persistent /tmp/run"| VOL
 ```
 
 * **Console**: the runner muxes the IOS console onto PID 1 stdio (`-stdio`
@@ -47,21 +48,27 @@ graph LR
   `docker_exec` needed. The runner requires a TTY, which GNS3 always
   allocates; without one the runner exits (`inappropriate ioctl for device`).
 * **Networking**: the runner does not touch the container's network
-  namespace. Per interface N it creates, inside `/tmp`: a receive socket
-  `s%02d.sock` (frames sent there are injected into guest interface N) and a
-  send-to path `c%02d.sock` (whoever binds it receives the guest's frames).
-  Frames are **raw Ethernet**, one datagram per frame. Because `/tmp` is a
-  persisted volume (bind-mounted from the node directory), uBridge can bind
-  `cNN.sock` and send to `sNN.sock` on the host.
+  namespace. Per interface N it creates, inside the container's `/tmp`: a
+  receive socket `s%02d.sock` (frames sent there are injected into guest
+  interface N) and a send-to path `c%02d.sock` (whoever binds it receives
+  the guest's frames). Frames are **raw Ethernet**, one datagram per frame.
+  uBridge reaches both through the container's root in `/proc`
+  (`/proc/<container-pid>/root/tmp/…`) — a short path (AF_UNIX names are
+  capped at 107 bytes, which a project directory path alone would exceed)
+  that requires no volume mount and leaves the sockets ephemeral in the
+  container, fresh in every container GNS3 creates.
 * **Licensing**: the image ships a self-consistent `/etc/hostid` + `.iourc`
   pair, and the runner regenerates the license from the host ID at boot —
   nothing to configure.
-* **Persistence**: `/tmp/run/` inside the volume holds the NETMAP, the
-  startup-config (`config`, plain IOS format) and NVRAM (`nvram_00001`), so
-  the router's configuration survives stop/start and container recreation.
-  The generated config maps the runner to the server's uid/gid
-  (`user-id`/`group-id`), which is also what makes the `/tmp` sockets
-  reachable by uBridge and all volume files owned by the server user (no
+* **Persistence**: `/tmp/run` (the IOL working directory) holds the NETMAP,
+  the startup-config (`config`, plain IOS format) and NVRAM (`nvram_00001`).
+  It is the only `/tmp` path that needs to survive: GNS3 bind-mounts the
+  node directory's `tmp/run/` at `/tmp/run`, so the router's configuration
+  survives stop/start and container recreation while everything else in
+  `/tmp` stays ephemeral. The generated config maps the runner to the
+  server's uid/gid (`user-id`/`group-id`), so all files it creates are owned
+  by the server user — which is also what lets an unprivileged uBridge
+  traverse `/proc/<pid>/root` to reach the container's sockets (no
   permission-fix pass needed).
 
 ## Template
@@ -76,21 +83,21 @@ graph LR
     "adapters": 4,
     "console_type": "telnet",
     "environment": "GNS3_IOL_RUNNER=1",
-    "extra_volumes": ["/config", "/tmp"],
+    "extra_volumes": ["/config"],
     "memory": 2560
 }
 ```
 
-`/config` and `/tmp` are auto-added even if omitted; listing them keeps the
-template self-documenting.
+`/config` and `/tmp/run` are auto-added even if omitted; listing `/config`
+keeps the template self-documenting.
 
 ## Server mechanisms
 
 | Mechanism | Where | What it does |
 |---|---|---|
-| `GNS3_UNIX_SOCKET_NIO=1` | `VendorDockerVM` | `_add_ubridge_connection` override: `bridge create` + `bridge add_nio_unix <dir>/c{N:02d}.sock <dir>/s{N:02d}.sock` instead of TAP + `docker move_to_ns`. No TAP allocation, no `set_mac_addr`, namespace untouched. Fails node creation if the socket dir is not a persisted volume. |
-| `GNS3_UNIX_SOCKET_DIR=<dir>` | `VendorDockerVM` | Socket directory (default `/tmp`). Any image whose agent exposes the `s%02d`/`c%02d` datagram pairs can use this without the IOL specifics. |
-| `GNS3_IOL_RUNNER=1` | `IOLDockerVM` (selected in the manager) | Forces skip-init + unix-socket NIO + the two volumes; on every start writes `<node>/config/iol-config.json` (`num-eth` = adapter count, `num-serial` = 0, memory from `GNS3_IOL_MEMORY`, default 2048), creates `<node>/tmp/run/` (the IOL process dies without it) and removes stale `s/c??.sock` + `netio*` left by an unclean kill (`tmp/run` is never touched). |
+| `GNS3_UNIX_SOCKET_NIO=1` | `VendorDockerVM` | `_add_ubridge_connection` override: `bridge create` + `bridge add_nio_unix /proc/<pid>/root<dir>/c{N:02d}.sock /proc/<pid>/root<dir>/s{N:02d}.sock` instead of TAP + `docker move_to_ns`. No TAP allocation, no `set_mac_addr`, namespace untouched, no volume required. |
+| `GNS3_UNIX_SOCKET_DIR=<dir>` | `VendorDockerVM` | In-container socket directory (default `/tmp`). Any image whose agent exposes the `s%02d`/`c%02d` datagram pairs can use this without the IOL specifics. |
+| `GNS3_IOL_RUNNER=1` | `IOLDockerVM` (selected in the manager) | Forces skip-init + unix-socket NIO + the `/config` and `/tmp/run` volumes; on every start writes `<node>/config/iol-config.json` (`num-eth` = adapter count, `num-serial` = 0, memory from `GNS3_IOL_MEMORY`, default 2048) and creates `<node>/tmp/run/` (the IOL process dies without it). |
 | `restart()` hardening | `IOLDockerVM` | The base `docker restart` would boot the runner on a stale config and leave uBridge wired to the previous run's sockets; reload becomes graceful stop (SIGTERM → NVRAM flush) + full start. |
 
 `GNS3_STOP_TIMEOUT` (default 60) controls the SIGTERM grace period on stop.

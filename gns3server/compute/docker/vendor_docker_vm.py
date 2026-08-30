@@ -32,7 +32,6 @@ import json
 import logging
 import os
 import shutil
-import tempfile
 
 from gns3server.utils.asyncio import wait_for_file_creation
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
@@ -70,16 +69,16 @@ class VendorDockerVM(DockerVM):
       socket files instead of a TAP interface moved into the container's
       network namespace. For images whose network agent exposes, per adapter
       ``N``, a receive socket ``s%02d.sock`` and a send-to path ``c%02d.sock``
-      (raw Ethernet frames, one datagram per frame) inside a persisted volume
-      directory — e.g. Cisco CML's iol-runner (see IOLDockerVM). uBridge
-      binds ``c{N:02d}.sock`` (its receive side) and sends to
-      ``s{N:02d}.sock``. No TAP is created, the container's network namespace
-      is untouched and the ``mac_address`` template field is ignored (the
-      image's agent owns the MAC scheme).
+      (raw Ethernet frames, one datagram per frame) inside the container —
+      e.g. Cisco CML's iol-runner (see IOLDockerVM). uBridge reaches the
+      sockets through the container's root in ``/proc`` (see
+      ``_unix_socket_wiring_dir``), so no volume mount is required; it binds
+      ``c{N:02d}.sock`` (its receive side) and sends to ``s{N:02d}.sock``.
+      No TAP is created, the container's network namespace is untouched and
+      the ``mac_address`` template field is ignored (the image's agent owns
+      the MAC scheme).
     * ``GNS3_UNIX_SOCKET_DIR=<dir>`` — in-container directory holding the
-      socket files (default ``/tmp``). Must be a persisted volume
-      (extra_volumes) so uBridge can reach the sockets on the host; node
-      creation fails with an actionable error otherwise.
+      socket files (default ``/tmp``).
     """
 
     def __init__(self, *args, **kwargs):
@@ -104,7 +103,6 @@ class VendorDockerVM(DockerVM):
         self._stop_timeout = 60
         self._unix_socket_nio = False
         self._unix_socket_dir = "/tmp"
-        self._unix_socket_aliases = set()
         if self._environment:
             for _line in self._environment.splitlines():
                 _line = _line.strip().rstrip(",")
@@ -167,17 +165,6 @@ class VendorDockerVM(DockerVM):
         are never shadowed by an empty mount.
         """
         binds = super()._mount_binds(image_info)
-        if self._unix_socket_nio:
-            socket_dir = self._unix_socket_dir.rstrip("/")
-            if not any(
-                v.rstrip("/") == socket_dir or socket_dir.startswith(v.rstrip("/") + "/")
-                for v in self._volumes
-            ):
-                raise DockerError(
-                    f"GNS3_UNIX_SOCKET_NIO requires socket directory '{self._unix_socket_dir}' of "
-                    f"container '{self._name}' to be a persisted volume (add it to extra_volumes) "
-                    f"so uBridge can reach the sockets on the host"
-                )
         if self._gns3_init:
             return binds
         binds = [b for b in binds if b.get("Target") != "/gns3volumes/etc/network"]
@@ -320,57 +307,20 @@ class VendorDockerVM(DockerVM):
             return self._interface_names[adapter_number]
         return f"eth{adapter_number}"
 
-    @property
-    def _unix_socket_host_dir(self):
+    async def _unix_socket_wiring_dir(self):
         """
-        Host-side path of the in-container unix-socket directory: the bind
-        source of the persisted volume it lives in.
-        """
-        return os.path.join(self.working_dir, os.path.relpath(self._unix_socket_dir, "/"))
+        Host-side directory to reference in the uBridge unix-NIO commands:
+        the container's socket directory reached through its root in /proc.
 
-    def _unix_socket_wiring_dir(self):
-        """
-        Directory to reference in the uBridge unix-NIO commands.
-
-        AF_UNIX paths are capped at 107 bytes (sun_path minus the NUL), and a
-        node volume directory (projects/<uuid>/project-files/docker/<uuid>/tmp)
-        alone is ~120 — uBridge would reject the NIO with "invalid file path
-        size". Long directories are therefore aliased through a symlink in the
-        runtime directory (same trick as the uBridge control socket). uBridge
-        resolves the symlink; the socket files themselves always live in the
-        persisted volume, and the container-side /tmp paths are unaffected.
+        The sockets live in the container's own filesystem (no volume mount
+        needed); /proc/<pid>/root/<dir> resolves to the same files uBridge
+        sees, from outside any namespace. This also keeps the path well under
+        the 107-byte sun_path cap — a node directory (projects/<uuid>/…)
+        alone exceeds it.
         """
 
-        host_dir = self._unix_socket_host_dir
-        if len(host_dir) + len("/c00.sock") <= 107:
-            return host_dir
-
-        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-        alias = os.path.join(runtime_dir, "gns3", f"unixio-{self.id}")
-        try:
-            os.makedirs(os.path.dirname(alias), mode=0o700, exist_ok=True)
-            if os.path.lexists(alias):
-                os.unlink(alias)
-            os.symlink(host_dir, alias)
-        except OSError as e:
-            raise DockerError(
-                f"Could not create unix-socket alias '{alias}' for container '{self._name}': {e}"
-            )
-        self._unix_socket_aliases.add(alias)
-        return alias
-
-    async def _stop_ubridge(self):
-        """
-        Override: also drop the short-path aliases created for the unix-socket
-        NIO (the sockets themselves are removed by the image's agent / the
-        next start's cleanup).
-        """
-
-        await super()._stop_ubridge()
-        for alias in self._unix_socket_aliases:
-            with contextlib.suppress(OSError):
-                os.unlink(alias)
-        self._unix_socket_aliases.clear()
+        pid = await self._get_namespace()
+        return f"/proc/{pid}/root{self._unix_socket_dir}"
 
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
@@ -379,15 +329,16 @@ class VendorDockerVM(DockerVM):
         a TAP interface moved into the container's network namespace.
 
         Per adapter N the image's network agent is expected to create, inside
-        GNS3_UNIX_SOCKET_DIR (a persisted volume, enforced by _mount_binds):
+        GNS3_UNIX_SOCKET_DIR:
 
         * ``s{N:02d}.sock`` — its receive socket; frames sent there are
           injected into guest interface N;
         * ``c{N:02d}.sock`` — the path it sends guest-egress frames to.
 
         uBridge binds the c-socket as its receive side and sends to the
-        s-socket. No TAP is allocated, the namespace is untouched and guest
-        MAC addresses are whatever the image's agent uses.
+        s-socket (both reached through /proc — see _unix_socket_wiring_dir).
+        No TAP is allocated, the namespace is untouched and guest MAC
+        addresses are whatever the image's agent uses.
         """
 
         if not self._unix_socket_nio:
@@ -406,8 +357,7 @@ class VendorDockerVM(DockerVM):
         await self._ubridge_send(f"bridge create {bridge_name}")
         self._bridges.add(bridge_name)
 
-        host_dir = self._unix_socket_host_dir
-        wiring_dir = self._unix_socket_wiring_dir()
+        wiring_dir = await self._unix_socket_wiring_dir()
         local_sock = os.path.join(wiring_dir, f"c{adapter_number:02d}.sock")
         remote_sock = os.path.join(wiring_dir, f"s{adapter_number:02d}.sock")
 
@@ -424,7 +374,8 @@ class VendorDockerVM(DockerVM):
                 f"Socket '{remote_sock}' for adapter {adapter_number} of container "
                 f"'{self._name}' did not appear within 30 seconds. Check that the "
                 f"container's port count covers adapter {adapter_number} and that "
-                f"'{self._unix_socket_dir}' is bind-mounted from the node directory."
+                f"its network agent creates the per-adapter socket pair in "
+                f"'{self._unix_socket_dir}'."
             )
 
         await self._ubridge_send(f'bridge add_nio_unix {bridge_name} "{local_sock}" "{remote_sock}"')

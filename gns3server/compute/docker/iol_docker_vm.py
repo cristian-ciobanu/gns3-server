@@ -25,22 +25,20 @@ and muxes the IOS console onto PID 1 stdio (works with the plain ``telnet``
 console type; requires a TTY, which GNS3 always allocates).
 
 Networking does not use the container's network namespace at all: the runner's
-netiomux exposes per-interface AF_UNIX datagram sockets in ``/tmp``
-(``s%02d.sock`` receive, ``c%02d.sock`` send — raw Ethernet frames), wired by
-the generic ``GNS3_UNIX_SOCKET_NIO`` capability of VendorDockerVM. Because the
-netio bus directory is private to the node's ``/tmp`` volume, the application
-IDs are fixed constants with no cross-node collisions.
+netiomux exposes per-interface AF_UNIX datagram sockets in the container's
+``/tmp`` (``s%02d.sock`` receive, ``c%02d.sock`` send — raw Ethernet frames),
+wired by the generic ``GNS3_UNIX_SOCKET_NIO`` capability of VendorDockerVM
+(uBridge reaches them through the container's root in /proc). Because the
+netio bus directory is private to the container's /tmp, the application IDs
+are fixed constants with no cross-node collisions.
 
 This class is selected by the ``GNS3_IOL_RUNNER=1`` environment marker.
 """
 
-import glob
 import json
 import logging
 import os
-import shutil
 
-from gns3server.compute.docker.docker_error import DockerHttp404Error
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
 
 log = logging.getLogger(__name__)
@@ -58,7 +56,7 @@ class IOLDockerVM(VendorDockerVM):
       OOM-killer will fire.
 
     The marker itself forces ``GNS3_SKIP_INIT`` and the unix-socket NIO wiring,
-    and auto-adds the ``/config`` and ``/tmp`` persistent volumes, so a
+    and auto-adds the ``/config`` and ``/tmp/run`` persistent volumes, so a
     template containing only ``GNS3_IOL_RUNNER=1`` is fully configured.
     """
 
@@ -90,13 +88,14 @@ class IOLDockerVM(VendorDockerVM):
     def _persistent_volume_list(self, image_info, include_network_config=True):
         """
         Override: the runner requires ``/config`` (its config file, generated
-        below) and ``/tmp`` (netiomux sockets, NETMAP, NVRAM) as persisted
-        volumes — /tmp because uBridge must reach the sockets on the host.
-        Auto-add both so a minimal template cannot be misconfigured.
+        below) and ``/tmp/run`` (its working directory: startup-config and
+        NVRAM live there — NETMAP and the netiomux sockets are ephemeral and
+        stay in the container's own /tmp). Auto-add both so a minimal
+        template cannot be misconfigured.
         """
 
         volumes = super()._persistent_volume_list(image_info, include_network_config)
-        for needed in (self._IOL_CONFIG_DIR, "/tmp"):
+        for needed in (self._IOL_CONFIG_DIR, self._IOL_RUN_DIR):
             if not any(needed == v or needed.startswith(v.rstrip("/") + "/") for v in volumes):
                 volumes.append(needed)
         return volumes
@@ -119,47 +118,28 @@ class IOLDockerVM(VendorDockerVM):
 
     async def _prepare_iol_runtime(self):
         """
-        Regenerate the node's runtime files before the container starts.
+        Regenerate the node's runtime files before the container starts:
 
         * ``<working_dir>/tmp/run/`` must exist or the IOL process dies at
           boot (the runner writes NETMAP there but does not create it).
         * ``<working_dir>/config/iol-config.json`` is rewritten on every
           start so adapter-count and memory changes take effect.
-        * Ephemeral sockets left by a previous (possibly SIGKILLed) run are
-          removed — the runner rebinds them on boot and would fail on a
-          stale file. ``tmp/run`` is never touched: startup-config and NVRAM
-          persist there.
-        """
 
-        try:
-            state = await self._get_container_state()
-        except DockerHttp404Error:
-            state = "stopped"
+        The netiomux sockets and the netio bus directory need no cleanup:
+        they live in the container's own /tmp, which is fresh in every
+        container GNS3 creates (containers are recreated on each start).
+        """
 
         os.makedirs(os.path.join(self.working_dir, "tmp", "run"), exist_ok=True)
         self._write_iol_config()
-
-        if state == "running":
-            # Idempotent start of a live node: the sockets belong to the
-            # running runner; base start() will return early.
-            return
-
-        tmp_dir = os.path.join(self.working_dir, "tmp")
-        for pattern in ("s??.sock", "c??.sock"):
-            for stale in glob.glob(os.path.join(tmp_dir, pattern)):
-                try:
-                    os.unlink(stale)
-                except OSError:
-                    pass
-        for netio_dir in glob.glob(os.path.join(tmp_dir, "netio*")):
-            shutil.rmtree(netio_dir, ignore_errors=True)
 
     def _write_iol_config(self):
         """
         Write the runner's config file on the host side of the /config volume.
         The runner drops to user-id/group-id after its setup, so everything it
-        creates inside the volumes is owned by the server user (which is also
-        what makes the /tmp sockets reachable by uBridge).
+        creates is owned by the server user — which is also what lets an
+        unprivileged uBridge traverse /proc/<pid>/root to reach the
+        container's sockets.
         """
 
         config = {
