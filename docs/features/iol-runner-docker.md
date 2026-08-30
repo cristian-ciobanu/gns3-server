@@ -78,6 +78,10 @@ graph LR
 
 ## Template
 
+Create the template once via `POST /v3/templates` (authenticated — see the
+API docs for the auth flow), or in the Web UI under
+*Edit → Preferences → Docker templates → New* with the same fields:
+
 ```json
 {
     "name": "IOS-XE 17.18.02 IOL",
@@ -93,8 +97,23 @@ graph LR
 }
 ```
 
-`/config` and `/tmp/run` are auto-added even if omitted; listing `/config`
-keeps the template self-documenting.
+| Field | Value | Why |
+|---|---|---|
+| `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048). |
+| `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
+| `memory` | IOL memory + ~512 MB | Caps the whole container; below that the OOM-killer shoots the router. |
+| `console_type` | `telnet` | The runner muxes the IOS console onto PID 1 stdio; `docker_exec` is not needed. |
+| `adapters` | multiple of 4 | IOL port granularity; interfaces are `Ethernet0/0`-style. |
+
+### Verify
+
+1. Drop a node into a project and start it — the console shows the
+   `Linux Unix (i686)` banner within seconds.
+2. `$XDG_RUNTIME_DIR/gns3/unixio/<node-id>/` contains `s00.sock`… (one
+   pair per adapter).
+3. The startup-config lives at
+   `project-files/docker/<node>/tmp/run/config` (interface names
+   `Ethernet0/0`, not `GigabitEthernet0/0`).
 
 ## Server mechanisms
 
