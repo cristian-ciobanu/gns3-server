@@ -101,7 +101,7 @@ API docs for the auth flow), or in the Web UI under
 |---|---|---|
 | `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048). |
 | `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
-| `memory` | IOL memory + ~512 MB | Caps the whole container; below that the OOM-killer shoots the router. |
+| `memory` | optional; `0` (default) = no cap | Unset works — Docker applies no limit. When you do set a cap, keep it at IOL memory + ~512 MB, or the cgroup OOM-killer shoots the router. |
 | `console_type` | `telnet` | The runner muxes the IOS console onto PID 1 stdio; `docker_exec` is not needed. |
 | `adapters` | multiple of 4 | IOL port granularity; interfaces are `Ethernet0/0`-style. |
 
