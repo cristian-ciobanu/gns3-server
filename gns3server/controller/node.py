@@ -804,22 +804,35 @@ class Node:
             self._ports = DynamipsPortFactory(self._properties)
             return
         elif self._node_type == "docker":
-            for adapter_number in range(0, self._properties["adapters"]):
-                custom_adapter_settings = {}
-                if self.custom_adapters:
-                    for custom_adapter in self.custom_adapters:
-                        if custom_adapter["adapter_number"] == adapter_number:
-                            custom_adapter_settings = custom_adapter
-                            break
-                port_name = f"eth{adapter_number}"
-                port_name = custom_adapter_settings.get("port_name", port_name)
-                mac_address = custom_adapter_settings.get("mac_address")
-                if not mac_address and "mac_address" in self._properties:
-                    mac_address = int_to_macaddress(macaddress_to_int(self._properties["mac_address"]) + adapter_number)
+            if "GNS3_IOL_RUNNER=" in (self._properties.get("environment") or ""):
+                # IOL adapters are 4-port units (the IOU model): ports are
+                # Ethernet0/0-3, Ethernet1/0-3, … addressed as
+                # (adapter_number, port_number 0-3).
+                self._ports = StandardPortFactory(
+                    self._properties,
+                    4,
+                    self._first_port_name,
+                    "Ethernet{segment0}/{port0}",
+                    4,
+                    self.custom_adapters,
+                )
+            else:
+                for adapter_number in range(0, self._properties["adapters"]):
+                    custom_adapter_settings = {}
+                    if self.custom_adapters:
+                        for custom_adapter in self.custom_adapters:
+                            if custom_adapter["adapter_number"] == adapter_number:
+                                custom_adapter_settings = custom_adapter
+                                break
+                    port_name = f"eth{adapter_number}"
+                    port_name = custom_adapter_settings.get("port_name", port_name)
+                    mac_address = custom_adapter_settings.get("mac_address")
+                    if not mac_address and "mac_address" in self._properties:
+                        mac_address = int_to_macaddress(macaddress_to_int(self._properties["mac_address"]) + adapter_number)
 
-                port = PortFactory(port_name, 0, adapter_number, 0, "ethernet", short_name=port_name)
-                port.mac_address = mac_address
-                self._ports.append(port)
+                    port = PortFactory(port_name, 0, adapter_number, 0, "ethernet", short_name=port_name)
+                    port.mac_address = mac_address
+                    self._ports.append(port)
         elif self._node_type in ("ethernet_switch", "ethernet_hub"):
             # Basic node we don't want to have adapter number
             port_number = 0

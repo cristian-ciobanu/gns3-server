@@ -46,6 +46,32 @@ def node(compute, project):
     return node
 
 
+def test_docker_iol_ports_grouped_in_four_port_units(compute, project):
+    """
+    IOL docker nodes (GNS3_IOL_RUNNER) model adapters as 4-port units: ports
+    are Ethernet0/0-3, Ethernet1/0-3, … addressed (adapter, port 0-3), like
+    the native IOU node type. Plain docker nodes keep the flat eth naming.
+    """
+
+    node = Node(project, compute, "iol",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"adapters": 2, "environment": "GNS3_IOL_RUNNER=1"})
+    ports = node.ports
+    assert [p.asdict()["name"] for p in ports] == [
+        "Ethernet0/0", "Ethernet0/1", "Ethernet0/2", "Ethernet0/3",
+        "Ethernet1/0", "Ethernet1/1", "Ethernet1/2", "Ethernet1/3",
+    ]
+    assert (ports[5].adapter_number, ports[5].port_number) == (1, 1)
+    assert ports[5].short_name == "e1/1"
+
+    node = Node(project, compute, "web",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"adapters": 2})
+    assert [p.asdict()["name"] for p in node.ports] == ["eth0", "eth1"]
+
+
 def test_name(compute, project):
     """
     If node use a name template generate names

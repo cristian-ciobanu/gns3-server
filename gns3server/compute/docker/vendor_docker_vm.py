@@ -377,14 +377,17 @@ class VendorDockerVM(DockerVM):
         await super().delete()
         self._remove_unix_socket_host_dir()
 
-    async def _add_ubridge_connection(self, nio, adapter_number):
+    async def _add_ubridge_connection(self, nio, adapter_number, port_number=0):
         """
-        Override: with GNS3_UNIX_SOCKET_NIO, bridge the adapter through the
-        image's AF_UNIX datagram socket pair (raw Ethernet frames) instead of
-        a TAP interface moved into the container's network namespace.
+        Override: with GNS3_UNIX_SOCKET_NIO, bridge the adapter port through
+        the image's AF_UNIX datagram socket pair (raw Ethernet frames)
+        instead of a TAP interface moved into the container's network
+        namespace.
 
-        Per adapter N the image's network agent is expected to create, inside
-        GNS3_UNIX_SOCKET_DIR:
+        Ports are addressed flat across adapters: interface index = adapter
+        number × ports-per-adapter + port number (single-port adapters
+        reduce to the adapter number). Per interface N the image's network
+        agent is expected to create, inside GNS3_UNIX_SOCKET_DIR:
 
         * ``s{N:02d}.sock`` — its receive socket; frames sent there are
           injected into guest interface N;
@@ -398,7 +401,7 @@ class VendorDockerVM(DockerVM):
         """
 
         if not self._unix_socket_nio:
-            return await super()._add_ubridge_connection(nio, adapter_number)
+            return await super()._add_ubridge_connection(nio, adapter_number, port_number)
 
         try:
             adapter = self._ethernet_adapters[adapter_number]
@@ -409,14 +412,15 @@ class VendorDockerVM(DockerVM):
                 )
             )
 
-        bridge_name = f"bridge{adapter_number}"
+        interface_number = adapter_number * adapter.interfaces + port_number
+        bridge_name = self._bridge_name(adapter_number, port_number)
         try:
             await self._ubridge_send(f"bridge create {bridge_name}")
             self._bridges.add(bridge_name)
 
             wiring_dir = self._unix_socket_wiring_dir()
-            local_sock = os.path.join(wiring_dir, f"c{adapter_number:02d}.sock")
-            remote_sock = os.path.join(wiring_dir, f"s{adapter_number:02d}.sock")
+            local_sock = os.path.join(wiring_dir, f"c{interface_number:02d}.sock")
+            remote_sock = os.path.join(wiring_dir, f"s{interface_number:02d}.sock")
 
             # A c-socket left over from a previous ubridge run would fail its bind.
             with contextlib.suppress(OSError):
@@ -443,12 +447,12 @@ class VendorDockerVM(DockerVM):
             raise
         adapter.host_ifc = local_sock  # bookkeeping / removal logging only
         log.debug(
-            "Adapter %d of container '%s' wired via unix sockets %s <-> %s",
-            adapter_number, self._name, local_sock, remote_sock,
+            "Adapter %d port %d of container '%s' wired via unix sockets %s <-> %s",
+            adapter_number, port_number, self._name, local_sock, remote_sock,
         )
 
         if nio:
-            await self._connect_nio(adapter_number, nio)
+            await self._connect_nio(adapter_number, nio, port_number)
 
     def _cleanup_console_resources(self):
         """

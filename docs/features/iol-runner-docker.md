@@ -89,16 +89,10 @@ API docs for the auth flow), or in the Web UI under
     "image": "iol-xe/iol-xe:17-18-02",
     "category": "router",
     "symbol": ":/symbols/router.svg",
-    "adapters": 4,
+    "adapters": 2,
     "console_type": "telnet",
     "environment": "GNS3_IOL_RUNNER=1",
-    "extra_volumes": ["/config"],
-    "custom_adapters": [
-        {"adapter_number": 0, "port_name": "Ethernet0/0"},
-        {"adapter_number": 1, "port_name": "Ethernet0/1"},
-        {"adapter_number": 2, "port_name": "Ethernet0/2"},
-        {"adapter_number": 3, "port_name": "Ethernet0/3"}
-    ]
+    "extra_volumes": ["/config"]
 }
 ```
 
@@ -106,19 +100,19 @@ API docs for the auth flow), or in the Web UI under
 |---|---|---|
 | `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048). |
 | `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
-| `custom_adapters` | one entry per adapter | Names each port after the IOL interface it maps to: adapter `N` → `Ethernet{N/4}/{N%4}` (same mechanism SR Linux uses for `mgmt0`/`e1-1`). Raise the list up to `Ethernet7/3` (32 ports, the IOL maximum) when raising `adapters`; adapters beyond the list fall back to `eth{N}`. |
+| `adapters` | number of 4-port units | The IOU convention: one adapter = `Ethernet0/0`–`Ethernet0/3`, two adapters add `Ethernet1/0`–`1/3`, … (8 units / 32 ports max). Ports are addressed as (adapter, port 0–3) and shown grouped in the UI. |
 | `memory` | optional; `0` (default) = no cap | Unset works — Docker applies no limit. When you do set a cap, keep it at IOL memory + ~512 MB, or the cgroup OOM-killer shoots the router. |
 | `console_type` | `telnet` | The runner muxes the IOS console onto PID 1 stdio; `docker_exec` is not needed. |
-| `adapters` | multiple of 4 | IOL port granularity (one 4-port unit per range). |
 
 ### Verify
 
-1. The node's port list shows `Ethernet0/0`… (from the template's
-   `custom_adapters`).
+1. The node's port list shows the grouped IOL interfaces
+   (`Ethernet0/0`–`Ethernet1/3` for two adapters), addressed
+   (adapter, port).
 2. Drop a node into a project and start it — the console shows the
    `Linux Unix (i686)` banner within seconds.
 3. `$XDG_RUNTIME_DIR/gns3/unixio/<node-id>/` contains `s00.sock`… (one
-   pair per adapter).
+   pair per port).
 4. The startup-config lives at
    `project-files/docker/<node>/tmp/run/config` (interface names
    `Ethernet0/0`, not `GigabitEthernet0/0`).
@@ -147,9 +141,10 @@ diagnosing wiring issues).
 * **Interface names are IOL-style `Ethernet0/0`**, not `GigabitEthernet0/0`
   (4 ports per unit, matching the adapter-count granularity) — startup
   configs addressing `GigabitEthernet…` are rejected by the parser.
-* **Adapters**: change the adapter count while the node is stopped; the
-  config is regenerated on the next start and the runner creates the
-  matching socket set (IOL granularity is 4 ports per unit).
+* **Adapters**: one adapter is a 4-port unit (the IOU model): change the
+  count while the node is stopped; the config is regenerated on the next
+  start (`num-eth` = adapters × 4) and the runner creates the matching
+  socket set.
 * **Stop before editing**: NVRAM is only flushed on a graceful stop (SIGTERM,
   "cleanup done" in `process.log`); a kill loses the running-config changes
   since the last `write memory`.

@@ -259,7 +259,7 @@ async def test_start_writes_iol_config(compute_project, manager):
     with open(os.path.join(vm.working_dir, "config", "iol-config.json")) as f:
         config = json.load(f)
     assert config["binary"] == "/binary.iol"
-    assert config["num-eth"] == 4
+    assert config["num-eth"] == 16  # 4 adapters, each a 4-port unit
     assert config["num-serial"] == 0
     assert config["local-app"] == 1
     assert config["remote-app"] == 2
@@ -285,7 +285,7 @@ async def test_start_rewrites_config_on_adapter_change(compute_project, manager)
             await vm.start()
 
     with open(os.path.join(vm.working_dir, "config", "iol-config.json")) as f:
-        assert json.load(f)["num-eth"] == 8
+        assert json.load(f)["num-eth"] == 32  # 8 adapters × 4 ports
 
 
 @pytest.mark.asyncio
@@ -458,6 +458,56 @@ async def test_add_ubridge_connection_without_nio_still_wires(compute_project, m
     # no link yet: no UDP NIO, no bridge start (matches base semantics)
     assert "add_nio_udp" not in flat
     assert "bridge start" not in flat
+
+
+# ---------------------------------------------------------------------------
+# IOU-style port model — 1 adapter = 4 ethernet ports
+# ---------------------------------------------------------------------------
+
+def test_adapters_are_four_port_units(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager, adapters=2)
+    assert vm.adapters == 2
+    assert len(vm._ethernet_adapters) == 2
+    for adapter in vm._ethernet_adapters:
+        assert adapter.interfaces == 4
+        for port_number in range(4):
+            assert adapter.port_exists(port_number)
+        assert not adapter.port_exists(4)
+
+
+@pytest.mark.asyncio
+async def test_wiring_addresses_ports_within_adapters(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager, adapters=2)
+    _mock_wiring(vm)
+    wiring_dir = _wiring_dir(vm)
+    os.makedirs(wiring_dir, exist_ok=True)
+    # adapter 1, port 2 -> flat interface index 6 (1 * 4 + 2)
+    open(os.path.join(wiring_dir, "s06.sock"), "w").close()
+
+    nio = manager.create_nio({"type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"})
+    await vm._add_ubridge_connection(nio, 1, port_number=2)
+
+    flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
+    assert 'bridge add_nio_unix bridge1_2 ' in flat
+    assert f'"{os.path.join(wiring_dir, "c06.sock")}"' in flat
+    assert f'"{os.path.join(wiring_dir, "s06.sock")}"' in flat
+    assert "add_nio_udp bridge1_2 4242 127.0.0.1 4343" in flat
+    assert vm._ethernet_adapters[1].host_ifc == os.path.join(wiring_dir, "c06.sock")
+
+
+@pytest.mark.asyncio
+async def test_nio_binding_rejects_port_out_of_range(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager, adapters=2)
+    nio = manager.create_nio({"type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"})
+    with pytest.raises(DockerError) as excinfo:
+        await vm.adapter_add_nio_binding(1, nio, port_number=4)
+    assert "Port 4" in str(excinfo.value)
+
+    with pytest.raises(DockerError):
+        await vm.adapter_add_nio_binding(9, nio, port_number=0)
 
 
 # ---------------------------------------------------------------------------

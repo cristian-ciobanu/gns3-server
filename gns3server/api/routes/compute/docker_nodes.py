@@ -284,7 +284,7 @@ async def create_docker_node_nio(
     """
 
     nio = Docker.instance().create_nio(jsonable_encoder(nio_data, exclude_unset=True))
-    await node.adapter_add_nio_binding(adapter_number, nio)
+    await node.adapter_add_nio_binding(adapter_number, nio, port_number)
     return nio.asdict()
 
 
@@ -302,13 +302,13 @@ async def update_docker_node_nio(
     The port number on the Docker node is always 0.
     """
 
-    nio = node.get_nio(adapter_number)
+    nio = node.get_nio(adapter_number, port_number)
     nio.filters.clear()
     if nio_data.filters:
         nio.filters = nio_data.filters
     nio.markers = nio_data.markers or {}
     nio.suspend = nio_data.suspend
-    await node.adapter_update_nio_binding(adapter_number, nio)
+    await node.adapter_update_nio_binding(adapter_number, nio, port_number)
     return nio.asdict()
 
 
@@ -327,7 +327,7 @@ async def delete_docker_node_nio(
     The port number on the Docker node is always 0.
     """
 
-    await node.adapter_remove_nio_binding(adapter_number)
+    await node.adapter_remove_nio_binding(adapter_number, port_number)
 
 
 @router.post(
@@ -346,7 +346,7 @@ async def start_docker_node_capture(
     """
 
     pcap_file_path = os.path.join(node.project.capture_working_directory(), node_capture_data.capture_file_name)
-    await node.start_capture(adapter_number, pcap_file_path)
+    await node.start_capture(adapter_number, pcap_file_path, port_number)
     return {"pcap_file_path": str(pcap_file_path)}
 
 
@@ -365,7 +365,7 @@ async def stop_docker_node_capture(
     The port number on the Docker node is always 0.
     """
 
-    await node.stop_capture(adapter_number)
+    await node.stop_capture(adapter_number, port_number)
 
 
 @router.get(
@@ -382,7 +382,7 @@ async def stream_pcap_file(
     The port number on the Docker node is always 0.
     """
 
-    nio = node.get_nio(adapter_number)
+    nio = node.get_nio(adapter_number, port_number)
     stream = Docker.instance().stream_pcap_file(nio, node.project.id)
     return StreamingResponse(stream, media_type="application/vnd.tcpdump.pcap")
 

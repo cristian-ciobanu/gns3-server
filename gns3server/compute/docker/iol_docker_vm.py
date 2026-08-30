@@ -43,7 +43,9 @@ import logging
 import os
 import shutil
 
+from gns3server.compute.adapters.ethernet_adapter import EthernetAdapter
 from gns3server.compute.docker.docker_error import DockerHttp404Error
+from gns3server.compute.docker.docker_vm import DockerVM
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
 
 log = logging.getLogger(__name__)
@@ -89,6 +91,28 @@ class IOLDockerVM(VendorDockerVM):
                             self._iol_memory = memory
                     except ValueError:
                         pass
+
+    @DockerVM.adapters.setter
+    def adapters(self, adapters):
+        """
+        Override: one IOL adapter is a 4-port unit — the IOU model. The
+        template's adapter count is the number of units (2 adapters =
+        Ethernet0/0-3 + Ethernet1/0-3); the generated config asks the runner
+        for adapters × 4 interfaces and links address ports as
+        (adapter_number, port_number 0-3).
+        """
+
+        if len(self._ethernet_adapters) == adapters:
+            return
+
+        self._ethernet_adapters.clear()
+        for _ in range(0, adapters):
+            self._ethernet_adapters.append(EthernetAdapter(interfaces=4))
+
+        log.debug(
+            "IOL container '%s': number of 4-port Ethernet adapters set to %d",
+            self._name, adapters,
+        )
 
     def _persistent_volume_list(self, image_info, include_network_config=True):
         """
@@ -168,7 +192,7 @@ class IOLDockerVM(VendorDockerVM):
         config = {
             "binary": "/binary.iol",
             "memory": self._iol_memory,
-            "num-eth": self.adapters,
+            "num-eth": self.adapters * 4,  # every adapter is a 4-port unit
             "num-serial": 0,  # GNS3 docker adapters are ethernet-only
             "local-app": 1,
             "remote-app": 2,
