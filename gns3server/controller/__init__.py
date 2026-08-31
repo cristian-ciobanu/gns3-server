@@ -875,9 +875,8 @@ class Controller:
                 node_template_id = node.template_id
             else:
                 node_template_id = node.get("template_id")
-            if node_template_id and str(node_template_id) == template_id:
+            if node_template_id and str(node_template_id) == template_id and project.name not in project_names:
                 project_names.append(project.name)
-                break
         return project_names
 
     def find_projects_using_image(self, image_filename: str) -> list:
@@ -894,9 +893,8 @@ class Controller:
                 node_properties = node.properties
             else:
                 node_properties = node.get("properties") or {}
-            if _image_referenced(node_properties, image_filename):
+            if _image_referenced(node_properties, image_filename) and project.name not in project_names:
                 project_names.append(project.name)
-                break
         return project_names
 
     def collect_referenced_image_filenames(self) -> set:

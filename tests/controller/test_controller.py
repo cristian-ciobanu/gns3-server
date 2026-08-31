@@ -575,11 +575,36 @@ async def test_find_projects_using_template_and_images(controller):
     assert "base.qcow2" in referenced
     assert "disk.qcow2" in referenced
 
+    # a second node from the same template in the same project must not
+    # list the project twice
+    await project1.add_node(
+        compute,
+        "n1-bis",
+        None,
+        node_type="vpcs",
+        template_id=template_id,
+        properties={},
+    )
+    assert controller.find_projects_using_template(template_id) == ["Test1"]
+
+    # a second project using the same template and image must be listed too
+    await project2.add_node(
+        compute,
+        "n2-bis",
+        None,
+        node_type="vpcs",
+        template_id=template_id,
+        properties={"hda_disk_image_backing_file": "base.qcow2"},
+    )
+    assert controller.find_projects_using_template(template_id) == ["Test1", "Test2"]
+    assert controller.find_projects_using_image("base.qcow2") == ["Test1", "Test2"]
+    assert controller.find_projects_using_image("disk.qcow2") == ["Test1"]
+
     # closed projects: same answers from the .gns3 file on disk
     await project1.close()
     await project2.close()
-    assert controller.find_projects_using_template(template_id) == ["Test1"]
-    assert controller.find_projects_using_image("base.qcow2") == ["Test1"]
+    assert controller.find_projects_using_template(template_id) == ["Test1", "Test2"]
+    assert controller.find_projects_using_image("base.qcow2") == ["Test1", "Test2"]
     assert controller.find_projects_using_image("disk.qcow2") == ["Test1"]
 
 
