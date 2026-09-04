@@ -177,6 +177,18 @@ diagnosing wiring issues).
 
 ## Notes and caveats
 
+* **Console typing latency**: single keystrokes are echoed on a ~50 ms
+  cadence — the image services console input on an internal poll.
+  Measured directly on the container console (bypassing the GNS3 server
+  entirely, through the same Docker attach endpoint it uses): keystroke
+  echo is bimodal — 1–11 ms when the keystroke lands just before a poll
+  tick, ~50–100 ms when it just misses one — while a pasted line is
+  picked up as one batch (~1.4 ms) and command output streams
+  back-to-back (inter-frame gaps ~0.01 ms). A control container on the
+  same attach endpoint echoes in ~1 ms, so the GNS3 telnet path is not a
+  factor; this matches IOS's low-priority console-input polling and there
+  is nothing to fix server-side. Paste long commands instead of typing
+  them.
 * **Memory sizing**: `memory` caps the whole container; the IOL process gets
   `GNS3_IOL_MEMORY` (default 2048 MB). Keep container memory at IOL memory
   + ~512 MB headroom or the OOM-killer will shoot the router.
