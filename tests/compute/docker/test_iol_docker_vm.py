@@ -81,6 +81,8 @@ def _make_vm(compute_project, manager, environment="GNS3_IOL_RUNNER=1",
         extra_volumes=extra_volumes or [], adapters=adapters,
     )
     vm._cid = "e90e34656842"
+    # mirrors the controller flow, which always delivers an allocated id
+    vm.application_id = 700
     return vm
 
 
@@ -263,7 +265,7 @@ async def test_start_writes_iol_config(compute_project, manager):
     assert config["binary"] == "/binary.iol"
     assert config["num-eth"] == 16  # 4 adapters, each a 4-port unit
     assert config["num-serial"] == 0
-    assert config["local-app"] == 512 + int(vm.id.replace("-", ""), 16) % 511
+    assert config["local-app"] == 700
     assert config["remote-app"] == 1023
     assert config["memory"] == 2048
     assert config["user-id"] == os.getuid()
@@ -271,30 +273,33 @@ async def test_start_writes_iol_config(compute_project, manager):
     assert vm.status == "started"
 
 
-def test_local_app_is_distinct_per_node(compute_project, manager):
-    # IOL derives interface MACs from the app ID: two nodes sharing one would
-    # drop each other's frames as MAC loops, so IDs must differ per node.
-    vm1 = _make_vm(compute_project, manager)
-    vm2 = _make_vm(compute_project, manager)
-    assert vm1.application_id != vm2.application_id
-    for vm in (vm1, vm2):
-        assert 512 <= vm.application_id <= 1022
+@pytest.mark.asyncio
+async def test_missing_application_id_is_an_actionable_error(compute_project, manager):
+    # There is no fallback id on purpose: an uncoordinated one could collide
+    # with a pool allocation and blackhole traffic as a MAC loop. Nodes come
+    # through the controller, which always allocates.
+    vm = _make_vm(compute_project, manager)
+    vm._application_id = None
+    vm._get_container_state = AsyncioMagicMock(return_value="stopped")
+
+    with pytest.raises(DockerError, match="no application ID"):
+        await vm._prepare_iol_runtime()
 
 
 @pytest.mark.asyncio
-async def test_allocated_application_id_overrides_fallback(compute_project, manager):
+async def test_allocated_application_id_used(compute_project, manager):
     # The controller allocates the application ID (upper half of the id
-    # space); the node-derived hash is only a fallback without one.
+    # space, disjoint from IOU's); the node uses it verbatim.
     vm = _make_vm(compute_project, manager)
-    vm.application_id = 700
-    assert vm.application_id == 700
+    vm.application_id = 701
+    assert vm.application_id == 701
     _mock_start(vm)
     with patch("gns3server.compute.docker.Docker.install_busybox"):
         with asyncio_patch("gns3server.compute.docker.Docker.query"):
             await vm.start()
     with open(os.path.join(vm.working_dir, "config", "iol-config.json")) as f:
         config = json.load(f)
-    assert config["local-app"] == 700
+    assert config["local-app"] == 701
 
 
 @pytest.mark.asyncio
@@ -734,3 +739,22 @@ def test_asdict_exposes_startup_config_content(compute_project, manager):
     assert vm.asdict()["startup_config_content"] is None
     vm.startup_config_content = "hostname RouterOne"
     assert vm.asdict()["startup_config_content"] == "hostname RouterOne"
+
+
+def test_reparse_on_recreate_keeps_payload_state(compute_project, manager):
+    # create() re-runs _parse_vendor_environment on every (re)create (a stop
+    # removes the container, so every start recreates it): payload-delivered
+    # state must survive the re-parse. Losing the allocated application id
+    # would flip MACs to the fallback hash (colliding with the allocation
+    # pool); losing the startup-config would drop pending PUT edits.
+    vm = _make_vm(compute_project, manager)
+    vm.application_id = 700
+    vm.startup_config_content = "hostname RouterOne"
+
+    vm._parse_vendor_environment()
+
+    assert vm.application_id == 700
+    assert vm.startup_config_content == "hostname RouterOne"
+    assert vm._startup_config_dirty is True
+    # environment-derived state still re-derives
+    assert vm._gns3_init is False and vm._unix_socket_nio is True

@@ -31,8 +31,9 @@ wired by the generic ``GNS3_UNIX_SOCKET_NIO`` capability of VendorDockerVM
 (uBridge reaches them through a per-node runtime directory bound at /tmp —
 see ``VendorDockerVM._unix_socket_host_dir``). The controller allocates the
 IOL application ID (upper half of the id space, disjoint from IOU's) so that
-linked nodes get distinct MACs; without an allocation a stable node-derived
-fallback is used.
+linked nodes get distinct MACs; starting a node without an allocation is an
+error, not a fallback — an uncoordinated id could collide with the pool and
+blackhole traffic as a MAC loop.
 
 This class is selected by the ``GNS3_IOL_RUNNER=1`` environment marker.
 """
@@ -84,6 +85,17 @@ class IOLDockerVM(VendorDockerVM):
     # The runner launches IOL with a fixed 256KB nvram (-n 256)
     _IOL_NVRAM_SIZE_KB = 256
 
+    # Payload-delivered state. Deliberately NOT initialized in
+    # _parse_vendor_environment(): create() re-runs that parser on every
+    # (re)create (a stop removes the container, so every start recreates it)
+    # to pick up environment changes — resetting these there would lose the
+    # controller-allocated application id (MACs would flip to the fallback
+    # hash, colliding with the allocation pool) and any pending
+    # startup-config delivered by a PUT.
+    _application_id = None
+    _startup_config_content = None
+    _startup_config_dirty = False
+
     def _parse_vendor_environment(self):
 
         super()._parse_vendor_environment()
@@ -106,28 +118,17 @@ class IOLDockerVM(VendorDockerVM):
                     except ValueError:
                         pass
 
-        # Application ID allocated by the controller (upper half of the id
-        # space, disjoint from IOU's); None until the create payload carries it.
-        self._application_id = None
-
-        # Startup-config content materialized by the controller from the file
-        # referenced by GNS3_IOL_STARTUP_CONFIG. Applied to the NVRAM at start
-        # time (not in the setter: the application id may not be final yet
-        # when the create payload is applied field by field).
-        self._startup_config_content = None
-        self._startup_config_dirty = False
-
     @property
     def application_id(self) -> int:
         """
         IOL application ID: drives interface MACs (aabb.cc{app}{iface}) and
-        the NVRAM file name. Falls back to a stable per-node value in the
-        IOL Docker half of the id space when no allocation is available
-        (raw compute API use, topologies created before allocation existed).
+        the NVRAM file name. Allocated by the controller from the IOL Docker
+        half of the id space (disjoint from IOU's) — there is deliberately
+        no fallback: an id derived any other way could silently collide with
+        an allocation and blackhole traffic as a MAC loop. Starting a node
+        without one raises (see _prepare_iol_runtime).
         """
 
-        if self._application_id is None:
-            return 512 + int(self.id.replace("-", ""), 16) % 511
         return self._application_id
 
     @application_id.setter
@@ -197,7 +198,7 @@ class IOLDockerVM(VendorDockerVM):
         start pushes the new content with the already-updated name.
         """
 
-        if not self._startup_config_dirty:
+        if not self._startup_config_dirty and self._application_id is not None:
             nvram_file = self._iol_nvram_file()
             if os.path.exists(nvram_file):
                 try:
@@ -301,6 +302,15 @@ class IOLDockerVM(VendorDockerVM):
             state = await self._get_container_state()
         except DockerHttp404Error:
             state = "stopped"
+
+        if self._application_id is None:
+            raise DockerError(
+                f"IOL container '{self._name}' has no application ID: nodes must be "
+                "created through the controller (which allocates one from the pool "
+                "shared with IOU), or created with an explicit application_id "
+                "(512-1022) on the compute API. Without a coordinated ID two nodes "
+                "would share MACs and drop each other's frames as loops."
+            )
 
         os.makedirs(os.path.join(self.working_dir, "tmp", "run"), exist_ok=True)
         self._write_iol_config()

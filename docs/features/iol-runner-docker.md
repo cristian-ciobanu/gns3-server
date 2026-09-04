@@ -140,7 +140,10 @@ from it boots with that configuration as its personal starting point.
   share the nvram container format, so the server-side `nvram_import`
   utility produces a file IOL boots from directly. Consequences:
   * `write memory` survives stop/start and container recreation (a plain
-    restart never re-applies the startup-config over it).
+    restart never re-applies the startup-config over it). The first
+    `write memory` after a server-built NVRAM asks for a one-time
+    `[confirm]` (the builder stamps an IOS 15.4 version marker into the
+    nvram header; press return — IOS then writes its own).
   * Editing a node's `startup_config_content` property (PUT) re-applies it
     on the next start, overwriting what `write memory` had saved — the
     explicit edit wins, as with IOU.
@@ -175,10 +178,10 @@ diagnosing wiring issues).
   ID (`aabb.cc{app}{iface}`), e.g. `aabb.cc03.0400`. The controller
   allocates the ID at node creation from the upper half of the id space
   (512–1022, disjoint from IOU's 1–511, limit 511 IOL Docker nodes across
-  opened projects sharing computes); without an allocation (raw compute API,
-  pre-allocation topologies) a stable node-derived fallback in the same
-  range is used. Nodes sharing an ID would silently drop each other's
-  frames as MAC loops.
+  opened projects sharing computes). Starting a node without an allocation
+  (raw compute API, pre-allocation topologies) is an error, not a fallback —
+  an uncoordinated ID could collide with the pool and make nodes silently
+  drop each other's frames as MAC loops.
 * **Interface names are IOL-style `Ethernet0/0`**, not `GigabitEthernet0/0`
   (4 ports per unit, matching the adapter-count granularity) — startup
   configs addressing `GigabitEthernet…` are rejected by the parser.
