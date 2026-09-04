@@ -261,12 +261,23 @@ async def test_start_writes_iol_config(compute_project, manager):
     assert config["binary"] == "/binary.iol"
     assert config["num-eth"] == 16  # 4 adapters, each a 4-port unit
     assert config["num-serial"] == 0
-    assert config["local-app"] == 1
-    assert config["remote-app"] == 2
+    assert config["local-app"] == int(vm.id.replace("-", ""), 16) % 1022 + 1
+    assert config["remote-app"] == 1023
     assert config["memory"] == 2048
     assert config["user-id"] == os.getuid()
     assert config["group-id"] == os.getgid()
     assert vm.status == "started"
+
+
+def test_local_app_is_distinct_per_node(compute_project, manager):
+    # IOL derives interface MACs from the app ID: two nodes sharing one would
+    # drop each other's frames as MAC loops, so IDs must differ per node.
+    vm1 = _make_vm(compute_project, manager)
+    vm2 = _make_vm(compute_project, manager)
+    id1 = int(vm1.id.replace("-", ""), 16) % 1022 + 1
+    id2 = int(vm2.id.replace("-", ""), 16) % 1022 + 1
+    assert id1 != id2
+    assert 1 <= id1 <= 1022 and 1 <= id2 <= 1022
 
 
 @pytest.mark.asyncio

@@ -29,9 +29,8 @@ netiomux exposes per-interface AF_UNIX datagram sockets in the container's
 ``/tmp`` (``s%02d.sock`` receive, ``c%02d.sock`` send — raw Ethernet frames),
 wired by the generic ``GNS3_UNIX_SOCKET_NIO`` capability of VendorDockerVM
 (uBridge reaches them through a per-node runtime directory bound at /tmp —
-see ``VendorDockerVM._unix_socket_host_dir``). Because the netio bus
-directory is private to the node, the application IDs are fixed constants
-with no cross-node collisions.
+see ``VendorDockerVM._unix_socket_host_dir``). The local application ID is
+derived from the node ID so that linked nodes get distinct MACs.
 
 This class is selected by the ``GNS3_IOL_RUNNER=1`` environment marker.
 """
@@ -194,8 +193,13 @@ class IOLDockerVM(VendorDockerVM):
             "memory": self._iol_memory,
             "num-eth": self.adapters * 4,  # every adapter is a 4-port unit
             "num-serial": 0,  # GNS3 docker adapters are ethernet-only
-            "local-app": 1,
-            "remote-app": 2,
+            # IOL derives interface MACs from the local application ID
+            # (aabb.cc00.0<app><iface>0); every node needs a distinct one or
+            # linked routers share MACs and drop each other's frames as loops.
+            # Derived from the node ID: stable across restarts, unique enough
+            # (CML allocates per-lab sequential IDs for the same reason).
+            "local-app": int(self.id.replace("-", ""), 16) % 1022 + 1,
+            "remote-app": 1023,  # netiomux's fake peer application ID
             "user-id": os.getuid(),
             "group-id": os.getgid(),
         }
