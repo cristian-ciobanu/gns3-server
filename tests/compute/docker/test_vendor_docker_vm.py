@@ -80,6 +80,10 @@ def _make_vm(compute_project, manager, environment=None, console_type="docker_ex
         extra_volumes=extra_volumes or [], adapters=adapters,
     )
     vm._cid = "e90e34656842"
+    # Interface monitoring belongs to DockerVM and is covered by its focused
+    # tests. Keep vendor-console tests independent from a Docker exec stream.
+    vm._start_interface_monitor = AsyncioMagicMock()
+    vm._stop_interface_monitor = AsyncioMagicMock()
     return vm
 
 

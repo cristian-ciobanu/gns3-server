@@ -160,6 +160,37 @@ async def test_stop_tcp_has_no_socket_to_unlink(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# version requirement
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_requires_ubridge_1_2_3(tmp_path, monkeypatch):
+
+    hyp = _make("unix", tmp_path, monkeypatch)
+    with patch(
+        "gns3server.compute.ubridge.hypervisor.subprocess_check_output",
+        new_callable=AsyncMock,
+        return_value="ubridge version 1.2.2",
+    ):
+        with pytest.raises(UbridgeError, match=r">= 1\.2\.3"):
+            await hyp._check_ubridge_version()
+
+
+@pytest.mark.asyncio
+async def test_accepts_ubridge_1_2_3(tmp_path, monkeypatch):
+
+    hyp = _make("unix", tmp_path, monkeypatch)
+    with patch(
+        "gns3server.compute.ubridge.hypervisor.subprocess_check_output",
+        new_callable=AsyncMock,
+        return_value="ubridge version 1.2.3",
+    ):
+        await hyp._check_ubridge_version()
+
+    assert hyp.version == "1.2.3"
+
+
+# ---------------------------------------------------------------------------
 # start: fail-fast on an immediately-exiting uBridge
 # ---------------------------------------------------------------------------
 

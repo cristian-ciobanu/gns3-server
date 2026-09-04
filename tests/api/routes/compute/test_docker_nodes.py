@@ -247,7 +247,8 @@ class TestDockerNodesRoutes:
             "lport": 4242,
             "rport": 4343,
             "rhost": "127.0.0.1",
-            "filters": {"packet_loss": 10}
+            "filters": {"packet_loss": 10},
+            "suspend": False
         }
 
         url = app.url_path_for("compute:create_docker_node_nio",
@@ -259,6 +260,7 @@ class TestDockerNodesRoutes:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["filters"] == {"packet_loss": 10}
         params["filters"] = {}
+        params["suspend"] = True
 
         url = app.url_path_for("compute:update_docker_node_nio",
                                project_id=vm["project_id"],
@@ -270,6 +272,7 @@ class TestDockerNodesRoutes:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["type"] == "nio_udp"
         assert response.json()["filters"] == {}
+        assert response.json()["suspend"] is True
 
     async def test_docker_delete_nio(self, app: FastAPI, compute_client: AsyncClient, vm: dict) -> None:
 

@@ -31,7 +31,7 @@ from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Err
 from gns3server.compute.docker import Docker
 
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import AsyncMock, patch, MagicMock, call
 
 
 @pytest_asyncio.fixture
@@ -48,6 +48,10 @@ async def vm(compute_project, manager):
     vm = DockerVM("test", str(uuid.uuid4()), compute_project, manager, "ubuntu:latest", aux_type="none")
     vm._cid = "e90e34656842"
     vm.mac_address = '02:42:3d:b7:93:00'
+    # Interface monitoring has its own focused tests below. Keep unrelated
+    # lifecycle tests isolated from a real Docker exec stream.
+    vm._start_interface_monitor = AsyncioMagicMock()
+    vm._stop_interface_monitor = AsyncioMagicMock()
     return vm
 
 
@@ -1198,6 +1202,7 @@ async def test_start(vm, manager, free_console_port, tmpdir):
     assert vm._start_ubridge.called
     assert vm._start_console.called
     assert vm._start_aux.called
+    assert vm._start_interface_monitor.called
     assert vm.status == "started"
 
 
@@ -1290,11 +1295,134 @@ async def test_start_unpause(vm):
 
 
 @pytest.mark.asyncio
+async def test_start_already_running_starts_interface_monitor(vm):
+
+    with patch("gns3server.compute.docker.Docker.install_busybox"):
+        with asyncio_patch("gns3server.compute.docker.DockerVM._get_container_state", return_value="running"):
+            await vm.start()
+
+    assert vm.status == "started"
+    vm._start_interface_monitor.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_restart(vm):
 
     with asyncio_patch("gns3server.compute.docker.Docker.query") as mock:
         await vm.restart()
     mock.assert_called_with("POST", "containers/e90e34656842/restart")
+    vm._stop_interface_monitor.assert_called_once()
+    vm._start_interface_monitor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_read_interface_statuses(vm):
+
+    reader = MagicMock()
+    reader.readline = AsyncMock(side_effect=[
+        b"eth0=0x1003\r\n",
+        b"eth0=0x1003\r\n",  # duplicate must not emit again
+        b"eth0=0x1002\r\n",
+        b"unknown=0x1003\r\n",
+        b"eth0=invalid\r\n",
+        b"",
+    ])
+    with patch.object(vm.project, "emit") as emit:
+        await DockerVM._read_interface_statuses(vm, reader)
+
+    assert emit.call_args_list == [
+        call("node.interface_status", {
+            "project_id": vm.project.id,
+            "node_id": vm.id,
+            "adapter_number": 0,
+            "port_number": 0,
+            "status": "started",
+        }),
+        call("node.interface_status", {
+            "project_id": vm.project.id,
+            "node_id": vm.id,
+            "adapter_number": 0,
+            "port_number": 0,
+            "status": "stopped",
+        }),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_interface_statuses_periodically_resynchronizes(vm):
+
+    reader = MagicMock()
+    reader.readline = AsyncMock(side_effect=[b"eth0=0x1003\n", b"eth0=0x1003\n", b""])
+    vm._INTERFACE_STATUS_RESYNC_INTERVAL = 0
+    with patch.object(vm.project, "emit") as emit:
+        await DockerVM._read_interface_statuses(vm, reader)
+
+    assert emit.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_start_interface_monitor(vm, manager):
+
+    reader = MagicMock()
+    reader.readuntil = AsyncMock(return_value=b"HTTP/1.1 101 UPGRADED\r\n\r\n")
+    reader.readline = AsyncMock(return_value=b"")
+    writer = MagicMock()
+    writer.drain = AsyncMock()
+    writer.wait_closed = AsyncMock()
+    manager._api_version = "1.24"
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", return_value={"Id": "monitor-exec"}) as query:
+        with asyncio_patch("asyncio.open_unix_connection", return_value=(reader, writer)):
+            await DockerVM._start_interface_monitor(vm)
+            await asyncio.sleep(0)
+
+    request = query.call_args
+    assert request.args[:2] == ("POST", "containers/e90e34656842/exec")
+    assert request.kwargs["data"]["Cmd"][-1] == "eth0"
+    assert vm._interface_monitor_writer is None
+    writer.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_interface_monitor_is_idempotent(vm):
+
+    vm._interface_monitor_task = MagicMock()
+    vm._interface_monitor_task.done.return_value = False
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query") as query:
+        await DockerVM._start_interface_monitor(vm)
+
+    query.assert_not_called()
+    vm._stop_interface_monitor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_interface_monitor_failure_does_not_fail_node(vm, manager):
+
+    reader = MagicMock()
+    reader.readuntil = AsyncMock(return_value=b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+    writer = MagicMock()
+    writer.drain = AsyncMock()
+    writer.wait_closed = AsyncMock()
+    manager._api_version = "1.24"
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", return_value={"Id": "monitor-exec"}):
+        with asyncio_patch("asyncio.open_unix_connection", return_value=(reader, writer)):
+            await DockerVM._start_interface_monitor(vm)
+
+    assert vm._interface_monitor_task is None
+    writer.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_interface_monitor_rejects_malformed_exec_response(vm):
+
+    with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=None):
+        with asyncio_patch("asyncio.open_unix_connection") as open_connection:
+            await DockerVM._start_interface_monitor(vm)
+
+    open_connection.assert_not_called()
+    assert vm._interface_monitor_task is None
 
 
 @pytest.mark.asyncio
@@ -1313,6 +1441,7 @@ async def test_stop(vm):
     assert mock.stop.called
     assert vm._ubridge_hypervisor is None
     assert vm._fix_permissions.called
+    assert vm._stop_interface_monitor.called
 
 
 @pytest.mark.asyncio
@@ -1538,11 +1667,12 @@ async def test_add_ubridge_connection(vm):
 
     calls = [
         call.send('bridge create bridge0'),
-        call.send("bridge add_nio_tap bridge0 tap-gns3-e0"),
+        call.send("bridge add_nio_tap bridge0 tap-gns3-e0 off"),
         call.send('docker move_to_ns tap-gns3-e0 42 eth0'),
         call.send('bridge add_nio_udp bridge0 4242 127.0.0.1 4343'),
         call.send('bridge start_capture bridge0 "/tmp/capture.pcap"'),
         call.send('bridge start bridge0'),
+        call.send('bridge set_nio_tap_carrier bridge0 on')
     ]
     assert 'bridge0' in vm._bridges
     # We need to check any_order otherwise mock is confused by asyncio
@@ -1591,13 +1721,27 @@ async def test_add_ubridge_connection_none_nio(vm):
 
     calls = [
         call.send('bridge create bridge0'),
-        call.send("bridge add_nio_tap bridge0 tap-gns3-e0"),
+        call.send("bridge add_nio_tap bridge0 tap-gns3-e0 off"),
         call.send('docker move_to_ns tap-gns3-e0 42 eth0'),
 
     ]
     assert 'bridge0' in vm._bridges
     # We need to check any_order ortherwise mock is confused by asyncio
     vm._ubridge_hypervisor.assert_has_calls(calls, any_order=True)
+
+
+@pytest.mark.asyncio
+async def test_set_adapter_carrier(vm):
+
+    vm._ubridge_send = AsyncioMagicMock()
+
+    await vm._set_adapter_carrier(2, True)
+    await vm._set_adapter_carrier(2, False)
+
+    vm._ubridge_send.assert_has_calls([
+        call("bridge set_nio_tap_carrier bridge2 on"),
+        call("bridge set_nio_tap_carrier bridge2 off"),
+    ])
 
 
 @pytest.mark.asyncio
@@ -1642,6 +1786,22 @@ async def test_adapter_add_nio_binding_1(vm):
 
 
 @pytest.mark.asyncio
+async def test_adapter_add_nio_binding_sets_carrier(vm):
+
+    nio = vm.manager.create_nio({
+        "type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"
+    })
+    vm.status = "started"
+    vm._ubridge_hypervisor = MagicMock()
+    vm._connect_nio = AsyncioMagicMock()
+    vm._set_adapter_carrier = AsyncioMagicMock()
+
+    await vm.adapter_add_nio_binding(0, nio)
+
+    vm._set_adapter_carrier.assert_called_once_with(0, True)
+
+
+@pytest.mark.asyncio
 async def test_adapter_udpate_nio_binding_bridge_not_started(vm):
 
     vm._ubridge_apply_filters = AsyncioMagicMock()
@@ -1654,6 +1814,24 @@ async def test_adapter_udpate_nio_binding_bridge_not_started(vm):
         await vm.adapter_add_nio_binding(0, nio)
         await vm.adapter_update_nio_binding(0, nio)
     assert vm._ubridge_apply_filters.called is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_update_nio_binding_sets_suspended_carrier(vm):
+
+    nio = vm.manager.create_nio({
+        "type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"
+    })
+    nio.suspend = True
+    vm.status = "started"
+    vm._ubridge_hypervisor = MagicMock()
+    vm._bridges.add("bridge0")
+    vm._ubridge_apply_filters = AsyncioMagicMock()
+    vm._set_adapter_carrier = AsyncioMagicMock()
+
+    await vm.adapter_update_nio_binding(0, nio)
+
+    vm._set_adapter_carrier.assert_called_once_with(0, False)
 
 
 @pytest.mark.asyncio
@@ -1680,12 +1858,14 @@ async def test_adapter_remove_nio_binding(vm):
            "rhost": "127.0.0.1"}
     nio = vm.manager.create_nio(nio)
     await vm.adapter_add_nio_binding(0, nio)
+    vm.status = "started"
 
     with asyncio_patch("gns3server.compute.docker.DockerVM._ubridge_send") as delete_ubridge_mock:
         await vm.adapter_remove_nio_binding(0)
         assert vm._ethernet_adapters[0].get_nio(0) is None
         delete_ubridge_mock.assert_any_call('bridge stop bridge0')
         delete_ubridge_mock.assert_any_call('bridge remove_nio_udp bridge0 4242 127.0.0.1 4343')
+        delete_ubridge_mock.assert_any_call('bridge set_nio_tap_carrier bridge0 off')
 
 
 @pytest.mark.asyncio

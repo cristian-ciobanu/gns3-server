@@ -20,6 +20,8 @@ Docker container instance.
 
 import sys
 import asyncio
+import contextlib
+import json
 import shutil
 import psutil
 import shlex
@@ -92,6 +94,7 @@ class DockerVM(BaseNode):
         "/sbin/udevadm",
         "/usr/bin/udevadm",
     )
+    _INTERFACE_STATUS_RESYNC_INTERVAL = 10
 
     def __init__(
         self,
@@ -151,6 +154,10 @@ class DockerVM(BaseNode):
         self._permissions_fixed = True
         self._display = None
         self._closing = False
+        self._interface_monitor_writer = None
+        self._interface_monitor_task = None
+        self._interface_statuses = {}
+        self._interface_status_times = {}
 
         self._volumes = []
         # Keep a list of created bridge
@@ -863,6 +870,8 @@ class DockerVM(BaseNode):
         if state == "paused":
             await self.unpause()
         elif state == "running":
+            self.status = "started"
+            await self._start_interface_monitor()
             return
         else:
 
@@ -911,6 +920,7 @@ class DockerVM(BaseNode):
 
         self._permissions_fixed = False
         self.status = "started"
+        await self._start_interface_monitor()
         log.debug(
             "Docker container '{name}' [{image}] started listen for {console_type} on {console}".format(
                 name=self._name, image=self._image, console=self.console, console_type=self.console_type
@@ -1226,7 +1236,9 @@ class DockerVM(BaseNode):
         Restart this Docker container.
         """
 
+        await self._stop_interface_monitor()
         await self.manager.query("POST", f"containers/{self._cid}/restart")
+        await self._start_interface_monitor()
         log.debug("Docker container '{name}' [{image}] restarted".format(name=self._name, image=self._image))
 
     def _cleanup_console_resources(self):
@@ -1258,6 +1270,7 @@ class DockerVM(BaseNode):
         """
 
         try:
+            await self._stop_interface_monitor()
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
@@ -1393,6 +1406,158 @@ class DockerVM(BaseNode):
         """
         return f"eth{adapter_number}"
 
+    async def _start_interface_monitor(self):
+        """Monitor administrative state changes for this container's adapters.
+
+        Docker does not expose guest ``ip link set`` changes as daemon events.
+        Run one small BusyBox loop through the Engine exec API and keep its
+        hijacked output stream open.  The loop samples all GNS3 interfaces in
+        one process; notifications are emitted on changes and periodically to
+        resynchronize newly connected Web UI clients.
+        """
+
+        if self._interface_monitor_task and not self._interface_monitor_task.done():
+            return
+
+        await self._stop_interface_monitor()
+        if not self._cid or not self.adapters:
+            return
+
+        interface_names = [self._get_container_ifname(adapter_number) for adapter_number in range(self.adapters)]
+        script = (
+            "while :; do "
+            "for ifname do "
+            "flags=$(/gns3/bin/busybox cat \"/sys/class/net/$ifname/flags\" 2>/dev/null) || continue; "
+            "/gns3/bin/busybox printf '%s=%s\\n' \"$ifname\" \"$flags\"; "
+            "done; "
+            "/gns3/bin/busybox sleep 1; "
+            "done"
+        )
+
+        try:
+            result = await self.manager.query(
+                "POST",
+                f"containers/{self._cid}/exec",
+                data={
+                    "AttachStdout": True,
+                    "AttachStderr": False,
+                    "Tty": True,
+                    "User": "root",
+                    "Cmd": ["/gns3/bin/busybox", "sh", "-c", script, "sh", *interface_names],
+                },
+            )
+            exec_id = result["Id"]
+            reader, writer = await asyncio.open_unix_connection(self.manager._server_url)
+            body = json.dumps({"Detach": False, "Tty": True})
+            request = (
+                f"POST /v{self.manager._api_version}/exec/{exec_id}/start HTTP/1.1\r\n"
+                "Host: docker\r\n"
+                "Connection: Upgrade\r\n"
+                "Upgrade: tcp\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n\r\n{body}"
+            ).encode()
+            writer.write(request)
+            await writer.drain()
+            headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+            status_line = headers.split(b"\r\n", 1)[0]
+            if b" 101 " not in status_line and b" 200 " not in status_line:
+                raise DockerError(f"Docker interface monitor was rejected: {status_line.decode(errors='ignore')}")
+        except (
+            DockerError,
+            OSError,
+            KeyError,
+            TypeError,
+            RuntimeError,
+            asyncio.IncompleteReadError,
+            asyncio.TimeoutError,
+        ) as e:
+            if 'writer' in locals():
+                await self._close_interface_monitor_writer(writer)
+            log.warning("Could not monitor interfaces for Docker container '%s': %s", self.name, e)
+            return
+
+        self._interface_statuses.clear()
+        self._interface_status_times.clear()
+        self._interface_monitor_writer = writer
+        self._interface_monitor_task = asyncio.create_task(self._read_interface_statuses(reader))
+
+    async def _stop_interface_monitor(self):
+        """Close the Docker exec stream and its reader task."""
+
+        task = self._interface_monitor_task
+        self._interface_monitor_task = None
+        if task:
+            task.cancel()
+        writer = self._interface_monitor_writer
+        self._interface_monitor_writer = None
+        if writer:
+            await self._close_interface_monitor_writer(writer)
+        if task:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._interface_statuses.clear()
+        self._interface_status_times.clear()
+
+    @staticmethod
+    async def _close_interface_monitor_writer(writer):
+        with contextlib.suppress(Exception):
+            writer.close()
+            await writer.wait_closed()
+
+    async def _read_interface_statuses(self, reader):
+        """Read ``ifname=flags`` records and emit changed adapter states."""
+
+        interfaces = {
+            self._get_container_ifname(adapter_number): adapter_number
+            for adapter_number in range(self.adapters)
+        }
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                record = line.decode(errors="replace").strip("\r\n")
+                ifname, separator, flags_text = record.partition("=")
+                adapter_number = interfaces.get(ifname)
+                if not separator or adapter_number is None:
+                    continue
+                try:
+                    is_up = bool(int(flags_text, 0) & 0x1)  # Linux IFF_UP
+                except ValueError:
+                    continue
+                status = "started" if is_up else "stopped"
+                now = asyncio.get_running_loop().time()
+                if (
+                    self._interface_statuses.get(adapter_number) == status
+                    and now - self._interface_status_times.get(adapter_number, 0)
+                    < self._INTERFACE_STATUS_RESYNC_INTERVAL
+                ):
+                    continue
+                self._interface_statuses[adapter_number] = status
+                self._interface_status_times[adapter_number] = now
+                self.project.emit(
+                    "node.interface_status",
+                    {
+                        "project_id": self.project.id,
+                        "node_id": self.id,
+                        "adapter_number": adapter_number,
+                        "port_number": 0,
+                        "status": status,
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError) as e:
+            log.debug("Docker interface monitor for '%s' stopped: %s", self.name, e)
+        finally:
+            if self._interface_monitor_task is asyncio.current_task():
+                self._interface_monitor_task = None
+                writer = self._interface_monitor_writer
+                self._interface_monitor_writer = None
+                if writer:
+                    await self._close_interface_monitor_writer(writer)
+
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Creates a connection in uBridge.
@@ -1424,7 +1589,7 @@ class DockerVM(BaseNode):
         await self._ubridge_send(f"bridge create {bridge_name}")
         self._bridges.add(bridge_name)
         await self._ubridge_send(
-            "bridge add_nio_tap bridge{adapter_number} {hostif}".format(
+            "bridge add_nio_tap bridge{adapter_number} {hostif} off".format(
                 adapter_number=adapter_number, hostif=adapter.host_ifc
             )
         )
@@ -1454,11 +1619,18 @@ class DockerVM(BaseNode):
 
         if nio:
             await self._connect_nio(adapter_number, nio)
+            await self._set_adapter_carrier(adapter_number, not nio.suspend)
 
     async def _get_namespace(self):
 
         result = await self.manager.query("GET", f"containers/{self._cid}/json")
         return int(result["State"]["Pid"])
+
+    async def _set_adapter_carrier(self, adapter_number, connected):
+        """Replicate a Docker adapter's connection state on its TAP device."""
+
+        state = "on" if connected else "off"
+        await self._ubridge_send(f"bridge set_nio_tap_carrier bridge{adapter_number} {state}")
 
     async def _connect_nio(self, adapter_number, nio):
 
@@ -1497,6 +1669,7 @@ class DockerVM(BaseNode):
 
         if self.status == "started" and self.ubridge:
             await self._connect_nio(adapter_number, nio)
+            await self._set_adapter_carrier(adapter_number, not nio.suspend)
 
         adapter.add_nio(0, nio)
         log.debug(
@@ -1518,6 +1691,9 @@ class DockerVM(BaseNode):
             if bridge_name in self._bridges:
                 await self._ubridge_apply_filters(bridge_name, nio.filters)
                 await self._ubridge_apply_markers(bridge_name, nio)
+                if self.status == "started":
+                    await self._set_adapter_carrier(adapter_number, not nio.suspend)
+
     async def adapter_remove_nio_binding(self, adapter_number):
         """
         Removes an adapter NIO binding.
@@ -1540,6 +1716,8 @@ class DockerVM(BaseNode):
         if self.ubridge:
             nio = adapter.get_nio(0)
             bridge_name = f"bridge{adapter_number}"
+            if self.status == "started":
+                await self._set_adapter_carrier(adapter_number, False)
             await self._ubridge_send(f"bridge stop {bridge_name}")
             await self._ubridge_send(
                 "bridge remove_nio_udp bridge{adapter} {lport} {rhost} {rport}".format(
