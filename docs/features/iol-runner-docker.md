@@ -136,7 +136,12 @@ from it boots with that configuration as its personal starting point.
 * **Creation materializes it once**: the controller reads the file and
   sends its content with the node; afterwards the knob is consumed and the
   template file is never referenced again — editing it does not affect
-  existing nodes.
+  existing nodes. The knob also disappears from the node's `environment`
+  (`GNS3_IOL_RUNNER=1` remains — it re-selects the node class on every
+  recreation), so a node whose environment shows only `GNS3_IOL_RUNNER=1`
+  is the normal sign that the file was found and its content delivered;
+  when the file is missing the knob stays in the environment (with a
+  server-side warning) and the lookup is retried at the next creation.
 * **NVRAM is the source of truth at boot** (verified on the runner): the
   content is built into the node's `tmp/run/nvram_<app id>` — IOL and IOU
   share the nvram container format, so the server-side `nvram_import`
