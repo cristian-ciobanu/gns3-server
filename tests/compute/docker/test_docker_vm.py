@@ -1327,11 +1327,10 @@ async def test_read_interface_statuses(vm):
         b"eth0=invalid\r\n",
         b"",
     ])
-    vm.project.emit = MagicMock()
+    with patch.object(vm.project, "emit") as emit:
+        await DockerVM._read_interface_statuses(vm, reader)
 
-    await DockerVM._read_interface_statuses(vm, reader)
-
-    assert vm.project.emit.call_args_list == [
+    assert emit.call_args_list == [
         call("node.interface_status", {
             "project_id": vm.project.id,
             "node_id": vm.id,
@@ -1355,11 +1354,10 @@ async def test_read_interface_statuses_periodically_resynchronizes(vm):
     reader = MagicMock()
     reader.readline = AsyncMock(side_effect=[b"eth0=0x1003\n", b"eth0=0x1003\n", b""])
     vm._INTERFACE_STATUS_RESYNC_INTERVAL = 0
-    vm.project.emit = MagicMock()
+    with patch.object(vm.project, "emit") as emit:
+        await DockerVM._read_interface_statuses(vm, reader)
 
-    await DockerVM._read_interface_statuses(vm, reader)
-
-    assert vm.project.emit.call_count == 2
+    assert emit.call_count == 2
 
 
 @pytest.mark.asyncio
