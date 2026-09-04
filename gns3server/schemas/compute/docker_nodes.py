@@ -69,7 +69,9 @@ class DockerCreate(DockerBase):
     Properties to create a Docker node.
     """
 
-    pass
+    application_id: Optional[int] = Field(
+        None, ge=1, le=1022, description="IOL application ID for iol-runner images (allocated by the controller)"
+    )
 
 
 class DockerUpdate(DockerBase):

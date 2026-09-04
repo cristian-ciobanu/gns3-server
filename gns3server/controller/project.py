@@ -40,7 +40,7 @@ from .udp_link import UDPLink
 from .link import _UNSET
 from ..config import Config
 from ..utils.path import check_path_allowed, get_default_project_directory
-from ..utils.application_id import get_next_application_id
+from ..utils.application_id import get_next_application_id, is_iol_runner_environment
 from ..utils.asyncio.pool import Pool
 from ..utils.packet_filter_validation import validate_bpf_syntax
 from ..utils.asyncio import locking
@@ -67,6 +67,21 @@ def open_required(func):
         return func(self, *args, **kwargs)
 
     return wrapper
+
+
+def _is_iol_docker_kwargs(kwargs) -> bool:
+    """
+    Whether add_node() kwargs describe an iol-runner Docker node. The
+    environment can arrive nested in a ``properties`` dict or as a top-level
+    kwarg (the template path spreads it), matching the two shapes IOU
+    application-id injection handles.
+    """
+
+    if "properties" in kwargs.keys():
+        environment = (kwargs.get("properties") or {}).get("environment")
+    else:
+        environment = kwargs.get("environment")
+    return is_iol_runner_environment(environment)
 
 
 class Project:
@@ -159,7 +174,7 @@ class Project:
             assert self._status != "closed"
             self.dump()
 
-        self._iou_id_lock = asyncio.Lock()
+        self._application_id_lock = asyncio.Lock()
         # Serialise the "ensure project exists on this compute" check in
         # _create_node: without it, concurrent node creations all pass the
         # `compute not in _project_created_on_compute` check before any has
@@ -646,7 +661,7 @@ class Project:
             self._computes.append(compute.id)
 
         if node_type == "iou":
-            async with self._iou_id_lock:
+            async with self._application_id_lock:
                 # IOU application IDs must be allocated serially to avoid duplicates.
                 # The lock must also cover _create_node() because get_next_application_id()
                 # checks in-memory nodes (self._nodes), which are only registered
@@ -657,6 +672,23 @@ class Project:
                     )
                 elif "application_id" not in kwargs.keys() and not kwargs.get("properties"):
                     kwargs["application_id"] = get_next_application_id(self._controller.projects, self._computes)
+                node = await self._create_node(compute, name, node_id, node_type, **kwargs)
+        elif node_type == "docker" and _is_iol_docker_kwargs(kwargs):
+            # IOL Docker nodes derive interface MACs from the application ID
+            # exactly like IOU; they draw from the disjoint upper half of the
+            # id space so the two node types can neither collide nor starve
+            # each other.
+            async with self._application_id_lock:
+                if "properties" in kwargs.keys():
+                    properties = kwargs.get("properties") or {}
+                    if "application_id" not in properties:
+                        properties["application_id"] = get_next_application_id(
+                            self._controller.projects, self._computes, iol_docker=True
+                        )
+                elif "application_id" not in kwargs.keys():
+                    kwargs["application_id"] = get_next_application_id(
+                        self._controller.projects, self._computes, iol_docker=True
+                    )
                 node = await self._create_node(compute, name, node_id, node_type, **kwargs)
         else:
             node = await self._create_node(compute, name, node_id, node_type, **kwargs)

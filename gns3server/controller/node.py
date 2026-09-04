@@ -30,6 +30,7 @@ from .controller_error import (
 from .node_types import BUILTIN_NODE_TYPES
 from .ports.port_factory import PortFactory, StandardPortFactory, DynamipsPortFactory
 from ..utils.images import images_directories
+from ..utils.application_id import is_iol_runner_environment
 from ..utils import macaddress_to_int, int_to_macaddress
 from ..config import Config
 
@@ -804,7 +805,7 @@ class Node:
             self._ports = DynamipsPortFactory(self._properties)
             return
         elif self._node_type == "docker":
-            if "GNS3_IOL_RUNNER=" in (self._properties.get("environment") or ""):
+            if is_iol_runner_environment(self._properties.get("environment")):
                 # IOL adapters are 4-port units (the IOU model): ports are
                 # Ethernet0/0-3, Ethernet1/0-3, … addressed as
                 # (adapter_number, port_number 0-3).

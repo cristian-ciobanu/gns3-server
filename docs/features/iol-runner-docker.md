@@ -138,9 +138,13 @@ diagnosing wiring issues).
   + ~512 MB headroom or the OOM-killer will shoot the router.
 * **MAC addresses**: the `mac_address` template field and per-adapter custom
   MACs are ignored — IOL derives its own scheme from the node's application
-  ID (`aabb.cc{app}{iface}`), e.g. `aabb.cc03.0400`. The ID is derived from
-  the node UUID so linked routers always get distinct MACs (nodes sharing an
-  ID would silently drop each other's frames as MAC loops).
+  ID (`aabb.cc{app}{iface}`), e.g. `aabb.cc03.0400`. The controller
+  allocates the ID at node creation from the upper half of the id space
+  (512–1022, disjoint from IOU's 1–511, limit 511 IOL Docker nodes across
+  opened projects sharing computes); without an allocation (raw compute API,
+  pre-allocation topologies) a stable node-derived fallback in the same
+  range is used. Nodes sharing an ID would silently drop each other's
+  frames as MAC loops.
 * **Interface names are IOL-style `Ethernet0/0`**, not `GigabitEthernet0/0`
   (4 ports per unit, matching the adapter-count granularity) — startup
   configs addressing `GigabitEthernet…` are rejected by the parser.

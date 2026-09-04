@@ -261,7 +261,7 @@ async def test_start_writes_iol_config(compute_project, manager):
     assert config["binary"] == "/binary.iol"
     assert config["num-eth"] == 16  # 4 adapters, each a 4-port unit
     assert config["num-serial"] == 0
-    assert config["local-app"] == int(vm.id.replace("-", ""), 16) % 1022 + 1
+    assert config["local-app"] == 512 + int(vm.id.replace("-", ""), 16) % 511
     assert config["remote-app"] == 1023
     assert config["memory"] == 2048
     assert config["user-id"] == os.getuid()
@@ -274,10 +274,25 @@ def test_local_app_is_distinct_per_node(compute_project, manager):
     # drop each other's frames as MAC loops, so IDs must differ per node.
     vm1 = _make_vm(compute_project, manager)
     vm2 = _make_vm(compute_project, manager)
-    id1 = int(vm1.id.replace("-", ""), 16) % 1022 + 1
-    id2 = int(vm2.id.replace("-", ""), 16) % 1022 + 1
-    assert id1 != id2
-    assert 1 <= id1 <= 1022 and 1 <= id2 <= 1022
+    assert vm1.application_id != vm2.application_id
+    for vm in (vm1, vm2):
+        assert 512 <= vm.application_id <= 1022
+
+
+@pytest.mark.asyncio
+async def test_allocated_application_id_overrides_fallback(compute_project, manager):
+    # The controller allocates the application ID (upper half of the id
+    # space); the node-derived hash is only a fallback without one.
+    vm = _make_vm(compute_project, manager)
+    vm.application_id = 700
+    assert vm.application_id == 700
+    _mock_start(vm)
+    with patch("gns3server.compute.docker.Docker.install_busybox"):
+        with asyncio_patch("gns3server.compute.docker.Docker.query"):
+            await vm.start()
+    with open(os.path.join(vm.working_dir, "config", "iol-config.json")) as f:
+        config = json.load(f)
+    assert config["local-app"] == 700
 
 
 @pytest.mark.asyncio
