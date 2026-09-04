@@ -42,12 +42,15 @@ import glob
 import json
 import logging
 import os
+import re
 import shutil
 
 from gns3server.compute.adapters.ethernet_adapter import EthernetAdapter
-from gns3server.compute.docker.docker_error import DockerHttp404Error
+from gns3server.compute.docker.docker_error import DockerError, DockerHttp404Error
 from gns3server.compute.docker.docker_vm import DockerVM
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
+from gns3server.compute.iou.utils.iou_export import nvram_export
+from gns3server.compute.iou.utils.iou_import import nvram_import
 
 log = logging.getLogger(__name__)
 
@@ -66,10 +69,20 @@ class IOLDockerVM(VendorDockerVM):
     The marker itself forces ``GNS3_SKIP_INIT`` and the unix-socket NIO wiring,
     and auto-adds the ``/config`` and ``/tmp/run`` persistent volumes, so a
     template containing only ``GNS3_IOL_RUNNER=1`` is fully configured.
+
+    Startup configuration follows the IOU model: a template may reference a
+    config file with the ``GNS3_IOL_STARTUP_CONFIG`` environment knob; the
+    controller materializes the file content into ``startup_config_content``
+    when the node is created. The content is built into the node's NVRAM
+    (``tmp/run/nvram_<app id>``) on the next start — IOL boots straight from
+    NVRAM, so a plain stop/start never re-applies it and ``write memory``
+    survives restarts.
     """
 
     _IOL_CONFIG_DIR = "/config"
     _IOL_RUN_DIR = "/tmp/run"
+    # The runner launches IOL with a fixed 256KB nvram (-n 256)
+    _IOL_NVRAM_SIZE_KB = 256
 
     def _parse_vendor_environment(self):
 
@@ -97,6 +110,13 @@ class IOLDockerVM(VendorDockerVM):
         # space, disjoint from IOU's); None until the create payload carries it.
         self._application_id = None
 
+        # Startup-config content materialized by the controller from the file
+        # referenced by GNS3_IOL_STARTUP_CONFIG. Applied to the NVRAM at start
+        # time (not in the setter: the application id may not be final yet
+        # when the create payload is applied field by field).
+        self._startup_config_content = None
+        self._startup_config_dirty = False
+
     @property
     def application_id(self) -> int:
         """
@@ -113,6 +133,99 @@ class IOLDockerVM(VendorDockerVM):
     @application_id.setter
     def application_id(self, value) -> None:
         self._application_id = int(value)
+
+    @property
+    def startup_config_content(self):
+        """
+        Startup-config content, delivered by the controller when the node is
+        created from a template carrying GNS3_IOL_STARTUP_CONFIG (or updated
+        with new content).
+        """
+
+        return self._startup_config_content
+
+    @startup_config_content.setter
+    def startup_config_content(self, content):
+        """
+        Record new startup-config content; it is built into the node's NVRAM
+        on the next start. IOL boots from NVRAM whenever it holds a config, so
+        the content is only pushed when it actually changes — a plain
+        stop/start never re-applies it and `write memory` survives restarts.
+        """
+
+        if not content or content == self._startup_config_content:
+            # An empty value is ignored: erasing the config is not supported
+            # (mirrors the IOU setter) and Web clients PUT "" for unset fields.
+            return
+        self._startup_config_content = content
+        self._startup_config_dirty = True
+
+    def _iol_nvram_file(self) -> str:
+        """
+        The IOL NVRAM file inside the persistent /tmp/run volume. The name
+        embeds the application id (nvram_00772-style, like CML).
+        """
+
+        return os.path.join(self.working_dir, "tmp", "run", f"nvram_{self.application_id:05d}")
+
+    def _apply_pending_startup_config(self) -> None:
+        """
+        Build the node's NVRAM from the recorded startup-config content. IOL
+        and IOU share the same NVRAM container format (startup-config stored
+        as text inside the nvram file system), so the IOU nvram_import
+        utility produces a file IOL boots from directly — valid config, no
+        initial configuration dialog.
+        """
+
+        content = self._startup_config_content.replace("%h", self._name)
+        nvram_file = self._iol_nvram_file()
+        os.makedirs(os.path.dirname(nvram_file), exist_ok=True)
+        try:
+            nvram = nvram_import(None, content.encode("utf-8"), None, self._IOL_NVRAM_SIZE_KB)
+            with open(nvram_file, "wb") as f:
+                f.write(nvram)
+        except (OSError, ValueError) as e:
+            raise DockerError(f"Could not write IOL startup-config to NVRAM of container '{self._name}': {e}")
+        log.debug("IOL container '%s': startup-config written to %s", self._name, nvram_file)
+
+    @DockerVM.name.setter
+    def name(self, new_name):
+        """
+        Override: keep the hostname line inside the NVRAM in sync with the
+        node name (IOU parity), so a renamed or duplicated node boots under
+        its new name. Skipped while a content change is pending — the next
+        start pushes the new content with the already-updated name.
+        """
+
+        if not self._startup_config_dirty:
+            nvram_file = self._iol_nvram_file()
+            if os.path.exists(nvram_file):
+                try:
+                    with open(nvram_file, "rb") as f:
+                        startup_config, _ = nvram_export(f.read())
+                    if startup_config:
+                        content = re.sub(
+                            r"hostname .+$",
+                            "hostname " + new_name,
+                            startup_config.decode("utf-8", errors="replace"),
+                            flags=re.MULTILINE,
+                        )
+                        nvram = nvram_import(None, content.encode("utf-8"), None, self._IOL_NVRAM_SIZE_KB)
+                        with open(nvram_file, "wb") as f:
+                            f.write(nvram)
+                except (OSError, ValueError) as e:
+                    log.warning(f"Could not update hostname in NVRAM of IOL container '{self._name}': {e}")
+        super(IOLDockerVM, IOLDockerVM).name.__set__(self, new_name)
+
+    def asdict(self):
+        """
+        Override: expose the recorded startup-config content (empty for nodes
+        created before the knob existed or reloaded from a topology).
+        """
+
+        result = super().asdict()
+        result["startup_config_content"] = self._startup_config_content
+        return result
 
     @DockerVM.adapters.setter
     def adapters(self, adapters):
@@ -194,6 +307,14 @@ class IOLDockerVM(VendorDockerVM):
 
         if state == "running":
             return
+
+        # Pending startup-config is materialized here rather than in the
+        # property setter: at create-payload time the application id may not
+        # be final yet (the create route applies fields in schema order) and
+        # a running container must not have its NVRAM swapped mid-flight.
+        if self._startup_config_dirty:
+            self._apply_pending_startup_config()
+            self._startup_config_dirty = False
 
         wiring_dir = self._unix_socket_wiring_dir()
         for pattern in ("s??.sock", "c??.sock"):

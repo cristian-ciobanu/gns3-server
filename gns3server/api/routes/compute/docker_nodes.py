@@ -140,6 +140,7 @@ async def update_docker_node(node_data: schemas.DockerUpdate, node: DockerVM = D
         "extra_hosts",
         "extra_volumes",
         "extra_configs",
+        "startup_config_content",
         "memory",
         "cpus",
     ]
@@ -147,7 +148,8 @@ async def update_docker_node(node_data: schemas.DockerUpdate, node: DockerVM = D
     changed = False
     node_data = jsonable_encoder(node_data, exclude_unset=True)
     for prop in props:
-        if prop in node_data and node_data[prop] != getattr(node, prop):
+        # hasattr: startup_config_content only exists on IOLDockerVM
+        if prop in node_data and hasattr(node, prop) and node_data[prop] != getattr(node, prop):
             setattr(node, prop, node_data[prop])
             changed = True
     # We don't call container.update for nothing because it will restart the container

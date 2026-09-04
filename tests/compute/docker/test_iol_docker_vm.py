@@ -40,6 +40,8 @@ from gns3server.compute.docker.docker_vm import DockerVM
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
 from gns3server.compute.docker.iol_docker_vm import IOLDockerVM
 from gns3server.compute.docker.docker_error import DockerError
+from gns3server.compute.iou.utils.iou_export import nvram_export
+from gns3server.compute.iou.utils.iou_import import nvram_import
 
 
 # ---------------------------------------------------------------------------
@@ -601,3 +603,134 @@ async def test_generic_unix_socket_dir_honored_in_wiring(compute_project, manage
     flat = "\n".join(str(c) for c in vm._ubridge_hypervisor.method_calls)
     assert f'"{os.path.join(wiring_dir, "s00.sock")}"' in flat
     assert "add_nio_tap" not in flat
+
+
+# ---------------------------------------------------------------------------
+# Startup configuration
+# ---------------------------------------------------------------------------
+
+
+def _nvram_path(vm):
+    return os.path.join(vm.working_dir, "tmp", "run", f"nvram_{vm.application_id:05d}")
+
+
+def _read_nvram(vm):
+    with open(_nvram_path(vm), "rb") as f:
+        return f.read()
+
+
+async def _start(vm, state="stopped"):
+    _mock_start(vm, state=state)
+    with patch("gns3server.compute.docker.Docker.install_busybox"):
+        with asyncio_patch("gns3server.compute.docker.Docker.query"):
+            await vm.start()
+
+
+@pytest.mark.asyncio
+async def test_startup_config_built_into_nvram_at_start(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname %h\ninterface Ethernet0/0\n ip address dhcp\n no shutdown"
+    await _start(vm)
+
+    startup, _ = nvram_export(_read_nvram(vm))
+    content = startup.decode("utf-8")
+    # %h is substituted with the node name, like the IOU startup-config
+    assert f"hostname {vm.name}" in content
+    assert "ip address dhcp" in content
+    assert vm._startup_config_dirty is False  # consumed
+
+
+@pytest.mark.asyncio
+async def test_plain_restart_never_reapplies_startup_config(compute_project, manager):
+    # IOL boots from NVRAM whenever it holds a config: a plain stop/start must
+    # not rebuild it or `write memory` done in the router would be lost.
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname RouterOne"
+    await _start(vm)
+
+    # simulate `write memory`: IOS rewrites the NVRAM behind our back
+    with open(_nvram_path(vm), "wb") as f:
+        f.write(nvram_import(None, b"hostname RouterSaved\n", None, 256))
+
+    await _start(vm)  # plain restart, no new content delivered
+
+    startup, _ = nvram_export(_read_nvram(vm))
+    assert b"hostname RouterSaved" in startup
+
+
+@pytest.mark.asyncio
+async def test_changed_content_reapplied_at_next_start(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname RouterOne"
+    await _start(vm)
+    vm.startup_config_content = "hostname RouterTwo"
+    assert vm._startup_config_dirty is True
+    await _start(vm)
+
+    startup, _ = nvram_export(_read_nvram(vm))
+    assert b"hostname RouterTwo" in startup
+
+
+@pytest.mark.asyncio
+async def test_empty_content_never_builds_nvram(compute_project, manager):
+    # Web clients PUT "" for unset fields: must be ignored, not treated as a
+    # config change (mirrors the IOU setter's erase protection).
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = ""
+    vm.startup_config_content = None
+    await _start(vm)
+
+    assert not os.path.exists(_nvram_path(vm))
+
+
+@pytest.mark.asyncio
+async def test_reput_unchanged_content_keeps_written_nvram(compute_project, manager):
+    # A full PUT that carries the same content again (WebUI round-trips what
+    # the GET returned) must not re-apply it over `write memory`.
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname RouterOne"
+    await _start(vm)
+
+    with open(_nvram_path(vm), "wb") as f:  # simulate `write memory`
+        f.write(nvram_import(None, b"hostname RouterSaved\n", None, 256))
+
+    vm.startup_config_content = "hostname RouterOne"  # unchanged re-PUT
+    await _start(vm)
+
+    startup, _ = nvram_export(_read_nvram(vm))
+    assert b"hostname RouterSaved" in startup
+
+
+@pytest.mark.asyncio
+async def test_running_container_keeps_pending_config(compute_project, manager):
+    # The NVRAM is only (re)built on a genuine start of a stopped container:
+    # swapping it mid-flight would be lost to the next `write memory`.
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname RouterOne"
+    await _start(vm, state="running")
+
+    assert not os.path.exists(_nvram_path(vm))
+    assert vm._startup_config_dirty is True
+
+
+@pytest.mark.asyncio
+async def test_rename_rewrites_hostname_in_nvram(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)
+    vm.startup_config_content = "hostname %h"
+    await _start(vm)
+
+    vm.name = "renamed-1"  # IOU parity: the node boots under its new name
+
+    startup, _ = nvram_export(_read_nvram(vm))
+    assert b"hostname renamed-1" in startup
+
+
+def test_asdict_exposes_startup_config_content(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)
+    assert vm.asdict()["startup_config_content"] is None
+    vm.startup_config_content = "hostname RouterOne"
+    assert vm.asdict()["startup_config_content"] == "hostname RouterOne"

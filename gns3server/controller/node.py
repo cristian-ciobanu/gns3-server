@@ -40,6 +40,30 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def _extract_iol_startup_config_knob(environment):
+    """
+    Split the GNS3_IOL_STARTUP_CONFIG knob out of a Docker environment
+    (iol-runner images): the value is a config file name, resolved by the
+    controller in its configs directory.
+
+    :returns: (filename, environment without the knob line); filename is None
+        when the knob is absent or empty.
+    """
+
+    if not environment or "GNS3_IOL_STARTUP_CONFIG=" not in environment:
+        return None, environment
+    filename = None
+    kept = []
+    for line in environment.splitlines():
+        stripped = line.strip().rstrip(",")
+        if stripped.startswith("GNS3_IOL_STARTUP_CONFIG="):
+            if filename is None:
+                filename = stripped.split("=", 1)[1].strip()
+        else:
+            kept.append(line)
+    return filename or None, "\n".join(kept)
+
+
 class Node:
     # These properties are used only on controller and are not forwarded to the compute
     CONTROLLER_ONLY_PROPERTIES = [
@@ -573,6 +597,25 @@ class Node:
                     data[v] = self._base_config_file_content(self._properties[k])
                     del data[k]
                     del self._properties[k]  # We send the file only one time
+
+            # IOL runner (Docker) startup-config: translate the config file
+            # referenced by the GNS3_IOL_STARTUP_CONFIG environment knob into
+            # content, like the mappings above. Sent only once — afterwards
+            # the node's configuration lives in its NVRAM on the compute (a
+            # reloaded node is recreated without the knob and boots from the
+            # persistent NVRAM, preserving `write memory`).
+            if self._node_type == "docker":
+                filename, environment = _extract_iol_startup_config_knob(self._properties.get("environment"))
+                if filename:
+                    content = self._base_config_file_content(filename)
+                    if content:
+                        data["startup_config_content"] = content
+                        data["environment"] = environment
+                        self._properties["environment"] = environment
+                    else:
+                        log.warning(
+                            f"Cannot load IOL startup-config file '{filename}' for node '{self._name}': file not found"
+                        )
         data["name"] = self._name
 
         # For remote computes, convert absolute image paths to relative paths

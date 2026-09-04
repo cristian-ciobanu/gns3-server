@@ -98,7 +98,7 @@ API docs for the auth flow), or in the Web UI under
 
 | Field | Value | Why |
 |---|---|---|
-| `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048). |
+| `environment` | `GNS3_IOL_RUNNER=1` | The switch that selects `IOLDockerVM` (skip-init, unix-socket NIO, auto volumes). Optional: `GNS3_IOL_MEMORY=<MB>` (default 2048), `GNS3_IOL_STARTUP_CONFIG=<file>` (initial configuration, see below). |
 | `extra_volumes` | `["/config"]` | `/tmp/run` is auto-added. **Never add `/tmp`** — it would persist the socket directory into the projects tree and uBridge would reject the too-long AF_UNIX path. |
 | `adapters` | number of 4-port units | The IOU convention: one adapter = `Ethernet0/0`–`Ethernet0/3`, two adapters add `Ethernet1/0`–`1/3`, … (8 units / 32 ports max). Ports are addressed as (adapter, port 0–3) and shown grouped in the UI. |
 | `memory` | optional; `0` (default) = no cap | Unset works — Docker applies no limit. When you do set a cap, keep it at IOL memory + ~512 MB, or the cgroup OOM-killer shoots the router. |
@@ -113,9 +113,42 @@ API docs for the auth flow), or in the Web UI under
    `Linux Unix (i686)` banner within seconds.
 3. `$XDG_RUNTIME_DIR/gns3/unixio/<node-id>/` contains `s00.sock`… (one
    pair per port).
-4. The startup-config lives at
-   `project-files/docker/<node>/tmp/run/config` (interface names
-   `Ethernet0/0`, not `GigabitEthernet0/0`).
+4. A node created with a startup-config boots straight to the configured
+   hostname — no initial configuration dialog (interface names in the
+   config are `Ethernet0/0`, not `GigabitEthernet0/0`).
+
+## Startup configuration
+
+IOL Docker nodes load an initial configuration exactly like native IOU
+nodes: the **template references a config file**, and every node created
+from it boots with that configuration as its personal starting point.
+
+```json
+"environment": "GNS3_IOL_RUNNER=1\nGNS3_IOL_STARTUP_CONFIG=iol-xe-base.txt"
+```
+
+* The file lives in the controller's configs directory (the `configs_path`
+  server setting, e.g. `~/.config/GNS3/3.1/configs`) — the same place IOU
+  and VPCS base configs live. `%h` in the content is replaced with the node
+  name at start.
+* **Creation materializes it once**: the controller reads the file and
+  sends its content with the node; afterwards the knob is consumed and the
+  template file is never referenced again — editing it does not affect
+  existing nodes.
+* **NVRAM is the source of truth at boot** (verified on the runner): the
+  content is built into the node's `tmp/run/nvram_<app id>` — IOL and IOU
+  share the nvram container format, so the server-side `nvram_import`
+  utility produces a file IOL boots from directly. Consequences:
+  * `write memory` survives stop/start and container recreation (a plain
+    restart never re-applies the startup-config over it).
+  * Editing a node's `startup_config_content` property (PUT) re-applies it
+    on the next start, overwriting what `write memory` had saved — the
+    explicit edit wins, as with IOU.
+  * Renaming a node rewrites the `hostname` line in its NVRAM, so a
+    duplicated/renamed node boots under its new name.
+* **Resetting a node to its template config**: stop the node, delete
+  `project-files/docker/<node>/tmp/run/nvram_*`, then re-apply the content
+  (or recreate the node).
 
 ## Server mechanisms
 
@@ -125,6 +158,7 @@ API docs for the auth flow), or in the Web UI under
 | `GNS3_UNIX_SOCKET_DIR=<dir>` | `VendorDockerVM` | In-container socket directory (default `/tmp`). Any image whose agent exposes the `s%02d`/`c%02d` datagram pairs can use this without the IOL specifics. |
 | `GNS3_IOL_RUNNER=1` | `IOLDockerVM` (selected in the manager) | Forces skip-init + unix-socket NIO + the `/config` and `/tmp/run` volumes; on every start writes `<node>/config/iol-config.json` (`num-eth` = adapter count, `num-serial` = 0, memory from `GNS3_IOL_MEMORY`, default 2048), creates `<node>/tmp/run/` (the IOL process dies without it) and removes stale sockets/netio dirs from the socket directory (`tmp/run` is never touched). |
 | `restart()` hardening | `IOLDockerVM` | The base `docker restart` would boot the runner on a stale config and leave uBridge wired to the previous run's sockets; reload becomes graceful stop (SIGTERM → NVRAM flush) + full start. |
+| `GNS3_IOL_STARTUP_CONFIG=<file>` | controller `Node._node_data` + `IOLDockerVM` | Startup-config plumbing (see above): the controller translates the file into `startup_config_content` on node creation (sent once); the compute builds it into `nvram_<app id>` at the next start via the IOU `nvram_import` utility and rewrites the hostname line on rename. |
 
 `GNS3_STOP_TIMEOUT` (default 60) controls the SIGTERM grace period on stop.
 Extra iol-runner flags can be passed via `start_command`, e.g. `-keep`
