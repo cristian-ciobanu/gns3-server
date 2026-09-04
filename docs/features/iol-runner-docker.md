@@ -128,9 +128,11 @@ from it boots with that configuration as its personal starting point.
 ```
 
 * The file lives in the controller's configs directory (the `configs_path`
-  server setting, e.g. `~/.config/GNS3/3.1/configs`) — the same place IOU
-  and VPCS base configs live. `%h` in the content is replaced with the node
-  name at start.
+  server setting, by default `~/GNS3/configs`) — the same place IOU and
+  VPCS base configs live. A minimal `iol-xe-base.txt` ships with the
+  server and is installed there on startup (never overwriting a
+  user-modified copy); an absolute path in the knob bypasses the directory
+  entirely. `%h` in the content is replaced with the node name at start.
 * **Creation materializes it once**: the controller reads the file and
   sends its content with the node; afterwards the knob is consumed and the
   template file is never referenced again — editing it does not affect

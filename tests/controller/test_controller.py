@@ -462,6 +462,9 @@ async def test_install_base_configs(controller, config, tmpdir):
 
     await controller._install_base_configs()
     assert os.path.exists(str(tmpdir / 'iou_l3_base_startup-config.txt'))
+    # the IOL docker base config ships with the server too (referenced by the
+    # GNS3_IOL_STARTUP_CONFIG knob in the documented template)
+    assert os.path.exists(str(tmpdir / 'iol-xe-base.txt'))
 
     # Check is the file has not been overwritten
     with open(str(tmpdir / 'iou_l2_base_startup-config.txt')) as f:
