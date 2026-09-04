@@ -307,6 +307,7 @@ async def update_docker_node_nio(
     if nio_data.filters:
         nio.filters = nio_data.filters
     nio.markers = nio_data.markers or {}
+    nio.suspend = nio_data.suspend
     await node.adapter_update_nio_binding(adapter_number, nio)
     return nio.asdict()
 
