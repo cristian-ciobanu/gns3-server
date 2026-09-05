@@ -94,6 +94,7 @@ from gns3server.agent.gns3_copilot.tools_v2 import GNS3StopNodeTool
 from gns3server.agent.gns3_copilot.tools_v2 import GNS3SuspendNodeTool
 from gns3server.agent.gns3_copilot.tools_v2 import GNS3TemplateTool
 from gns3server.agent.gns3_copilot.tools_v2 import GNS3UpdateNodeNameTool
+from gns3server.agent.gns3_copilot.tools_v2 import GNS3WaitTool
 from gns3server.agent.gns3_copilot.tools_v2.vpcs_tools_netmiko import VPCSCommands
 from gns3server.agent.gns3_copilot.tools_v2 import PacketAnalysisTool
 from gns3server.agent.gns3_copilot.skills import DeviceSkillsTool
@@ -113,7 +114,8 @@ TEACHING_ASSISTANT_MODE_TOOLS = [
     GNS3TemplateTool(),  # Get GNS3 node templates
     GNS3CreateNodeTool(),  # Create new nodes in GNS3
     GNS3LinkTool(),  # Create links between nodes
-    GNS3StartNodeTool(),  # Start GNS3 nodes
+    GNS3StartNodeTool(),  # Start GNS3 nodes (returns immediately)
+    GNS3WaitTool(),  # Wait for nodes to boot (pair with start_gns3_node)
     GNS3UpdateNodeNameTool(),  # Update node name
     ExecuteMultipleDeviceCommands(),  # Execute show/display/debug commands
     # (READ-ONLY)
@@ -127,7 +129,8 @@ LAB_AUTOMATION_ASSISTANT_MODE_TOOLS = [
     GNS3TemplateTool(),  # Get GNS3 node templates
     GNS3CreateNodeTool(),  # Create new nodes in GNS3
     GNS3LinkTool(),  # Create links between nodes
-    GNS3StartNodeTool(),  # Start GNS3 nodes
+    GNS3StartNodeTool(),  # Start GNS3 nodes (returns immediately)
+    GNS3WaitTool(),  # Wait for nodes to boot (pair with start_gns3_node)
     GNS3StopNodeTool(),  # Stop GNS3 nodes
     GNS3SuspendNodeTool(),  # Suspend GNS3 nodes (preserve state)
     GNS3UpdateNodeNameTool(),  # Update node name
