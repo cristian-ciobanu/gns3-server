@@ -454,6 +454,38 @@ class VendorDockerVM(DockerVM):
         if nio:
             await self._connect_nio(adapter_number, nio, port_number)
 
+    async def _set_adapter_carrier(self, adapter_number, connected, port_number=0):
+        """
+        Override: with GNS3_UNIX_SOCKET_NIO the bridges carry only unix and
+        UDP NIOs — there is no TAP, and uBridge rejects the carrier command
+        ("bridge has no TAP NIO"), which would fail every link create,
+        update or delete on a running node. The link state is the socket
+        pair itself.
+        """
+
+        if not self._unix_socket_nio:
+            await super()._set_adapter_carrier(adapter_number, connected, port_number)
+
+    async def _start_interface_monitor(self):
+        """
+        Override: with GNS3_UNIX_SOCKET_NIO no GNS3-managed eth interface
+        exists in the container's network namespace — the busybox poll would
+        idle forever (or misreport the Docker default eth0 as adapter 0
+        status). Vendor images with TAP wiring keep the base monitor.
+        """
+
+        if not self._unix_socket_nio:
+            await super()._start_interface_monitor()
+
+    async def _stop_interface_monitor(self):
+        """
+        Override: mirror _start_interface_monitor — there is nothing to stop
+        when the monitor never started under unix-socket NIO.
+        """
+
+        if not self._unix_socket_nio:
+            await super()._stop_interface_monitor()
+
     def _cleanup_console_resources(self):
         """
         Override: close the docker-exec pty socket, if any, so the next

@@ -611,6 +611,67 @@ async def test_generic_unix_socket_dir_honored_in_wiring(compute_project, manage
 
 
 # ---------------------------------------------------------------------------
+# Upstream link-carrier / interface-monitor vs unix-socket NIO
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_link_operations_never_send_tap_carrier(compute_project, manager):
+    """
+    uBridge rejects set_nio_tap_carrier on a bridge without a TAP NIO
+    ("bridge has no TAP NIO"), and unix-socket NIO bridges never have one:
+    every link create/update/delete on a running node would fail. The
+    vendor override must keep the carrier command out of all three paths.
+    """
+
+    vm = _make_vm(compute_project, manager)
+    vm._ubridge_hypervisor = MagicMock()  # truthy ubridge, like a started node
+    vm._ubridge_send = AsyncioMagicMock()
+    vm.status = "started"
+    nio = manager.create_nio({"type": "nio_udp", "lport": 4242, "rport": 4343, "rhost": "127.0.0.1"})
+
+    await vm.adapter_add_nio_binding(0, nio, 0)
+    await vm.adapter_update_nio_binding(0, nio, 0)
+    await vm.adapter_remove_nio_binding(0, 0)
+
+    commands = [str(c.args[0]) for c in vm._ubridge_send.call_args_list]
+    assert any(c.startswith("bridge add_nio_udp") for c in commands)
+    assert not any("set_nio_tap_carrier" in c for c in commands)
+
+
+@pytest.mark.asyncio
+async def test_interface_monitor_disabled_under_unix_nio(compute_project, manager):
+
+    vm = _make_vm(compute_project, manager)
+    vm.manager.query = AsyncioMagicMock()
+
+    await vm._start_interface_monitor()  # must be a no-op: no eth NICs to poll
+    await vm._stop_interface_monitor()
+
+    vm.manager.query.assert_not_called()
+    assert vm._interface_monitor_task is None
+
+
+@pytest.mark.asyncio
+async def test_tap_wired_vendor_keeps_carrier_and_monitor(compute_project, manager):
+    """
+    Vendor nodes with TAP wiring (XRd, SR Linux, ...) keep the base
+    behavior: the guards only apply to unix-socket NIO.
+    """
+
+    vm = VendorDockerVM("vendor-1", str(uuid.uuid4()), compute_project, manager, "vendor:latest",
+                        console_type="docker_exec", environment="GNS3_SKIP_INIT=1")
+    with patch.object(DockerVM, "_set_adapter_carrier", new=AsyncioMagicMock()) as carrier, \
+         patch.object(DockerVM, "_start_interface_monitor", new=AsyncioMagicMock()) as monitor:
+        await vm._set_adapter_carrier(0, True)
+        await vm._start_interface_monitor()
+    # the base-class attribute is replaced by a plain mock (no descriptor
+    # binding), so super() calls arrive without self
+    carrier.assert_called_once_with(0, True, 0)
+    monitor.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
 # Startup configuration
 # ---------------------------------------------------------------------------
 
