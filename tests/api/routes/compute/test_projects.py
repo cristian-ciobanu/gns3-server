@@ -316,6 +316,37 @@ class TestBatchNIOEdgeCases:
         node.adapter_add_nio_binding.assert_called_once_with(1, 2, nio)
 
     @pytest.mark.asyncio
+    async def test_docker_dispatch_keeps_port_number(self):
+        """
+        Docker adapters can be multi-port (iol-runner nodes model 4 ports per
+        adapter). Dropping port_number binds every NIO to port 0 where
+        add_nio() silently overwrites — reopened projects then end up with
+        cross-wired links (the last entry per node wins).
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from gns3server.api.routes.compute.projects import (
+            _add_nio_binding,
+            _get_existing_nio,
+            _update_nio_binding,
+        )
+
+        node = MagicMock()
+        type(node.manager).__name__ = "Docker"
+        node.adapter_add_nio_binding = AsyncMock()
+        node.adapter_update_nio_binding = AsyncMock()
+        nio = MagicMock()
+        node.get_nio = MagicMock(return_value=nio)
+
+        await _add_nio_binding(node, 0, 1, nio)
+        node.adapter_add_nio_binding.assert_called_once_with(0, nio, 1)
+
+        assert _get_existing_nio(node, 0, 1) is nio
+        node.get_nio.assert_called_once_with(0, 1)
+
+        await _update_nio_binding(node, 0, 1, nio)
+        node.adapter_update_nio_binding.assert_called_once_with(0, nio, 1)
+
+    @pytest.mark.asyncio
     async def test_vpcs_dispatch_to_port_add_nio_binding(self):
         """_add_nio_binding dispatches VPCS to port_add_nio_binding."""
         from unittest.mock import AsyncMock, MagicMock

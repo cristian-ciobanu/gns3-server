@@ -144,8 +144,14 @@ async def _add_nio_binding(node, adapter_number, port_number, nio):
 
     manager_name = type(node.manager).__name__
     # Adapter-based nodes: docker / qemu / vmware / virtualbox take
-    # (adapter_number, nio); iou additionally takes port_number.
-    if manager_name in ("Docker", "Qemu", "VMware", "VirtualBox"):
+    # (adapter_number, nio); iou additionally takes port_number. Docker
+    # adapters can be multi-port (e.g. iol-runner nodes model 4 ports per
+    # adapter): dropping port_number would bind every NIO to port 0, where
+    # add_nio() silently overwrites — the last entry per node wins and links
+    # end up cross-wired (observed as dead direct links after reopen).
+    if manager_name == "Docker":
+        await node.adapter_add_nio_binding(adapter_number, nio, port_number)
+    elif manager_name in ("Qemu", "VMware", "VirtualBox"):
         await node.adapter_add_nio_binding(adapter_number, nio)
     elif manager_name == "IOU":
         await node.adapter_add_nio_binding(adapter_number, port_number, nio)
@@ -176,7 +182,9 @@ def _get_existing_nio(node, adapter_number, port_number):
     """
 
     manager_name = type(node.manager).__name__
-    if manager_name in ("Docker", "Qemu", "VMware", "VirtualBox"):
+    if manager_name == "Docker":
+        return node.get_nio(adapter_number, port_number)
+    elif manager_name in ("Qemu", "VMware", "VirtualBox"):
         return node.get_nio(adapter_number)
     elif manager_name == "IOU":
         return node.get_nio(adapter_number, port_number)
@@ -207,7 +215,9 @@ async def _update_nio_binding(node, adapter_number, port_number, nio):
     """
 
     manager_name = type(node.manager).__name__
-    if manager_name in ("Docker", "Qemu", "VMware", "VirtualBox"):
+    if manager_name == "Docker":
+        await node.adapter_update_nio_binding(adapter_number, nio, port_number)
+    elif manager_name in ("Qemu", "VMware", "VirtualBox"):
         await node.adapter_update_nio_binding(adapter_number, nio)
     elif manager_name == "IOU":
         await node.adapter_update_nio_binding(adapter_number, port_number, nio)
