@@ -39,6 +39,8 @@ docs/
 │   ├── statistics-api.md                        # Aggregated statistics API for monitoring
 │   ├── vnc-websocket-console.md                 # Browser-based VNC console via WebSocket
 │   └── web-wireshark-business-process.md        # Web Wireshark (Docker + xpra packet capture)
+├── design/                                      # Design proposals & roadmaps (not yet implemented)
+│   └── docker-image-type.md                     # Docker image types: vendor profile discriminator + registry
 ├── gns3-copilot/                                # AI Copilot feature documentation
 │   ├── netmiko_devices.md                       # Netmiko supported devices (366 types)
 │   ├── template-based-configuration-roadmap.md  # Future: template-based config with HITL
@@ -83,6 +85,16 @@ Console for vendor NOS containers (SR Linux, XRd, …) whose CLI is a TUI off PI
 
 ### Cisco XRd Control Plane (`features/vendor-nos-xrd.md`)
 Cisco XRd as a GNS3 Docker router: vendor path + shm/device injection (`GNS3_SHM_SIZE`/`GNS3_DEVICES`), config-file injection (`extra_configs`), udev masking (`GNS3_MASK_UDEV`) so privileged systemd containers don't disturb the host, and the host-readiness check.
+
+### IOL Images with iol-runner (`features/iol-runner-docker.md`)
+Cisco CML containerized IOL (e.g. `iol-xe/iol-xe:17-18-02`) as GNS3 Docker routers: generic unix-socket NIO (`GNS3_UNIX_SOCKET_NIO` — adapters wired via AF_UNIX datagram socket pairs instead of TAP/netns) plus `IOLDockerVM` (`GNS3_IOL_RUNNER=1` — per-start config generation, `/tmp/run` preparation, stale-socket cleanup, console on PID 1 stdio).
+
+---
+
+## Design & Roadmaps (`design/`)
+
+### Docker Image Types (`design/docker-image-type.md`)
+Proposed `image_type` discriminator on Docker templates plus a compute-side profile registry: vendor parameters graduate from environment markers into schema-gated fields, generic-feature applicability becomes declared capability data, and the existing markers remain as a compatibility fallback. Not a new node type — vendor images are content, not mechanism.
 
 ---
 

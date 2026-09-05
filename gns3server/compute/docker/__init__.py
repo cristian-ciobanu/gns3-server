@@ -33,6 +33,7 @@ from gns3server.utils.asyncio import locking
 from gns3server.compute.base_manager import BaseManager
 from gns3server.compute.docker.docker_vm import DockerVM
 from gns3server.compute.docker.vendor_docker_vm import VendorDockerVM
+from gns3server.compute.docker.iol_docker_vm import IOLDockerVM
 from gns3server.compute.docker.docker_error import DockerError, DockerHttp304Error, DockerHttp404Error, DockerHttp409Error
 
 log = logging.getLogger(__name__)
@@ -62,9 +63,21 @@ class Docker(BaseManager):
         self._host_checked = False
 
     def _select_node_class(self, **kwargs):
-        """Select the node class based on console_type."""
+        """
+        Select the node class based on console_type and GNS3_* environment
+        markers. Like console_type, the environment is fixed at node creation
+        time: toggling a marker via PUT takes effect after a project reload.
+        """
         if kwargs.get("console_type") == "docker_exec":
             return VendorDockerVM
+        environment = kwargs.get("environment") or ""
+        for line in environment.splitlines():
+            line = line.strip().rstrip(",")
+            if line.startswith("GNS3_IOL_RUNNER="):
+                return IOLDockerVM
+            if line.startswith("GNS3_UNIX_SOCKET_NIO="):
+                # Generic capability, usable without the IOL specifics.
+                return VendorDockerVM
         return DockerVM
 
     async def create_node(self, name, project_id, node_id, *args, **kwargs):

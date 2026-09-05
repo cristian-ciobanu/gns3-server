@@ -297,6 +297,47 @@ async def test_add_node_iou(controller):
 
 
 @pytest.mark.asyncio
+async def test_add_node_iol_docker(controller):
+    """
+    IOL Docker nodes (GNS3_IOL_RUNNER marker) get an application ID from the
+    upper half of the id space, disjoint from IOU's lower half
+    """
+
+    compute = MagicMock()
+    compute.id = "local"
+    project = await controller.add_project(project_id=str(uuid.uuid4()), name="test1")
+    project.emit_notification = MagicMock()
+
+    response = MagicMock()
+    compute.post = AsyncioMagicMock(return_value=response)
+
+    # template shape: environment as a top-level kwarg
+    node1 = await project.add_node(
+        compute, "iol1", None, node_type="docker", image="iol-xe/iol-xe:17-18-02", environment="GNS3_IOL_RUNNER=1"
+    )
+    # raw API shape: environment nested in properties
+    node2 = await project.add_node(
+        compute,
+        "iol2",
+        None,
+        node_type="docker",
+        properties={"image": "iol-xe/iol-xe:17-18-02", "environment": "GNS3_IOL_RUNNER=1"},
+    )
+    # plain docker nodes are left alone
+    node3 = await project.add_node(
+        compute, "web", None, node_type="docker", image="nginx", environment="FOO=1", adapters=1
+    )
+
+    assert node1.properties["application_id"] == 512
+    assert node2.properties["application_id"] == 513
+    assert "application_id" not in node3.properties
+
+    # IOU keeps its own pool: a subsequent IOU node still gets the lower half
+    node4 = await project.add_node(compute, "iou1", None, node_type="iou")
+    assert node4.properties["application_id"] == 1
+
+
+@pytest.mark.asyncio
 async def test_add_node_iou_with_multiple_projects(controller):
     """
     Test if an application ID is allocated for IOU nodes with different projects already opened

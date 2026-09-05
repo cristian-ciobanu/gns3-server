@@ -46,6 +46,85 @@ def node(compute, project):
     return node
 
 
+def test_docker_iol_ports_grouped_in_four_port_units(compute, project):
+    """
+    IOL docker nodes (GNS3_IOL_RUNNER) model adapters as 4-port units: ports
+    are Ethernet0/0-3, Ethernet1/0-3, … addressed (adapter, port 0-3), like
+    the native IOU node type. Plain docker nodes keep the flat eth naming.
+    """
+
+    node = Node(project, compute, "iol",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"adapters": 2, "environment": "GNS3_IOL_RUNNER=1"})
+    ports = node.ports
+    assert [p.asdict()["name"] for p in ports] == [
+        "Ethernet0/0", "Ethernet0/1", "Ethernet0/2", "Ethernet0/3",
+        "Ethernet1/0", "Ethernet1/1", "Ethernet1/2", "Ethernet1/3",
+    ]
+    assert (ports[5].adapter_number, ports[5].port_number) == (1, 1)
+    assert ports[5].short_name == "e1/1"
+
+    node = Node(project, compute, "web",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"adapters": 2})
+    assert [p.asdict()["name"] for p in node.ports] == ["eth0", "eth1"]
+
+
+def test_docker_iol_startup_config_materialized_once(compute, project, monkeypatch):
+    """
+    The GNS3_IOL_STARTUP_CONFIG environment knob references a config file in
+    the controller's configs directory: like the IOU startup_config mapping,
+    its content is sent to the compute exactly once (the knob is consumed) —
+    afterwards the node's configuration lives in its NVRAM on the compute.
+    """
+
+    node = Node(project, compute, "iol",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"environment": "GNS3_IOL_RUNNER=1\nGNS3_IOL_STARTUP_CONFIG=my-iol-config.txt"})
+    monkeypatch.setattr(node, "_base_config_file_content", lambda path: "hostname %h\n")
+
+    data = node._node_data()
+    assert data["startup_config_content"] == "hostname %h\n"
+    assert data["environment"] == "GNS3_IOL_RUNNER=1"
+    assert "GNS3_IOL_STARTUP_CONFIG" not in node.properties["environment"]
+
+    # sent only once: a later sync (e.g. project reload) carries neither
+    data = node._node_data()
+    assert "startup_config_content" not in data
+
+
+def test_docker_iol_startup_config_missing_file_keeps_knob(compute, project, monkeypatch):
+
+    node = Node(project, compute, "iol",
+                node_id=str(uuid.uuid4()),
+                node_type="docker",
+                properties={"environment": "GNS3_IOL_RUNNER=1\nGNS3_IOL_STARTUP_CONFIG=gone.txt"})
+    monkeypatch.setattr(node, "_base_config_file_content", lambda path: None)
+
+    data = node._node_data()
+    assert "startup_config_content" not in data
+    # the knob is kept so the config still applies once the file shows up
+    assert "GNS3_IOL_STARTUP_CONFIG" in node.properties["environment"]
+
+
+def test_extract_iol_startup_config_knob_variants():
+
+    from gns3server.controller.node import _extract_iol_startup_config_knob
+
+    assert _extract_iol_startup_config_knob(None) == (None, None)
+    assert _extract_iol_startup_config_knob("GNS3_IOL_RUNNER=1") == (None, "GNS3_IOL_RUNNER=1")
+    # whitespace and trailing commas are tolerated, like the compute env parsing
+    filename, environment = _extract_iol_startup_config_knob("GNS3_IOL_RUNNER=1,\n GNS3_IOL_STARTUP_CONFIG=cfg.txt ,")
+    assert filename == "cfg.txt"
+    assert environment == "GNS3_IOL_RUNNER=1,"
+    # an empty value is treated as absent
+    filename, environment = _extract_iol_startup_config_knob("GNS3_IOL_STARTUP_CONFIG=")
+    assert filename is None
+
+
 def test_name(compute, project):
     """
     If node use a name template generate names

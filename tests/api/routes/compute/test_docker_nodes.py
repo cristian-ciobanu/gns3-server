@@ -20,9 +20,11 @@ import pytest_asyncio
 
 from fastapi import FastAPI, status
 from httpx import AsyncClient
-from tests.utils import asyncio_patch
-from unittest.mock import patch
+from tests.utils import asyncio_patch, AsyncioMagicMock
+from unittest.mock import patch, MagicMock
 
+from gns3server.compute.docker import Docker
+from gns3server.compute.docker.iol_docker_vm import IOLDockerVM
 from gns3server.compute.project import Project
 
 pytestmark = pytest.mark.asyncio
@@ -97,6 +99,46 @@ class TestDockerNodesRoutes:
         assert response.json()["console_resolution"] == "1280x1024"
         assert response.json()["extra_hosts"] == "test:127.0.0.1"
 
+
+    async def test_docker_create_iol_startup_config(
+            self, app: FastAPI,
+            compute_client: AsyncClient,
+            compute_project: Project,
+            base_params: dict
+    ) -> None:
+        """
+        The controller materializes the GNS3_IOL_STARTUP_CONFIG knob into
+        startup_config_content; the create route must carry it onto the
+        IOLDockerVM (plain Docker nodes have no such property and skip it).
+        """
+
+        params = dict(base_params)
+        params["image"] = "iol-xe/iol-xe:17-18-02"
+        params["environment"] = "GNS3_IOL_RUNNER=1"
+        params["startup_config_content"] = "hostname %h\n"
+        create_response = {
+            "Id": "8bd8153ea8f5",
+            "Warnings": [],
+            "Config": {
+                "Entrypoint": ["/iol-runner", "-config", "/config/iol-config.json", "-stdio"],
+                "Cmd": [],
+                "Volumes": {},
+            },
+        }
+        seed_proc = MagicMock()
+        seed_proc.communicate = AsyncioMagicMock(return_value=(b"seedcid\n", b""))
+        seed_proc.returncode = 0
+        with asyncio_patch("gns3server.compute.docker.Docker.list_images", return_value=[{"image": "iol-xe/iol-xe"}]):
+            with asyncio_patch("gns3server.compute.docker.Docker.query", return_value=create_response):
+                with patch("asyncio.subprocess.create_subprocess_exec", return_value=seed_proc):
+                    response = await compute_client.post(
+                        app.url_path_for("compute:create_docker_node", project_id=compute_project.id), json=params
+                    )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["startup_config_content"] == "hostname %h\n"
+        vm = Docker.instance().get_node(response.json()["node_id"], project_id=str(compute_project.id))
+        assert isinstance(vm, IOLDockerVM)
+        assert vm.startup_config_content == "hostname %h\n"
 
     @pytest.mark.parametrize(
         "name, status_code",

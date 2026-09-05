@@ -1198,7 +1198,7 @@ async def test_start(vm, manager, free_console_port, tmpdir):
             await vm.start()
 
     mock_query.assert_called_with("POST", "containers/e90e34656842/start")
-    vm._add_ubridge_connection.assert_called_once_with(nio, 0)
+    vm._add_ubridge_connection.assert_called_once_with(nio, 0, 0)
     assert vm._start_ubridge.called
     assert vm._start_console.called
     assert vm._start_aux.called
@@ -1253,7 +1253,7 @@ async def test_start_namespace_failed(vm, manager, free_console_port):
                                     await vm.start()
 
     mock_query.assert_any_call("POST", "containers/e90e34656842/start")
-    mock_add_ubridge_connection.assert_called_once_with(nio, 0)
+    mock_add_ubridge_connection.assert_called_once_with(nio, 0, 0)
     assert mock_start_ubridge.called
     assert vm.status == "stopped"
 
