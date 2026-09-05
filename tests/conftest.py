@@ -418,7 +418,13 @@ def run_around_tests(monkeypatch, config, port_manager):
     # avoid monitoring for new images while testing
     config.settings.Server.auto_discover_images = False
 
-    monkeypatch.setattr("gns3server.utils.path.get_default_project_directory", lambda *args: os.path.join(tmppath, 'projects'))
+    # Resolve the projects directory from the Config singleton at call time instead of
+    # closing over this test's tmppath: a from-import executed anywhere while this
+    # patch is active (e.g. the first import of gns3server.api.server from inside a
+    # test body) freezes the patched object into the importing module's namespace
+    # forever, and a closed-over path would then point at a deleted directory in
+    # every later test (order-dependent FileNotFoundError in psutil.disk_usage).
+    monkeypatch.setattr("gns3server.utils.path.get_default_project_directory", lambda *args: Config.instance().settings.Server.projects_path)
 
     # Force sys.platform to the original value. Because it seems not be restored correctly after each test
     sys.platform = sys.original_platform

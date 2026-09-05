@@ -25,6 +25,7 @@ from unittest.mock import patch, MagicMock
 
 from gns3server.controller.project import Project
 from gns3server.controller.compute import Compute
+from gns3server.api.server import app as gns3_app
 from gns3server.controller.controller_error import (
     ControllerError,
     ControllerNotFoundError,
@@ -581,8 +582,10 @@ async def test_connect_notification_poison_frame_autoreconnects(compute, monkeyp
     compute._http_session = session
 
     # allow the reconnection to be scheduled during the test
+    # (import gns3_app at module top: a first import from inside a test body
+    #  would execute module-level from-imports while the autouse fixture's
+    #  monkeypatches are active, freezing patched objects into namespaces)
     monkeypatch.delattr(sys, "_called_from_test", raising=False)
-    from gns3server.api.server import app as gns3_app
     monkeypatch.setattr(gns3_app.state, "exiting", False)
 
     async def fake_connect():

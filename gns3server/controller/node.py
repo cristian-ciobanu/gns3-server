@@ -30,6 +30,7 @@ from .controller_error import (
 from .node_types import BUILTIN_NODE_TYPES
 from .ports.port_factory import PortFactory, StandardPortFactory, DynamipsPortFactory
 from ..utils.images import images_directories
+from ..utils.application_id import is_iol_runner_environment
 from ..utils import macaddress_to_int, int_to_macaddress
 from ..config import Config
 
@@ -37,6 +38,30 @@ from ..config import Config
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def _extract_iol_startup_config_knob(environment):
+    """
+    Split the GNS3_IOL_STARTUP_CONFIG knob out of a Docker environment
+    (iol-runner images): the value is a config file name, resolved by the
+    controller in its configs directory.
+
+    :returns: (filename, environment without the knob line); filename is None
+        when the knob is absent or empty.
+    """
+
+    if not environment or "GNS3_IOL_STARTUP_CONFIG=" not in environment:
+        return None, environment
+    filename = None
+    kept = []
+    for line in environment.splitlines():
+        stripped = line.strip().rstrip(",")
+        if stripped.startswith("GNS3_IOL_STARTUP_CONFIG="):
+            if filename is None:
+                filename = stripped.split("=", 1)[1].strip()
+        else:
+            kept.append(line)
+    return filename or None, "\n".join(kept)
 
 
 class Node:
@@ -572,6 +597,25 @@ class Node:
                     data[v] = self._base_config_file_content(self._properties[k])
                     del data[k]
                     del self._properties[k]  # We send the file only one time
+
+            # IOL runner (Docker) startup-config: translate the config file
+            # referenced by the GNS3_IOL_STARTUP_CONFIG environment knob into
+            # content, like the mappings above. Sent only once — afterwards
+            # the node's configuration lives in its NVRAM on the compute (a
+            # reloaded node is recreated without the knob and boots from the
+            # persistent NVRAM, preserving `write memory`).
+            if self._node_type == "docker":
+                filename, environment = _extract_iol_startup_config_knob(self._properties.get("environment"))
+                if filename:
+                    content = self._base_config_file_content(filename)
+                    if content:
+                        data["startup_config_content"] = content
+                        data["environment"] = environment
+                        self._properties["environment"] = environment
+                    else:
+                        log.warning(
+                            f"Cannot load IOL startup-config file '{filename}' for node '{self._name}': file not found"
+                        )
         data["name"] = self._name
 
         # For remote computes, convert absolute image paths to relative paths
@@ -804,22 +848,35 @@ class Node:
             self._ports = DynamipsPortFactory(self._properties)
             return
         elif self._node_type == "docker":
-            for adapter_number in range(0, self._properties["adapters"]):
-                custom_adapter_settings = {}
-                if self.custom_adapters:
-                    for custom_adapter in self.custom_adapters:
-                        if custom_adapter["adapter_number"] == adapter_number:
-                            custom_adapter_settings = custom_adapter
-                            break
-                port_name = f"eth{adapter_number}"
-                port_name = custom_adapter_settings.get("port_name", port_name)
-                mac_address = custom_adapter_settings.get("mac_address")
-                if not mac_address and "mac_address" in self._properties:
-                    mac_address = int_to_macaddress(macaddress_to_int(self._properties["mac_address"]) + adapter_number)
+            if is_iol_runner_environment(self._properties.get("environment")):
+                # IOL adapters are 4-port units (the IOU model): ports are
+                # Ethernet0/0-3, Ethernet1/0-3, … addressed as
+                # (adapter_number, port_number 0-3).
+                self._ports = StandardPortFactory(
+                    self._properties,
+                    4,
+                    self._first_port_name,
+                    "Ethernet{segment0}/{port0}",
+                    4,
+                    self.custom_adapters,
+                )
+            else:
+                for adapter_number in range(0, self._properties["adapters"]):
+                    custom_adapter_settings = {}
+                    if self.custom_adapters:
+                        for custom_adapter in self.custom_adapters:
+                            if custom_adapter["adapter_number"] == adapter_number:
+                                custom_adapter_settings = custom_adapter
+                                break
+                    port_name = f"eth{adapter_number}"
+                    port_name = custom_adapter_settings.get("port_name", port_name)
+                    mac_address = custom_adapter_settings.get("mac_address")
+                    if not mac_address and "mac_address" in self._properties:
+                        mac_address = int_to_macaddress(macaddress_to_int(self._properties["mac_address"]) + adapter_number)
 
-                port = PortFactory(port_name, 0, adapter_number, 0, "ethernet", short_name=port_name)
-                port.mac_address = mac_address
-                self._ports.append(port)
+                    port = PortFactory(port_name, 0, adapter_number, 0, "ethernet", short_name=port_name)
+                    port.mac_address = mac_address
+                    self._ports.append(port)
         elif self._node_type in ("ethernet_switch", "ethernet_hub"):
             # Basic node we don't want to have adapter number
             port_number = 0

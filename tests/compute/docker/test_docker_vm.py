@@ -1198,7 +1198,7 @@ async def test_start(vm, manager, free_console_port, tmpdir):
             await vm.start()
 
     mock_query.assert_called_with("POST", "containers/e90e34656842/start")
-    vm._add_ubridge_connection.assert_called_once_with(nio, 0)
+    vm._add_ubridge_connection.assert_called_once_with(nio, 0, 0)
     assert vm._start_ubridge.called
     assert vm._start_console.called
     assert vm._start_aux.called
@@ -1253,7 +1253,7 @@ async def test_start_namespace_failed(vm, manager, free_console_port):
                                     await vm.start()
 
     mock_query.assert_any_call("POST", "containers/e90e34656842/start")
-    mock_add_ubridge_connection.assert_called_once_with(nio, 0)
+    mock_add_ubridge_connection.assert_called_once_with(nio, 0, 0)
     assert mock_start_ubridge.called
     assert vm.status == "stopped"
 
@@ -1798,7 +1798,7 @@ async def test_adapter_add_nio_binding_sets_carrier(vm):
 
     await vm.adapter_add_nio_binding(0, nio)
 
-    vm._set_adapter_carrier.assert_called_once_with(0, True)
+    vm._set_adapter_carrier.assert_called_once_with(0, True, 0)
 
 
 @pytest.mark.asyncio
@@ -1831,7 +1831,7 @@ async def test_adapter_update_nio_binding_sets_suspended_carrier(vm):
 
     await vm.adapter_update_nio_binding(0, nio)
 
-    vm._set_adapter_carrier.assert_called_once_with(0, False)
+    vm._set_adapter_carrier.assert_called_once_with(0, False, 0)
 
 
 @pytest.mark.asyncio
