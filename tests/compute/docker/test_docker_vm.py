@@ -1798,7 +1798,7 @@ async def test_adapter_add_nio_binding_sets_carrier(vm):
 
     await vm.adapter_add_nio_binding(0, nio)
 
-    vm._set_adapter_carrier.assert_called_once_with(0, True)
+    vm._set_adapter_carrier.assert_called_once_with(0, True, 0)
 
 
 @pytest.mark.asyncio
@@ -1831,7 +1831,7 @@ async def test_adapter_update_nio_binding_sets_suspended_carrier(vm):
 
     await vm.adapter_update_nio_binding(0, nio)
 
-    vm._set_adapter_carrier.assert_called_once_with(0, False)
+    vm._set_adapter_carrier.assert_called_once_with(0, False, 0)
 
 
 @pytest.mark.asyncio
